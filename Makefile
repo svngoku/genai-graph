@@ -44,6 +44,7 @@ endif
 
 
 include deploy/docker.mk
+#include deploy/prefect.mk
 #include deploy/aws.mk
 #include deploy/github.mk
 #include deploy/modal.mk
@@ -91,7 +92,7 @@ check: fmt lint test ## Run format, lint, and test sequentially
 ##############################
 ##  GenAI Blueprint related commands
 ##############################
-.PHONY: fast_api langserve webapp prefect-server prefect-server-bg prefect-server-stop 
+.PHONY: fast_api langserve webapp 
 fast-api: ## langsLauch FastAPI server localy
 	uvicorn $(FASTAPI_ENTRY_POINT) --reload
 
@@ -100,19 +101,6 @@ langserve: ## Lauch langserve app
 
 webapp: ## Launch Streamlit app
 	PYTHONPATH=$(DEV_PYTHONPATH) uv run streamlit run "$(STREAMLIT_ENTRY_POINT)"
-
-
-prefect-server: ## Start Prefect server in background
-	@echo "Starting Prefect server in background..."
-	@prefect config set PREFECT_API_URL=http://127.0.0.1:4200/api
-	@cd ~/prj/genai-graph && nohup prefect server start > prefect-server.log 2>&1 & \
-	echo "Prefect server started. PID: $$!"; \
-	echo "Logs: tail -f prefect-server.log"; \
-	echo "Stop: pkill -f 'prefect server start'"
-
-prefect-server-stop: ## Stop Prefect server
-	@echo "Stopping Prefect server..."
-	@pkill -f 'prefect server start' && echo "Prefect server stopped." || echo "No Prefect server process found."
 
 
 ##############################
@@ -197,6 +185,19 @@ test-install: .pythonpath ## Quick test install
 ##############################
 ##  MICS
 ##############################
+
+prefect-server: ## Start Prefect server in background
+	@echo "Starting Prefect server in background..."
+	@prefect config set PREFECT_API_URL=http://127.0.0.1:4200/api
+	@cd ~/prj/genai-graph && nohup prefect server start > prefect-server.log 2>&1 & \
+	echo "Prefect server started. PID: $$!"; \
+	echo "Logs: tail -f prefect-server.log"; \
+	echo "Stop: pkill -f 'prefect server start'"
+
+prefect-server-stop: ## Stop Prefect server
+	@echo "Stopping Prefect server..."
+	@pkill -f 'prefect server start' && echo "Prefect server stopped." || echo "No Prefect server process found."
+
 
 postgres:   ## Start docker Postgres + pgvector                                                                           
 	docker rm -f pgvector-container 2>/dev/null || true

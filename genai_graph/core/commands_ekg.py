@@ -17,6 +17,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from genai_tk.extra.prefect.runtime import ephemeral_prefect_settings
 from genai_graph.core.graph_backend import (
     create_backend_from_config,
     get_backend_storage_path_from_config,
@@ -73,40 +74,15 @@ class EkgCommands(CliTopCommand):
             """
 
             # Get the configured KG config name.
-            from prefect.settings import (
-                PREFECT_API_URL,
-                PREFECT_SERVER_ALLOW_EPHEMERAL_MODE,
-                PREFECT_SERVER_EPHEMERAL_ENABLED,
-                temporary_settings,
-            )
-
             from genai_graph.orchestration.flows import create_kg_flow
 
             cfg_name = _get_kg_config_name()
 
             console.print(f"[bold]Creating KG using config[/bold] [cyan]{cfg_name}[/cyan]...")
 
-            # Prefect 3 starts a temporary local server when no API URL is
-            # configured. In proxy-heavy environments this can cause localhost
-            # traffic to be routed through an HTTP proxy, leading to timeouts.
-            # Be explicit and strip proxy settings for this command while
-            # keeping localhost in NO_PROXY.
-            for var in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"):
-                os.environ.pop(var, None)
-            os.environ.setdefault("NO_PROXY", "localhost,127.0.0.1")
-            os.environ.setdefault("no_proxy", "localhost,127.0.0.1")
-
-            # Run the Prefect flow with an ephemeral, in-process server by
-            # temporarily disabling any configured API URL and enabling
-            # Prefect's ephemeral server mode.
+            # Run the Prefect flow with an ephemeral, in-process server.
             try:
-                with temporary_settings(
-                    {
-                        PREFECT_API_URL: None,
-                        PREFECT_SERVER_EPHEMERAL_ENABLED: True,
-                        PREFECT_SERVER_ALLOW_EPHEMERAL_MODE: True,
-                    }
-                ):
+                with ephemeral_prefect_settings():
                     result = create_kg_flow(
                         config_name=cfg_name,
                         delete_first=delete_first,

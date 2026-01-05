@@ -27,7 +27,7 @@ dependencies = [
     "pandas>=2.3.3",
     "langchain-litellm>=0.3.2",
     "case-converter>=1.2.0",
-   # "pgvector>=0.4.2",
+    # "pgvector>=0.4.2",
     "psycopg[binary, pool]>=3.3.2",
     "prefect>=3.6.7",
 ]
@@ -79,6 +79,7 @@ dev = [
 [tool.uv]
 package = true
 default-groups = ["ui", "demos", "extra", "dev"]
+constraint-dependencies = ["ruamel-yaml-clibz==0.2.12"] # required because of Prefect update. Might be removed later.
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]

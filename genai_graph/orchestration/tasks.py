@@ -13,6 +13,7 @@ from typing import Any
 from genai_tk.utils.config_mngr import import_from_qualified
 from loguru import logger
 from prefect import get_run_logger, task
+from prefect.cache_policies import NO_CACHE
 from prefect.exceptions import MissingContextError
 from pydantic import BaseModel
 
@@ -158,7 +159,7 @@ def load_factories_task(kg_cfg: dict[str, Any]) -> list[SubgraphBundle]:
     return bundles
 
 
-@task
+@task(cache_policy=NO_CACHE)
 def create_schema_task(
     bundles: list[SubgraphBundle],
     backend: GraphBackend,
@@ -193,7 +194,7 @@ def create_schema_task(
     return bundles
 
 
-@task
+@task(cache_policy=NO_CACHE)
 def ingest_subgraphs_task(
     bundles: list[SubgraphBundle],
     backend: GraphBackend,
@@ -302,7 +303,7 @@ def delete_backend_task(config_key: str = "default", kg_config_name: str | None 
         )
 
 
-@task
+@task(cache_policy=NO_CACHE)
 def export_html_task(
     config_name: str,
     backend: GraphBackend,

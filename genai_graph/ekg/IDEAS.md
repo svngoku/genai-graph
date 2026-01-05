@@ -2,24 +2,34 @@
 
 # Ideas around evolution of the Tk and Bleuprin
 
-# Better  entity resolution ! 
+## Better  entity resolution ! 
 - issues with "known_as" (ex: gor Capgeminy)
 - use embeddings  ? 
 
 ## Better HTML visualisation
-
-
-
-- Use G.V()
-
-
-## Better HTML visualisation
+- Use G.V() ? 
 - User can 
   - select the types of nodes and relationsips
 
 - Use G.V()
 
-## Hybrid
+## Prefect for BAML
+
+We want to make more robust and industrialized /home/tcl/prj/genai-tk/genai_tk/extra/structured/baml_processor.py and /home/tcl/prj/genai-tk/genai_tk/extra/structured/commands_baml.py taking full benefit of Prefect tasks and workflows.
+Typicall call could be similar to: 
+uv run cli baml extract $ONEDRIVE/prj/atos-kg/rainbow-md/cnes-venus-tma.md --function ExtractRainbow --force 
+(but create a new command).
+
+However, we want to use Prefect capabilities to simplify the process: 
+- store the JSON (Pydantic) results as files in a directory tree (whose root is taken from config file / deduced model class name of the Pydantic outcome)
+- store a manifest file in the target directory to avoid duplicated calculation. It should be a JSON serialized Pydantic object with path and hash of the processed file (and date...  could be used later).  
+- Process files in parallel, by batch (with a Thread Pool becase we are IO bound)
+- use upath to access files and dir (to ease use with remote files)
+- create a new file for processsing, and a new command. We Will  delete old approach later. 
+
+Note there are already some Prefect powered commmands in /home/tcl/prj/genai-graph/genai_graph/core/commands_ekg.py.  The genai-graph imports genai-tk.  So consider to move somme generic code (like the one to se up Prefect) in a  shared file in   /home/tcl/prj/genai-tk/genai_tk/extra/prefect
+
+
 
 
 ## Better React with Agent Midleware

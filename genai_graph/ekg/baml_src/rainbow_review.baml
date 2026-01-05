@@ -56,7 +56,6 @@ class ReviewedOpportunity {
 } 
 class Competitor {
   @@description("Atos competitor mentionned in the documents. Don't confused with Partners")
-  // isa ACompetitor @description("Competitor mentionned in the review")
   name string @description("name of the competitor")
   known_as KnownCompetitor? @description("Competitor id (short name)")
 
