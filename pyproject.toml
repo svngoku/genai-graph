@@ -30,6 +30,8 @@ dependencies = [
     # "pgvector>=0.4.2",
     "psycopg[binary, pool]>=3.3.2",
     "prefect>=3.6.7",
+    "sqlmodel>=0.0.31",
+    "xxhash>=3.6.0",
 ]
 
 [project.urls]

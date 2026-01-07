@@ -10,20 +10,20 @@ enum Industry {
 
 // see https://docs.boundaryml.com/examples/prompt-engineering/symbol-tuning not verified
 enum KnownCompetitor {
-    Capgemini @alias("c1") @description("Capgemini (abreviated CAP) or subsidary is mentionned")
-    Thales @description("Thales Group or subsidary is mentionned")
-    IBM @description("IBM of subsidary is mentionned")
-    Accenture @description("Accenture or subsidary is mentionned")
-    DXC @description("DXC Technology or subsidary is mentionned")
-    TCS @description("Tata Consultancy Services (commonly abreaviated as TCS) or subsidary is mentionned")
-    Infosys @description("Infosys Limited or subsidary is mentionned")
-    Wipro @description("Wipro Limited or subsidary is mentionned")
-    Cognizant @description("Cognizant Technology or subsidary is mentionned")
-    HCL @description("HCL Technologies or subsidary is mentionned")
-    CGI @description("CGI Inc. or subsidary is mentionned")
-    Sopra @description("Sopra Steria or subsidaryis mentionned")
-    CS @description("CS GROUP (commonly abreaviated as CS) or subsidary  is mentionned" )
-   // Other @description("Other Competitors are mentionned")
+    Capgemini @description("Capgemini, or CAP, or subsidary")
+    Thales @description("Thales Group or subsidary")
+    IBM @description("IBM of subsidary")
+    Accenture @description("Accenture or subsidary")
+    DXC @description("DXC Technology or subsidary")
+    TCS @description("Tata Consultancy Services (commonly abreaviated as TCS) or subsidary")
+    Infosys @description("Infosys Limited or subsidary")
+    Wipro @description("Wipro Limited or subsidary")
+    Cognizant @description("Cognizant Technology or subsidary")
+    HCL @description("HCL Technologies or subsidary")
+    CGI @description("CGI Inc. or subsidary")
+    Sopra @description("Sopra Steria or subsidary")
+    CS @description("CS GROUP (commonly abreviated as CS) or subsidary " )
+    Other @description("Other Competitors are mentionned")
 }
 
 // class Document {
@@ -44,7 +44,7 @@ class Opportunity {
 
 class Person {
   @@description("person involved in a project")
-  name string? @description("Full name of involved person")
+  name string @description("Full name of involved person")
   organization string? @description("Affiliated organization")
   contact_type string? @description("Internal/External/Client/Partner")
 

@@ -136,7 +136,7 @@ class KgManager(BaseModel):
 
         if self.profile not in self.ekg_config.kg_configs:
             logger.warning(
-                "Unknown KG profile '%s'; available=%s",
+                "Unknown KG_CONFIG= '%s'; available=%s",
                 self.profile,
                 sorted(self.ekg_config.kg_configs.keys()),
             )
@@ -152,7 +152,7 @@ class KgManager(BaseModel):
 
         if self.profile not in self.ekg_config.kg_configs:
             raise KeyError(
-                f"KG profile '{self.profile}' is not defined in ekg.yaml; "
+                f"KG_CONFIG='{self.profile}' is not defined in ekg.yaml; "
                 f"available: {sorted(self.ekg_config.kg_configs.keys())}"
             )
         return self.ekg_config.kg_configs[self.profile]
@@ -176,7 +176,7 @@ class KgManager(BaseModel):
 
         if self._base_path is None:
             cfg = global_config()
-            data_root = cfg.get_dir_path("paths.data_root")
+            data_root = cfg.get_dir_path("paths.ekg_data")
             self._base_path = data_root / "kg_outputs" / self.profile
         return self._base_path
 

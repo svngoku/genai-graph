@@ -55,11 +55,14 @@ class ReviewedOpportunity {
 
 } 
 class Competitor {
-  @@description("Atos competitor mentionned in the documents. Don't confused with Partners")
-  name string @description("name of the competitor")
-  known_as KnownCompetitor? @description("Competitor id (short name)")
-
+  @@description(#"
+    Competitor mentionned in the documents. They might be know under serveral names, 
+    so to the best to identify the best match from the description.
+    Answer 'Other' if not in a given list. Don't confused with Partners.   "#)
+  
+  name KnownCompetitor? @alias("real name") @description("Best match from enum 'KnownCompetitor'. 'Other' if not found")
   // Link properties 
+  p_name_ string @alias("name") @description("name of the competitor, as mentionned in the document")
   p_comment_ string? @alias("comment") @description("What is said about that competitor (strong points, etc...)")
 
 }

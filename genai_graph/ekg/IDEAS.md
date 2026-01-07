@@ -1,3 +1,23 @@
+Refactor  CLI command 'extract' (in /home/tcl/prj/genai-tk/genai_tk/extra/structured/commands_baml.py) and functions baml_structured_extraction_flow. 
+The argument of the command should be: 
+ - a input root directory (could be given as a configuration variable like ${paths.data_root})
+ - list of include patterns { default : *.md"}  - should ba 'md' files
+ - list of exclude patterns { default None}
+ - an output directory (could be given as a configuration variable )
+ and existing one : recursive, force, batch-size, function, config  
+The manifest file is written in the output directy.
+Simplify code . KISS.
+
+
+The  ETL to inject doc in the graph has changed. Now the file are processed by command 'baml prefect-extract'.  The KV store 'PydanticStore' is no longer used : processed files are stored in a directory, and a Manifest is created. 
+he 'key' selector in config/ekg.yaml has been remplaced by a file filter.
+
+Uderstand the injection logic, and update add_documents_to_graph and related code and commands accordingly.  You should be able to simplify the code.
+The 'key' is
+
+You can test your update with : 'export KG_CONFIG=simple; cli kg create; '
+
+
 
 
 # Ideas around evolution of the Tk and Bleuprin
@@ -12,23 +32,6 @@
   - select the types of nodes and relationsips
 
 - Use G.V()
-
-## Prefect for BAML
-
-We want to make more robust and industrialized /home/tcl/prj/genai-tk/genai_tk/extra/structured/baml_processor.py and /home/tcl/prj/genai-tk/genai_tk/extra/structured/commands_baml.py taking full benefit of Prefect tasks and workflows.
-Typicall call could be similar to: 
-uv run cli baml extract $ONEDRIVE/prj/atos-kg/rainbow-md/cnes-venus-tma.md --function ExtractRainbow --force 
-(but create a new command).
-
-However, we want to use Prefect capabilities to simplify the process: 
-- store the JSON (Pydantic) results as files in a directory tree (whose root is taken from config file / deduced model class name of the Pydantic outcome)
-- store a manifest file in the target directory to avoid duplicated calculation. It should be a JSON serialized Pydantic object with path and hash of the processed file (and date...  could be used later).  
-- Process files in parallel, by batch (with a Thread Pool becase we are IO bound)
-- use upath to access files and dir (to ease use with remote files)
-- create a new file for processsing, and a new command. We Will  delete old approach later. 
-
-Note there are already some Prefect powered commmands in /home/tcl/prj/genai-graph/genai_graph/core/commands_ekg.py.  The genai-graph imports genai-tk.  So consider to move somme generic code (like the one to se up Prefect) in a  shared file in   /home/tcl/prj/genai-tk/genai_tk/extra/prefect
-
 
 
 
@@ -119,7 +122,7 @@ https://docs.chonkie.ai/oss/pipelines
 # To Test :
 - ``` export KG_CONFIG="db_only"; cli kg delete -f ; cli kg create ; cli kg schema --no-enums; cli kg export-html ; cli kg info```
 
-- ```uv run cli baml extract $ONEDRIVE/prj/atos-kg/rainbow-md/cnes-venus-tma.md --function ExtractRainbow --force```
+- ```uv run cli baml extract /prj/atos-kg/data/rainbow/md/real/*_CNES_TMA_VENUS_VIP_PEPS_THEIA_MUSCATE*.md --function ExtractRainbow --force```
 
 - ```uv run cli baml run FakeRainbow -i "Project for CNES; Marc Ferrer as sales lead in Atos team" --kvstore-key fake_cnes_1 --force```
 
@@ -147,6 +150,3 @@ Use https://github.com/GrahamDumpleton/wrapt for @once
 - Eval criteria in RFQ (from Bruno)
 - Dashboard ? 
 - ....
-
-
-

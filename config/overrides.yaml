@@ -6,9 +6,16 @@
 
 
 ekg_local:
-# Overide envivonment variable 
-  :env:
+  :env: # Overide envivonment variable 
     BAML_LOG: "warn"
+
+  # :merge:
+  #   - ${paths.config}/ekg.yaml 
+
+  paths:
+    data_root : ${oc.env:ONEDRIVE, null}/prj/atos-kg/data
+    ekg_data : ${oc.env:ONEDRIVE, null}/prj/atos-kg/data
+
 
   kg_config: ${oc.env:KG_CONFIG,test1_with_db}
   kg_tag: ${oc.env:KG_CONFIG_TAG,dev}
@@ -37,7 +44,6 @@ ekg_local:
     - genai_tk.extra.agents.commands_agents:AgentCommands
     - genai_tk.extra.structured.commands_baml:BamlCommands
     - genai_graph.core.commands_ekg:EkgCommands
-   # - genai_graph.core.commands_etl:EtlCommands
 
   kv_store: 
     default:
@@ -58,8 +64,6 @@ ekg_local:
       username : tcl
       password: ${oc.env:NEO4_PASSWORD, null}
       
-  paths:
-    ekg_data : ${oc.env:ONEDRIVE, null}/prj/atos-kg
 
   structured:
     default:

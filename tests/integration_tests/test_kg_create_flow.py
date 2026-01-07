@@ -26,7 +26,7 @@ def test_create_kg_flow_runs(tmp_path: Path, monkeypatch) -> None:
     from genai_tk.utils.config_mngr import global_config
 
     cfg = global_config()
-    cfg.set("paths.data_root", str(tmp_path))
+    cfg.set("paths.ekg_data", str(tmp_path))
 
     # Use whatever default test KG config is defined for tests, typically
     # something like "db_only" or any config used in existing integration
