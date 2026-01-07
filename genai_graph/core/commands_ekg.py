@@ -11,13 +11,13 @@ import os
 from typing import Annotated
 
 import typer
+from genai_tk.extra.prefect.runtime import ephemeral_prefect_settings
 from genai_tk.main.cli import CliTopCommand
 from loguru import logger
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from genai_tk.extra.prefect.runtime import ephemeral_prefect_settings
 from genai_graph.core.graph_backend import (
     create_backend_from_config,
     get_backend_storage_path_from_config,

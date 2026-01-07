@@ -4,6 +4,7 @@ schemas_root: genai_graph.ekg.schema
 
 paths:
   rainbow_md : ${paths.ekg_data}/rainbow/md/
+  rainbow_json : ${paths.ekg_data}/rainbow/json/
 
 kg_configs:
   simple:
