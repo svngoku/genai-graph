@@ -28,7 +28,11 @@ from genai_graph.core.graph_documents import DocumentStats, add_documents_to_gra
 from genai_graph.core.graph_html import generate_html
 from genai_graph.core.graph_schema import GraphSchema
 from genai_graph.core.kg_manager import get_kg_manager
-from genai_graph.core.subgraph_factories import SubgraphFactory, TableBackedSubgraphFactory
+from genai_graph.core.subgraph_factories import (
+    JsonFileBackedSubgraphFactory,
+    SubgraphFactory,
+    TableBackedSubgraphFactory,
+)
 
 
 def _get_prefect_logger_or_default() -> Any:
@@ -225,6 +229,22 @@ def ingest_subgraphs_task(
             )
             continue
 
+        # Handle JsonFileBackedSubgraphFactory - get file paths
+        if not keys and isinstance(subgraph_impl, JsonFileBackedSubgraphFactory):
+            try:
+                file_paths = subgraph_impl.get_all_file_paths()
+                keys = [str(fp) for fp in file_paths]
+                logger_pf.info(
+                    "Retrieved %d file paths from JSON-backed factory",
+                    len(keys),
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                msg = f"Failed to get file paths from JSON factory {factory_path}: {exc}"
+                logger.warning(msg)
+                manager.add_warning(msg)
+                keys = []
+
+        # Handle TableBackedSubgraphFactory - get all keys from DB
         if not keys and isinstance(subgraph_impl, TableBackedSubgraphFactory):
             try:
                 keys = subgraph_impl.get_all_keys()

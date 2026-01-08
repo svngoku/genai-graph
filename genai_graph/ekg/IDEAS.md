@@ -1,19 +1,9 @@
-Refactor  CLI command 'extract' (in /home/tcl/prj/genai-tk/genai_tk/extra/structured/commands_baml.py) and functions baml_structured_extraction_flow. 
-The argument of the command should be: 
- - a input root directory (could be given as a configuration variable like ${paths.data_root})
- - list of include patterns { default : *.md"}  - should ba 'md' files
- - list of exclude patterns { default None}
- - an output directory (could be given as a configuration variable )
- and existing one : recursive, force, batch-size, function, config  
-The manifest file is written in the output directy.
-Simplify code . KISS.
 
-
-The  ETL to inject doc in the graph has changed. Now the file are processed by command 'baml prefect-extract'.  The KV store 'PydanticStore' is no longer used : processed files are stored in a directory, and a Manifest is created. 
-he 'key' selector in config/ekg.yaml has been remplaced by a file filter.
+The  ETL to inject doc in the graph has changed. Now the file are processed by un updated version of command 'baml extract'.  The KV store 'PydanticStore' is no longer used : processed files are stored in a directory, and a Manifest is created. 
+The 'key' selector in config/ekg.yaml has been remplaced by a file filter.
 
 Uderstand the injection logic, and update add_documents_to_graph and related code and commands accordingly.  You should be able to simplify the code.
-The 'key' is
+I've already modified the config/ekg.yaml file for the "simple" configuration.
 
 You can test your update with : 'export KG_CONFIG=simple; cli kg create; '
 
@@ -122,12 +112,12 @@ https://docs.chonkie.ai/oss/pipelines
 # To Test :
 - ``` export KG_CONFIG="db_only"; cli kg delete -f ; cli kg create ; cli kg schema --no-enums; cli kg export-html ; cli kg info```
 
-- ```uv run cli baml extract /prj/atos-kg/data/rainbow/md/real/*_CNES_TMA_VENUS_VIP_PEPS_THEIA_MUSCATE*.md --function ExtractRainbow --force```
+- ```cli baml extract '${paths.rainbow_md}/real' '${paths.rainbow_json}' --include "*CNES_TMA_VENUS*.md"  --force```
 
-- ```uv run cli baml run FakeRainbow -i "Project for CNES; Marc Ferrer as sales lead in Atos team" --kvstore-key fake_cnes_1 --force```
+- ```cli baml run FakeRainbowJson -i "Project for ESA; Marc Ferrer as sales lead in Atos team" --out-dir '${paths.rainbow_json}/fake' --out-file fake_esa_1.json ```
 
 
-- ```cli baml run FakeArchitectureJson -i "IT platform for CNES with 3-tier, Java based"  --kvstore-key fake-cnes-1```
+- ```cli baml run FakeArchitectureJson -i "IT platform for CNES with 3-tier, Java based"  --out-dir '${paths.add_json}/fake' --out-file fake_add_CNES_1.json ```
 
 
 uv run cli kg delete -f ; uv run cli kg add-doc --key fake-cnes-1 --subgraph ArchitectureDocument

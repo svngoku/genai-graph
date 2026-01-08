@@ -5,15 +5,18 @@ schemas_root: genai_graph.ekg.schema
 paths:
   rainbow_md : ${paths.ekg_data}/rainbow/md/
   rainbow_json : ${paths.ekg_data}/rainbow/json/
+  add_json : ${paths.ekg_data}/arch_doc/json/
 
 kg_configs:
   simple:
     subgraphs:
       - factory: genai_graph.ekg.schema.rainbow_review:ReviewedOpportunitySubgraph
+        data_root: ${paths.rainbow_json}
         include: 
-        - ${paths.rainbow_md}/rainbow/md/real/*_CNES_TMA_VENUS_VIP_PEPS_THEIA_MUSCATE*.md
+          - "*_CNES_TMA_VENUS_VIP_PEPS_THEIA_MUSCATE*"
         exclude: 
-        - "*/fake/*"
+          - "fake/*"
+        recursive: true
 
   # test1:
   #   subgraphs:

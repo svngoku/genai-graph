@@ -11,16 +11,15 @@ from typing import Type
 from pydantic import BaseModel
 
 from genai_graph.core.graph_schema import GraphSchema
-from genai_graph.core.subgraph_factories import KvStoreBackedSubgraphFactory
+from genai_graph.core.subgraph_factories import JsonFileBackedSubgraphFactory
 from genai_graph.ekg.baml_client.types import ReviewedOpportunity
 from genai_graph.ekg.schema.common_nodes import FileMetadata, get_common_nodes
 
 
-class ReviewedOpportunitySubgraph(KvStoreBackedSubgraphFactory, BaseModel):
-    """Opportunity data subgraph implementation."""
+class ReviewedOpportunitySubgraph(JsonFileBackedSubgraphFactory, BaseModel):
+    """Opportunity data subgraph implementation using JSON files from BAML extract."""
 
     TOP_CLASS: Type[BaseModel] = ReviewedOpportunity
-    kv_store_id: str = "default"
 
     def build_schema(self) -> GraphSchema:
         """Build the graph schema configuration for opportunity data.

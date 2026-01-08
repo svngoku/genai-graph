@@ -12,16 +12,15 @@ from typing import Type
 from pydantic import BaseModel
 
 from genai_graph.core.graph_schema import GraphSchema
-from genai_graph.core.subgraph_factories import KvStoreBackedSubgraphFactory
+from genai_graph.core.subgraph_factories import JsonFileBackedSubgraphFactory
 from genai_graph.ekg.baml_client.types import Customer, SWArchitectureDocument
 from genai_graph.ekg.schema.common_nodes import FileMetadata, get_common_nodes
 
 
-class ArchitectureDocumentSubgraph(KvStoreBackedSubgraphFactory, BaseModel):
-    """Architecture document data subgraph implementation."""
+class ArchitectureDocumentSubgraph(JsonFileBackedSubgraphFactory, BaseModel):
+    """Architecture document data subgraph implementation using JSON files from BAML extract."""
 
     TOP_CLASS: Type[BaseModel] = SWArchitectureDocument
-    kv_store_id: str = "default"
 
     @property
     def name(self) -> str:

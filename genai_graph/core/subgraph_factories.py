@@ -1,13 +1,13 @@
 """ """
 
 import hashlib
+import json
 import re
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any, Type
 
 import pandas as pd
-from genai_tk.utils.pydantic.kv_store import PydanticStore
 from loguru import logger
 from pydantic import BaseModel
 from rich.console import Console
@@ -92,24 +92,97 @@ class SubgraphFactory(ABC, BaseModel):
         register_subgraph(self.name, self, registry=registry)
 
 
-class KvStoreBackedSubgraphFactory(SubgraphFactory):
-    kv_store_id: str = "default"
+# class KvStoreBackedSubgraphFactory(SubgraphFactory):
+#     kv_store_id: str = "default"
+
+#     def get_struct_data_by_key(self, key: str) -> BaseModel | None:
+#         """Load graph data from the key-value store.
+
+#         Args:
+#             key: The identifier to load
+
+#         Returns:
+#             Top class instance or None if not found
+#         """
+#         try:
+#             store = PydanticStore(kvstore_id=self.kv_store_id, model=self.TOP_CLASS)
+#             opportunity = store.load_object(key)
+#             return opportunity
+#         except Exception as e:
+#             raise ValueError(f"[red]Error loading opportunity data: {e}[/red]") from e
+
+
+class JsonFileBackedSubgraphFactory(SubgraphFactory):
+    """Subgraph factory that reads structured data from JSON files.
+
+    This factory works with the output of 'baml extract' command, which stores
+    extracted structured data as JSON files in a directory structure with model subdirectory.
+    """
+
+    data_root: str
+    include: list[str] | None = None
+    exclude: list[str] | None = None
+    recursive: bool = True
+
+    _files_cache: list[UPath] | None = None
+
+    def model_post_init(self, _context: object) -> None:
+        """Initialize and discover JSON files matching the patterns."""
+        from genai_tk.utils.file_patterns import resolve_config_path, resolve_files
+
+        resolved_root = resolve_config_path(self.data_root)
+        root_path = UPath(resolved_root)
+        model_name = self.TOP_CLASS.__name__
+
+        if not root_path.exists():
+            logger.warning(f"Data root directory not found: {root_path}")
+            self._files_cache = []
+            return
+
+        # Build include patterns to find files in model subdirectory
+        # Pattern format: {model_name}/{user_pattern} or **/{model_name}/{user_pattern}
+        user_patterns = self.include or ["*.json"]
+        include_patterns = []
+        for pattern in user_patterns:
+            if self.recursive:
+                # Search recursively: **/ReviewedOpportunity/*.json
+                include_patterns.append(f"**/{model_name}/{pattern}")
+            else:
+                # Direct subdirectory only: ReviewedOpportunity/*.json
+                include_patterns.append(f"{model_name}/{pattern}")
+
+        # Use resolve_files to find all matching files
+        # The exclude patterns will automatically filter out unwanted paths
+        files = resolve_files(
+            str(root_path),
+            include_patterns=include_patterns,
+            exclude_patterns=self.exclude,
+            recursive=self.recursive,
+        )
+
+        self._files_cache = [UPath(f) for f in files]
+        logger.info(f"Found {len(self._files_cache)} files for model {model_name} in {root_path}")
+
+    def get_all_file_paths(self) -> list[UPath]:
+        """Get all discovered JSON file paths."""
+        if self._files_cache is None:
+            return []
+        return self._files_cache
+
+    def get_struct_data_by_file_path(self, file_path: UPath) -> BaseModel | None:
+        """Load structured data from a JSON file."""
+        try:
+            json_text = file_path.read_text(encoding="utf-8")
+            data = json.loads(json_text)
+            return self.TOP_CLASS.model_validate(data)
+        except Exception as e:
+            logger.error(f"Failed to load JSON file {file_path}: {e}")
+            return None
 
     def get_struct_data_by_key(self, key: str) -> BaseModel | None:
-        """Load graph data from the key-value store.
-
-        Args:
-            key: The identifier to load
-
-        Returns:
-            Top class instance or None if not found
-        """
-        try:
-            store = PydanticStore(kvstore_id=self.kv_store_id, model=self.TOP_CLASS)
-            opportunity = store.load_object(key)
-            return opportunity
-        except Exception as e:
-            raise ValueError(f"[red]Error loading opportunity data: {e}[/red]") from e
+        """Legacy method for backward compatibility - interprets key as file path."""
+        file_path = UPath(key)
+        return self.get_struct_data_by_file_path(file_path)
 
 
 class TableBackedSubgraphFactory(SubgraphFactory):

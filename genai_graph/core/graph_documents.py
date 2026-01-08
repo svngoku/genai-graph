@@ -185,11 +185,13 @@ def add_documents_to_graph(
     """Add one or more documents to the knowledge graph.
 
     Args:
-        keys: list of keys to load via the subgraph implementation
-        subgraph_impl: subgraph module providing `load_data`
+        keys: List of keys/file paths to load via the subgraph implementation.
+              For JsonFileBackedSubgraphFactory, these are file paths.
+              For other factories, these are abstract keys.
+        subgraph_impl: Subgraph factory providing data loading methods
         backend: GraphBackend instance
         schema: GraphSchema instance
-        context: Optional KgContext for collecting warnings
+        context: Optional KgManager for collecting warnings
 
     Returns:
         DocumentStats instance summarising processing results
@@ -220,8 +222,27 @@ def add_documents_to_graph(
                 stats.total_failed += 1
                 continue
 
+            # For file-based sources, use relative path as source_key for cleaner provenance
+            from genai_graph.core.subgraph_factories import JsonFileBackedSubgraphFactory
+
+            if isinstance(subgraph_impl, JsonFileBackedSubgraphFactory):
+                # Extract relative path from full file path for cleaner source tracking
+                from genai_tk.utils.file_patterns import resolve_config_path
+                from upath import UPath
+
+                file_path = UPath(key)
+                try:
+                    data_root = resolve_config_path(subgraph_impl.data_root)
+                    root_path = UPath(data_root)
+                    source_key = str(file_path.relative_to(root_path))
+                except (ValueError, AttributeError):
+                    # Fallback to filename if relative path fails
+                    source_key = file_path.name
+            else:
+                source_key = key
+
             # create_graph will attach source_key into the extracted root nodes
-            nodes_dict, relationships = create_graph(backend, data, schema, source_key=key, context=context)
+            nodes_dict, relationships = create_graph(backend, data, schema, source_key=source_key, context=context)
 
             # On-demand pull: DB-backed subgraphs can enrich the graph once a
             # matching node exists (avoids orphan nodes from bulk DB loads).

@@ -7,7 +7,6 @@ using an in-process runner so no long-lived Prefect server is required.
 
 from __future__ import annotations
 
-import os
 from typing import Annotated
 
 import typer
@@ -17,12 +16,6 @@ from loguru import logger
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-
-from genai_graph.core.graph_backend import (
-    create_backend_from_config,
-    get_backend_storage_path_from_config,
-)
-from genai_graph.core.kg_manager import get_kg_manager
 
 GRAPH_DB_CONFIG = "default"
 
@@ -35,6 +28,7 @@ def _get_kg_config_name() -> str:
     This keeps command implementations simple while centralising the
     actual logic in :mod:`genai_graph.core.kg_manager`.
     """
+    from genai_graph.core.kg_manager import get_kg_manager
 
     manager = get_kg_manager()
     profile, _ = manager.activate()
@@ -138,8 +132,13 @@ class EkgCommands(CliTopCommand):
             ] = [],
         ) -> None:
             """Display EKG database information, schema overview, and mappings."""
+            from genai_graph.core.graph_backend import (
+                create_backend_from_config,
+                get_backend_storage_path_from_config,
+            )
             from genai_graph.core.graph_registry import GraphRegistry, get_subgraph
             from genai_graph.core.graph_schema import find_embedded_field_for_class
+            from genai_graph.core.kg_manager import get_kg_manager
 
             _get_kg_config_name()
 
@@ -778,6 +777,8 @@ class EkgCommands(CliTopCommand):
             configuration in the default web browser.
             """
             import webbrowser
+
+            from genai_graph.core.kg_manager import get_kg_manager
 
             # Get the current KG config
             _get_kg_config_name()

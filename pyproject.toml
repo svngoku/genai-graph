@@ -32,6 +32,7 @@ dependencies = [
     "prefect>=3.6.7",
     "sqlmodel>=0.0.31",
     "xxhash>=3.6.0",
+    "baml-lib>=0.42.0",
 ]
 
 [project.urls]
