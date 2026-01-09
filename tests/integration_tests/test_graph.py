@@ -14,7 +14,7 @@ Features the simplified GraphSchema API that:
 
 # Add the src directory to Python path for imports
 
-from genai_tk.utils.pydantic.kv_store import PydanticStore
+from genai_tk.utils.pydantic_utils.kv_store import PydanticStore
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table

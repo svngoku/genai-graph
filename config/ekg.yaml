@@ -28,43 +28,55 @@ kg_configs:
   #     mcp_servers:
   #       - filesystem   
 
-  # db_only:
-  #   subgraphs:
-  #     # - factory: genai_graph.ekg.schema.rainbow_review:ReviewedOpportunitySubgraph
-  #     #   initial_load: [rainbow-cnes-venus-tma]
-  #     - factory: ${schemas_root}.crm_export:CrmExtractSubGraph
-  #       db_dsn: sqlite:///${paths.data_root}/ekg/crm_extract.db
-  #       files:
-  #         - ${paths.ekg_data}/misc/report1750429630460_SHORTEN.xlsx
-  #       pd_read_parameters: {} 
+  db_only:
+    subgraphs:
+      # - factory: genai_graph.ekg.schema.rainbow_review:ReviewedOpportunitySubgraph
+      #   initial_load: [rainbow-cnes-venus-tma]
+      - factory: ${schemas_root}.crm_export:CrmExtractSubGraph
+        db_dsn: sqlite:///${paths.data_root}/ekg/crm_extract.db
+        files:
+          - ${paths.ekg_data}/crm_export/report1750429630460_SHORTEN.xlsx
+        pd_read_parameters: {} 
 
-  # simple_with_db:
-  #   subgraphs:
-  #     - factory: ${schemas_root}.rainbow_review:ReviewedOpportunitySubgraph
-  #       initial_load: [rainbow-cnes-venus-tma]
-  #     - factory: ${schemas_root}.crm_export:CrmExtractSubGraph
-  #       db_dsn: sqlite:///${paths.data_root}/ekg/crm_extract.db
-  #       files:
-  #         - ${paths.ekg_data}/misc/report1750429630460_SHORTEN.xlsx
-  #       pd_read_parameters: {}         
-  #       pull: 
-  #         merge_on: Opportunity.opportunity_id
-  #         db_field: "Atos Opportunity ID" 
+  simple_with_db:
+    subgraphs:
+      - factory: ${schemas_root}.rainbow_review:ReviewedOpportunitySubgraph
+        data_root: ${paths.rainbow_json}
+        include: 
+          - "*_CNES_TMA_VENUS_VIP_PEPS_THEIA_MUSCATE*"
+        exclude: 
+          - "fake/*"
+        recursive: true
+      - factory: ${schemas_root}.crm_export:CrmExtractSubGraph
+        db_dsn: sqlite:///${paths.data_root}/ekg/crm_extract.db
+        files:
+          - ${paths.ekg_data}/crm_export/report1750429630460_SHORTEN.xlsx
+        pd_read_parameters: {}         
+        pull: 
+          merge_on: Opportunity.opportunity_id
+          db_field: "Atos Opportunity ID" 
 
-  # test1_with_db:
-  #   subgraphs:
-  #     - factory: genai_graph.ekg.schema.rainbow_review:ReviewedOpportunitySubgraph
-  #       initial_load: [rainbow-cnes-venus-tma, rainbow-fake-cnes-1]
-  #     - factory: genai_graph.ekg.schema.architecture_doc:ArchitectureDocumentSubgraph
-  #       initial_load: [add-fake-cnes-1]
-  #     - factory: ${schemas_root}.crm_export:CrmExtractSubGraph
-  #       db_dsn: sqlite:///${paths.data_root}/ekg/crm_extract.db
-  #       files:
-  #         - ${paths.ekg_data}/misc/report1750429630460_SHORTEN.xlsx
-  #       pd_read_parameters: {}         
-  #       pull: 
-  #         merge_on: Opportunity.opportunity_id
-  #         db_field: "Atos Opportunity ID" 
-  #   agent:
-  #     mcp_servers:
-  #       - filesystem
+  test1_with_db:
+    subgraphs:
+      - factory: genai_graph.ekg.schema.rainbow_review:ReviewedOpportunitySubgraph
+        data_root: ${paths.rainbow_json}
+        include: 
+          - "*_CNES_*"
+          - "*_cnes_*"
+        recursive: true
+      - factory: genai_graph.ekg.schema.architecture_doc:ArchitectureDocumentSubgraph
+        data_root: ${paths.add_json}
+        include: 
+          - "*_CNES_*"
+        recursive: true
+      - factory: ${schemas_root}.crm_export:CrmExtractSubGraph
+        db_dsn: sqlite:///${paths.data_root}/ekg/crm_extract.db
+        files:
+          - ${paths.ekg_data}/crm_export/report1750429630460_SHORTEN.xlsx
+        pd_read_parameters: {}         
+        pull: 
+          merge_on: Opportunity.opportunity_id
+          db_field: "Atos Opportunity ID" 
+    agent:
+      mcp_servers:
+        - filesystem

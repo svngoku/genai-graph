@@ -1,19 +1,8 @@
 
-The  ETL to inject doc in the graph has changed. Now the file are processed by un updated version of command 'baml extract'.  The KV store 'PydanticStore' is no longer used : processed files are stored in a directory, and a Manifest is created. 
-The 'key' selector in config/ekg.yaml has been remplaced by a file filter.
-
-Uderstand the injection logic, and update add_documents_to_graph and related code and commands accordingly.  You should be able to simplify the code.
-I've already modified the config/ekg.yaml file for the "simple" configuration.
-
-You can test your update with : 'export KG_CONFIG=simple; cli kg create; '
-
-
-
 
 # Ideas around evolution of the Tk and Bleuprin
 
 ## Better  entity resolution ! 
-- issues with "known_as" (ex: gor Capgeminy)
 - use embeddings  ? 
 
 ## Better HTML visualisation
