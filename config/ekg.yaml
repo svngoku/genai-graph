@@ -62,7 +62,6 @@ kg_configs:
         data_root: ${paths.rainbow_json}
         include: 
           - "*_CNES_*"
-          - "*_cnes_*"
         recursive: true
       - factory: genai_graph.ekg.schema.architecture_doc:ArchitectureDocumentSubgraph
         data_root: ${paths.add_json}

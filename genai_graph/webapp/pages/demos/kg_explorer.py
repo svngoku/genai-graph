@@ -25,7 +25,7 @@ from loguru import logger
 from streamlit import session_state as sss
 
 from genai_graph.core.graph_backend import create_backend_from_config
-from genai_graph.core.graph_html import generate_html_from_cypher
+from genai_graph.core.graph_html import generate_html
 from genai_graph.core.text2cypher import text2cypher_chain
 
 if TYPE_CHECKING:
@@ -182,9 +182,9 @@ def main() -> None:
                     # Generate HTML visualization if graph display is requested
                     if sss.display_mode in ["Graph", "Both"]:
                         try:
-                            html_content = generate_html_from_cypher(
+                            html_content = generate_html(
                                 backend,
-                                cypher_query,
+                                query=cypher_query,
                             )
                             sss.graph_html = html_content
                         except Exception as e:
@@ -264,9 +264,9 @@ def main() -> None:
 
                                     # Generate HTML visualization
                                     try:
-                                        html_content = generate_html_from_cypher(
+                                        html_content = generate_html(
                                             backend,
-                                            generated_cypher,
+                                            query=generated_cypher,
                                         )
                                         sss.graph_html = html_content
                                     except Exception as e:

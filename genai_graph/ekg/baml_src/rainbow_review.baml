@@ -138,7 +138,9 @@ function FakeRainbowJson(project_description: string) -> ReviewedOpportunity {
   prompt #"
     Generate a fake proposal review for a project descrived as:
     {{ project_description }}
-
+    Adapt opportunity_id, customer, competitors, financials, tech stack, etc... to fit that description.
+    Adapt risks on win/loss reason. 
+    Just put a few items  to keep it short.  
     Follow the format:
     {{ ctx.output_format }}
 

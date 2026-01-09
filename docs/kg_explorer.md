@@ -110,19 +110,18 @@ The KG Explorer uses the default graph database configuration. To change it, mod
 
 ## Technical Implementation
 
-### New Functions
+### Cypher Query Visualization
 
-#### `generate_html_from_cypher()`
-Located in `genai_graph/core/graph_html.py`, this function executes a custom Cypher query and generates an HTML visualization:
+The KG Explorer uses the `generate_html()` function with a custom query parameter to visualize Cypher query results:
 
 ```python
 from genai_graph.core.graph_backend import create_backend_from_config
-from genai_graph.core.graph_html import generate_html_from_cypher
+from genai_graph.core.graph_html import generate_html
 
 backend = create_backend_from_config("default")
-html = generate_html_from_cypher(
+html = generate_html(
     backend,
-    "MATCH (n:Person)-[r]->(m) RETURN n, r, m LIMIT 50"
+    query="MATCH (n:Person)-[r]->(m) RETURN n, r, m LIMIT 50"
 )
 ```
 

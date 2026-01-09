@@ -152,9 +152,6 @@ def _serialize_kuzu_id(kuzu_id: Any) -> str:
 def _generate_html_content(nodes_list: list[dict[str, Any]], links_list: list[dict[str, Any]]) -> str:
     """Generate HTML content from nodes and links lists.
 
-    This is a helper function to avoid code duplication between generate_html
-    and generate_html_from_cypher.
-
     Args:
         nodes_list: List of node dictionaries with id, name, type, color, and properties
         links_list: List of link dictionaries with source, target, relation, weight info
@@ -531,6 +528,7 @@ def _fetch_graph_data(
     connection: GraphBackend,
     node_configs: list | None = None,
     relation_configs: list | None = None,
+    query: str = "MATCH (n)-[r]->(m) RETURN n, r, m LIMIT 1000",
 ) -> tuple[list[NodeRecord], list[RelationshipRecord]]:
     """Fetch all nodes and edges from the graph database via the provided connection/backend.
 
@@ -538,6 +536,9 @@ def _fetch_graph_data(
         connection: Object exposing an execute() method (e.g. GraphBackend or kuzu.Connection)
         node_configs: Optional list of node configurations (legacy or new format)
         relation_configs: Optional list of relation configurations (legacy or new format)
+        query: Cypher query to fetch relationships and nodes (default: "MATCH (n)-[r]->(m) RETURN n, r, m LIMIT 1000")
+               Can be customized to filter by node types, limit results, etc.
+               Must return columns named 'n', 'r', 'm' for source node, relationship, target node.
 
     Returns:
         Tuple of (nodes, relationships) where:
@@ -561,7 +562,6 @@ def _fetch_graph_data(
             if labels:
                 allowed_node_labels = labels
         except Exception:
-            # Fail open if configs are not in the expected shape
             allowed_node_labels = None
 
     if relation_configs:
@@ -576,170 +576,141 @@ def _fetch_graph_data(
         except Exception:
             allowed_rel_types = None
 
-    # No special-case Document/SOURCE provenance nodes handled here anymore.
-
-    # Get all tables first to understand the schema
     try:
-        tables_result = connection.execute("CALL show_tables() RETURN *")
-        tables_df = tables_result.get_as_df()
+        # Mapping from Kuzu internal ID to UUID and node data
+        kuzu_id_to_node_data: dict[str, dict[str, Any]] = {}
 
-        node_tables = []
+        # Execute the relationship query
+        rel_result = connection.execute(query)
+        rel_df = rel_result.get_as_df()
 
-        for _, row in tables_df.iterrows():
-            table_name = row["name"]
-            table_type = row["type"]
-            if table_type == "NODE":
-                if allowed_node_labels and table_name not in allowed_node_labels:
+        # Process all nodes and relationships from the query result
+        for _, row in rel_df.iterrows():
+            src_node = row["n"]
+            dst_node = row["m"]
+            rel_obj = row["r"]
+
+            # Process source and destination nodes
+            for node_obj in [src_node, dst_node]:
+                if not isinstance(node_obj, dict):
                     continue
-                node_tables.append(table_name)
 
-        # Create a mapping to store UUID to node data for relationship matching
-        uuid_to_node_data = {}
+                # Get Kuzu internal ID for deduplication
+                kuzu_id = _serialize_kuzu_id(node_obj.get("_id"))
+                if not kuzu_id or kuzu_id in kuzu_id_to_node_data:
+                    continue
 
-        # Fetch nodes from all node tables using simple RETURN n query
-        for table_name in node_tables:
-            try:
-                # Always use simple query to avoid field extraction issues
-                nodes_query = f"MATCH (n:{table_name}) RETURN n"
-                nodes_result = connection.execute(nodes_query)
-                result_df = nodes_result.get_as_df()
+                # Get node type (label)
+                node_type = node_obj.get("_label", "Unknown")
 
-                for _idx, row in result_df.iterrows():
-                    node_dict = {}
+                # Apply node label filtering
+                if allowed_node_labels and node_type not in allowed_node_labels:
+                    continue
 
-                    # Extract node data from the first column (the node object)
-                    node_obj = row.iloc[0] if len(row) > 0 else None
+                # Extract node properties (skip internal fields)
+                node_dict = {}
+                for key, val in node_obj.items():
+                    if key in ("_created_at", "_updated_at", "_original_name"):
+                        node_dict[key] = str(val).strip() if str(val).strip() else str(val)
+                    elif not key.startswith("_") and val is not None:
+                        node_dict[key] = str(val).strip() if str(val).strip() else str(val)
 
-                    if isinstance(node_obj, dict):
-                        # Handle dictionary-based results (most common)
-                        for key, val in node_obj.items():
-                            # Keep metadata fields like _created_at, _updated_at, _original_name
-                            # but skip Kuzu internal fields like _id, _label
-                            if key in ("_created_at", "_updated_at", "_original_name"):
-                                node_dict[key] = str(val).strip() if str(val).strip() else str(val)
-                            elif not key.startswith("_") and val is not None:
-                                node_dict[key] = str(val).strip() if str(val).strip() else str(val)
-                    else:
-                        # Handle object-based results (fallback)
-                        try:
-                            for attr in dir(node_obj):
-                                if not attr.startswith("_") and hasattr(node_obj, attr):
-                                    val = getattr(node_obj, attr)
-                                    if val is not None and not callable(val):
-                                        node_dict[attr] = str(val).strip() if str(val).strip() else str(val)
-                        except Exception:
-                            # Last resort: skip this node
-                            continue
+                # Generate display name and metadata
+                node_name = _get_node_display_name(node_dict, node_type)
+                node_dict["type"] = node_type
+                node_dict["name"] = node_name
 
-                    # Skip empty nodes
-                    if not node_dict:
-                        continue
+                # Generate UUID for this node
+                node_uuid = str(uuid.uuid4())
 
-                    # Generate display name and add node metadata
-                    node_name = _get_node_display_name(node_dict, table_name)
-                    node_dict["type"] = table_name
-                    node_dict["name"] = node_name
+                # Store in mapping
+                kuzu_id_to_node_data[kuzu_id] = {
+                    "uuid": node_uuid,
+                    "type": node_type,
+                    "node_dict": node_dict,
+                }
 
-                    # Generate UUID-based ID for absolute uniqueness and consistency
-                    node_uuid = str(uuid.uuid4())
+                nodes.append(NodeRecord(node_id=node_uuid, properties=node_dict))
 
-                    # Store mapping for relationship resolution
-                    # Use Kuzu internal ID for perfect consistency
-                    kuzu_id = None
-                    if isinstance(node_obj, dict) and "_id" in node_obj:
-                        kuzu_id = _serialize_kuzu_id(node_obj["_id"])
+            # Process relationship
+            rel_type = "RELATED_TO"
+            edge_props = {}
+            if isinstance(rel_obj, dict):
+                rel_type = rel_obj.get("_label", "RELATED_TO")
+                # Extract edge properties (non-internal fields)
+                for key, value in rel_obj.items():
+                    if not key.startswith("_") and value is not None:
+                        edge_props[key] = value
 
-                    if kuzu_id:
-                        uuid_to_node_data[kuzu_id] = {"uuid": node_uuid, "type": table_name, "node_dict": node_dict}
-
-                    nodes.append(NodeRecord(node_id=node_uuid, properties=node_dict))
-
-            except Exception as e:
-                print(f"Error fetching nodes from {table_name}: {e}")
+            # Apply relationship type filtering
+            if allowed_rel_types and rel_type not in allowed_rel_types:
                 continue
 
-        # If no nodes, return early
-        if not nodes:
-            return [], []
+            # Get UUIDs for source and destination
+            src_kuzu_id = _serialize_kuzu_id(src_node.get("_id")) if isinstance(src_node, dict) else None
+            dst_kuzu_id = _serialize_kuzu_id(dst_node.get("_id")) if isinstance(dst_node, dict) else None
 
-        # UUID mapping complete
+            if not src_kuzu_id or not dst_kuzu_id:
+                continue
 
-        # Fetch relationships using explicit queries
+            src_data = kuzu_id_to_node_data.get(src_kuzu_id)
+            dst_data = kuzu_id_to_node_data.get(dst_kuzu_id)
+
+            if src_data and dst_data:
+                relationships.append(
+                    RelationshipRecord(
+                        from_type=src_data["type"],
+                        from_id=src_data["uuid"],
+                        to_type=dst_data["type"],
+                        to_id=dst_data["uuid"],
+                        name=rel_type,
+                        properties=edge_props,
+                    )
+                )
+
+        # Fetch isolated nodes (nodes without relationships)
         try:
-            # Try to get all relationships - basic Kuzu syntax
-            rel_query = "MATCH (n)-[r]->(m) RETURN n, r, m"
-            rel_result = connection.execute(rel_query)
-            rel_df = rel_result.get_as_df()
+            isolated_query = "MATCH (n) WHERE NOT (n)-[]-() RETURN n"
+            isolated_result = connection.execute(isolated_query)
+            isolated_df = isolated_result.get_as_df()
 
-            for _, row in rel_df.iterrows():
-                # Extract source and destination node data
-                src_node = row["n"]
-                dst_node = row["m"]
-                rel_obj = row["r"]
-
-                # Get relationship type from relationship object (Kuzu returns dict)
-                rel_type = "RELATED_TO"
-                edge_props = {}
-                if isinstance(rel_obj, dict):
-                    if "_label" in rel_obj:
-                        rel_type = rel_obj["_label"]
-                    # Extract edge properties (non-internal fields)
-                    for key, value in rel_obj.items():
-                        if not key.startswith("_") and value is not None:
-                            edge_props[key] = value
-                elif hasattr(rel_obj, "__class__"):
-                    rel_type = rel_obj.__class__.__name__.replace("Relationship", "").replace("Record", "")
-                    if not rel_type or rel_type == "object":
-                        rel_type = "RELATED_TO"
-
-                # Respect relation-type filtering when requested
-                if allowed_rel_types and rel_type not in allowed_rel_types:
+            for _, row in isolated_df.iterrows():
+                node_obj = row["n"]
+                if not isinstance(node_obj, dict):
                     continue
 
-                # Extract Kuzu internal IDs for perfect matching
-                src_kuzu_id = None
-                dst_kuzu_id = None
+                # Get Kuzu internal ID for deduplication
+                kuzu_id = _serialize_kuzu_id(node_obj.get("_id"))
+                if not kuzu_id or kuzu_id in kuzu_id_to_node_data:
+                    continue
 
-                if isinstance(src_node, dict) and "_id" in src_node:
-                    src_kuzu_id = _serialize_kuzu_id(src_node["_id"])
-                if isinstance(dst_node, dict) and "_id" in dst_node:
-                    dst_kuzu_id = _serialize_kuzu_id(dst_node["_id"])
+                # Get node type (label)
+                node_type = node_obj.get("_label", "Unknown")
 
-                src_uuid = None
-                dst_uuid = None
+                # Apply node label filtering
+                if allowed_node_labels and node_type not in allowed_node_labels:
+                    continue
 
-                if src_kuzu_id and src_kuzu_id in uuid_to_node_data:
-                    src_uuid = uuid_to_node_data[src_kuzu_id]["uuid"]
+                # Extract node properties
+                node_dict = {}
+                for key, val in node_obj.items():
+                    if key in ("_created_at", "_updated_at", "_original_name"):
+                        node_dict[key] = str(val).strip() if str(val).strip() else str(val)
+                    elif not key.startswith("_") and val is not None:
+                        node_dict[key] = str(val).strip() if str(val).strip() else str(val)
 
-                if dst_kuzu_id and dst_kuzu_id in uuid_to_node_data:
-                    dst_uuid = uuid_to_node_data[dst_kuzu_id]["uuid"]
+                # Generate display name and metadata
+                node_name = _get_node_display_name(node_dict, node_type)
+                node_dict["type"] = node_type
+                node_dict["name"] = node_name
 
-                # Only add if we have valid UUIDs for both nodes
-                if src_uuid and dst_uuid:
-                    # Extract node types for RelationshipRecord
-                    src_type = uuid_to_node_data[src_kuzu_id]["type"] if src_kuzu_id in uuid_to_node_data else "Unknown"
-                    dst_type = uuid_to_node_data[dst_kuzu_id]["type"] if dst_kuzu_id in uuid_to_node_data else "Unknown"
+                # Generate UUID for this node
+                node_uuid = str(uuid.uuid4())
 
-                    relationships.append(
-                        RelationshipRecord(
-                            from_type=src_type,
-                            from_id=src_uuid,
-                            to_type=dst_type,
-                            to_id=dst_uuid,
-                            name=rel_type,
-                            properties=edge_props,
-                        )
-                    )
+                nodes.append(NodeRecord(node_id=node_uuid, properties=node_dict))
 
         except Exception as e:
-            print(f"Error fetching relationships: {e}")
-            print(f"Error in schema-aware relationship extraction: {e}")
-
-        # Note: UUID-based IDs ensure all relationships are valid
-
-        # If we have nodes but no relationships and relation_configs are provided,
-        # we could potentially create logical connections based on the relation configs
-        # However, for a truly generic solution, we'll just use what we found
+            print(f"Warning: Could not fetch isolated nodes: {e}")
 
     except Exception as e:
         print(f"Error in _fetch_graph_data: {e}")
@@ -754,6 +725,7 @@ def generate_html(
     node_configs: list | None = None,
     relation_configs: list | None = None,
     custom_colors: dict[str, str] | None = None,
+    query: str = "MATCH (n)-[r]->(m) RETURN n, r, m",
 ) -> str:
     """Generate an HTML graph visualization from a graph connection/backend.
 
@@ -765,11 +737,14 @@ def generate_html(
         node_configs: Optional list of node configurations (legacy or new format)
         relation_configs: Optional list of relation configurations (legacy or new format)
         custom_colors: Optional mapping of node types to hex color codes
+        query: Cypher query to fetch relationships and nodes (default: "MATCH (n)-[r]->(m) RETURN n, r, m")
+               Can be customized to filter by node types, limit results, etc.
+               Must return columns named 'n', 'r', 'm' for source node, relationship, target node.
 
     Returns:
         The HTML content as a string.
     """
-    nodes_data, relationships_data = _fetch_graph_data(connection, node_configs, relation_configs)
+    nodes_data, relationships_data = _fetch_graph_data(connection, node_configs, relation_configs, query)
 
     # Build visualization model using generic color assignment
 
@@ -842,255 +817,3 @@ def generate_html(
         f.write(html_content)
 
     return html_content
-
-
-def generate_html_from_cypher(
-    connection: GraphBackend,
-    cypher_query: str,
-    destination_file_path: str | None = None,
-    custom_colors: dict[str, str] | None = None,
-) -> str:
-    """Generate an HTML graph visualization from a custom Cypher query.
-
-    This function executes a Cypher query and visualizes the results as an
-    interactive D3.js graph. It reuses the same data fetching logic as generate_html
-    but with a custom query instead of fetching all data.
-
-    Args:
-        connection: GraphBackend instance connected to the database
-        cypher_query: Cypher query to execute (should return nodes/relationships)
-        destination_file_path: Optional path to write the HTML file
-        custom_colors: Optional mapping of node types to hex color codes
-
-    Returns:
-        The HTML content as a string
-
-    Example:
-        ```
-        backend = create_backend_from_config("default")
-        html = generate_html_from_cypher(
-            backend,
-            "MATCH (n:Person)-[r]->(m) RETURN n, r, m LIMIT 50"
-        )
-        ```
-    """
-    # Use the same data fetching logic by creating a custom wrapper
-    # that extracts nodes and relationships from the query result
-
-    nodes: list[NodeRecord] = []
-    relationships: list[RelationshipRecord] = []
-
-    try:
-        result = connection.execute(cypher_query)
-        result_df = result.get_as_df()
-    except Exception as e:
-        raise RuntimeError(f"Failed to execute Cypher query: {e}") from e
-
-    if result_df.empty:
-        # Return a simple HTML with a message
-        empty_html = """
-        <!DOCTYPE html>
-        <html>
-        <head><title>Empty Result</title></head>
-        <body style="font-family: Arial; padding: 20px; background: #1a1a2e; color: white;">
-            <h2>No results found</h2>
-            <p>The query returned no data to visualize.</p>
-        </body>
-        </html>
-        """
-        return empty_html
-
-    # Use the same ID mapping logic as _fetch_graph_data
-    uuid_to_node_data = {}
-
-    # Process each row in the result
-    for _, row in result_df.iterrows():
-        for col_name in result_df.columns:
-            value = row[col_name]
-
-            # Check if value is a node (dict with node properties)
-            # IMPORTANT: Must check it's NOT a relationship first (relationships also have _id and _label)
-            if (
-                isinstance(value, dict)
-                and "_id" in value
-                and "_label" in value
-                and "_src" not in value
-                and "_dst" not in value
-            ):
-                # This is a node (not a relationship)
-                node_obj = value
-                node_label = value.get("_label", "Unknown")
-                kuzu_id = _serialize_kuzu_id(node_obj["_id"])
-
-                # Skip if we've already processed this node
-                if kuzu_id in uuid_to_node_data:
-                    continue
-
-                # Extract properties (same logic as _fetch_graph_data)
-                node_dict = {}
-                for key, val in node_obj.items():
-                    if key in ("_created_at", "_updated_at", "_original_name"):
-                        node_dict[key] = str(val).strip() if str(val).strip() else str(val)
-                    elif not key.startswith("_") and val is not None:
-                        node_dict[key] = str(val).strip() if str(val).strip() else str(val)
-
-                # Skip empty nodes
-                if not node_dict:
-                    continue
-
-                # Generate display name and add node metadata
-                node_name = _get_node_display_name(node_dict, node_label)
-                node_dict["type"] = node_label
-                node_dict["name"] = node_name
-
-                # Generate UUID-based ID for absolute uniqueness and consistency
-                node_uuid = str(uuid.uuid4())
-
-                # Store mapping for relationship resolution
-                uuid_to_node_data[kuzu_id] = {"uuid": node_uuid, "type": node_label, "node_dict": node_dict}
-
-                nodes.append(NodeRecord(node_id=node_uuid, properties=node_dict))
-
-    # Now process relationships
-    for _, row in result_df.iterrows():
-        for col_name in result_df.columns:
-            value = row[col_name]
-
-            # Check if it's a relationship
-            if isinstance(value, dict) and "_src" in value and "_dst" in value and "_label" in value:
-                rel_obj = value
-                rel_type = rel_obj.get("_label", "RELATED_TO")
-
-                # Extract Kuzu internal IDs for matching
-                src_kuzu_id = _serialize_kuzu_id(rel_obj["_src"])
-                dst_kuzu_id = _serialize_kuzu_id(rel_obj["_dst"])
-
-                # Get UUIDs from our mapping
-                if src_kuzu_id not in uuid_to_node_data or dst_kuzu_id not in uuid_to_node_data:
-                    # Skip relationships where nodes aren't in our result set
-                    continue
-
-                src_uuid = uuid_to_node_data[src_kuzu_id]["uuid"]
-                dst_uuid = uuid_to_node_data[dst_kuzu_id]["uuid"]
-                src_type = uuid_to_node_data[src_kuzu_id]["type"]
-                dst_type = uuid_to_node_data[dst_kuzu_id]["type"]
-
-                # Extract edge properties (non-internal fields)
-                edge_props = {}
-                for key, value_prop in rel_obj.items():
-                    if not key.startswith("_") and value_prop is not None:
-                        edge_props[key] = value_prop
-
-                relationships.append(
-                    RelationshipRecord(
-                        from_type=src_type,
-                        from_id=src_uuid,
-                        to_type=dst_type,
-                        to_id=dst_uuid,
-                        name=rel_type,
-                        properties=edge_props,
-                    )
-                )
-
-    # Now use the same HTML generation logic as generate_html
-    # Build visualization model using generic color assignment
-    nodes_list: list[dict[str, Any]] = []
-    for node_record in nodes:
-        node_info = dict(node_record.properties)  # shallow copy
-        node_info["id"] = str(node_record.node_id)
-        node_type = node_info.get("type", "Unknown")
-        node_info["color"] = _get_node_color(node_type, custom_colors)
-        node_info["name"] = node_info.get("name", str(node_record.node_id))
-        # Trim noisy timestamp fields if present
-        node_info.pop("updated_at", None)
-        node_info.pop("created_at", None)
-        nodes_list.append(node_info)
-
-    links_list: list[dict[str, Any]] = []
-    for rel_record in relationships:
-        source_s = str(rel_record.from_id)
-        target_s = str(rel_record.to_id)
-        relation = rel_record.name
-        edge_info = rel_record.properties or {}
-
-        # Extract weight variations
-        all_weights: dict[str, float] = {}
-        primary_weight: float | None = None
-
-        if "weight" in edge_info:
-            try:
-                primary_weight = float(edge_info["weight"])  # best effort
-                all_weights["default"] = primary_weight
-            except (TypeError, ValueError):
-                pass
-
-        if "weights" in edge_info and isinstance(edge_info["weights"], dict):
-            for k, v in edge_info["weights"].items():
-                try:
-                    all_weights[str(k)] = float(v)
-                except (TypeError, ValueError):
-                    continue
-            if primary_weight is None and all_weights:
-                primary_weight = next(iter(all_weights.values()))
-
-        for key, value in edge_info.items():
-            if key.startswith("weight_"):
-                try:
-                    all_weights[key[7:]] = float(value)
-                except (TypeError, ValueError):
-                    continue
-
-        links_list.append(
-            {
-                "source": source_s,
-                "target": target_s,
-                "relation": relation,
-                "weight": primary_weight,
-                "all_weights": all_weights,
-                "relationship_type": edge_info.get("relationship_type"),
-                "edge_info": edge_info,
-            }
-        )
-
-    # Generate the HTML content using the exact same template as generate_html
-    html_content = _generate_html_content(nodes_list, links_list)
-
-    if destination_file_path:
-        os.makedirs(os.path.dirname(destination_file_path) or ".", exist_ok=True)
-        with open(destination_file_path, "w", encoding="utf-8") as f:
-            f.write(html_content)
-
-    return html_content
-
-
-# Alias for backward compatibility
-def generate_html_visualization(
-    connection: GraphBackend,
-    destination_file_path: str | None = None,
-    title: str = "Knowledge Graph",
-    node_configs: list | None = None,
-    relation_configs: list | None = None,
-    custom_colors: dict[str, str] | None = None,
-) -> str:
-    """Generate an HTML graph visualization from a graph connection/backend.
-
-    Alias for generate_kuzu_graph_html for backward compatibility.
-
-    Args:
-        connection: Object exposing an execute() method (e.g. GraphBackend or kuzu.Connection)
-        destination_file_path: Optional path to write the HTML file
-        title: Title for the visualization (currently unused)
-        node_configs: Optional list of node configurations
-        relation_configs: Optional list of relation configurations
-        custom_colors: Optional mapping of node types to hex color codes
-
-    Returns:
-        The HTML content as a string.
-    """
-    return generate_html(
-        connection=connection,
-        destination_file_path=destination_file_path,
-        node_configs=node_configs,
-        relation_configs=relation_configs,
-        custom_colors=custom_colors,
-    )

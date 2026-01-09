@@ -123,6 +123,7 @@ class JsonFileBackedSubgraphFactory(SubgraphFactory):
     include: list[str] | None = None
     exclude: list[str] | None = None
     recursive: bool = True
+    case_sensitive: bool = False
 
     _files_cache: list[UPath] | None = None
 
@@ -158,6 +159,7 @@ class JsonFileBackedSubgraphFactory(SubgraphFactory):
             include_patterns=include_patterns,
             exclude_patterns=self.exclude,
             recursive=self.recursive,
+            case_sensitive=self.case_sensitive,
         )
 
         self._files_cache = [UPath(f) for f in files]

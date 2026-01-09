@@ -22,7 +22,7 @@ from rich.text import Text
 
 from genai_graph.core.graph_backend import GraphBackend
 from genai_graph.core.graph_core import create_graph, restart_database
-from genai_graph.core.graph_html import generate_html_visualization
+from genai_graph.core.graph_html import generate_html
 from genai_graph.core.graph_schema import GraphNode, GraphRelation, GraphSchema
 from genai_graph.ekg.baml_client.types import (
     CompetitiveLandscape,
@@ -414,7 +414,7 @@ def main() -> None:
         # Generate visualization
         console.print(Panel("[bold cyan]Generating Visualization[/bold cyan]"))
         try:
-            generate_html_visualization(backend, "ekg_visu.html", title="Enhanced Knowledge Graph")
+            generate_html(backend, "ekg_visu.html", title="Enhanced Knowledge Graph")
             console.print("[green]✓[/green] Graph visualization saved to ekg_visu.html")
         except ImportError as e:
             console.print(f"[yellow]Warning: Could not generate visualization: {e}[/yellow]")
