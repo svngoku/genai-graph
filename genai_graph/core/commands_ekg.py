@@ -800,3 +800,101 @@ class EkgCommands(CliTopCommand):
             webbrowser.open(file_url)
 
             console.print("[green]✓ Opened in your default browser[/green]")
+
+        @cli_app.command("fake-rainbow-from-crm")
+        def fake_rainbow_from_crm(
+            num_files: Annotated[
+                int,
+                typer.Option(
+                    "--num",
+                    "-n",
+                    help="Number of fake Rainbow JSON files to generate",
+                ),
+            ] = 5,
+            config_name: Annotated[
+                str,
+                typer.Option(
+                    "--config",
+                    help="Name of the structured config to use from YAML config",
+                ),
+            ] = "default",
+            llm: Annotated[
+                str | None,
+                typer.Option(help="Name or tag of the LLM to use by BAML"),
+            ] = None,
+            output_dir: Annotated[
+                str | None,
+                typer.Option(
+                    "--out-dir",
+                    help=(
+                        "Output directory for result (supports config variables like ${paths.rainbow_json}). "
+                        "If not specified, uses ${paths.rainbow_json}."
+                    ),
+                ),
+            ] = None,
+            force: bool = typer.Option(False, "--force", help="Overwrite existing output files if they exist"),
+        ) -> None:
+            """Generate fake Rainbow JSON files from CRM export data.
+
+            Reads the CRM export Excel file and generates fake Rainbow JSON files
+            using the BAML FakeRainbowJson function. Each file is generated based on
+            opportunity information extracted from the CRM data.
+
+            The CRM file is read from ${paths.ekg_data}/crm_export/report1750429630460_500lines.xlsx.
+            Output files are written to the fake/ subdirectory of the output directory.
+
+            Examples:
+                ```bash
+                # Generate 5 fake files (default)
+                uv run cli kg fake-rainbow-from-crm
+
+                # Generate 2 fake files for testing
+                uv run cli kg fake-rainbow-from-crm --num 2
+
+                # Generate with specific LLM and force overwrite
+                uv run cli kg fake-rainbow-from-crm --num 3 --llm openai/gpt-4 --force
+
+                # Custom output directory
+                uv run cli kg fake-rainbow-from-crm --out-dir ./my_output --num 10
+                ```
+            """
+            from genai_tk.extra.prefect.runtime import run_flow_ephemeral
+
+            from genai_graph.orchestration.crm_fake_rainbow_flow import crm_fake_rainbow_flow
+
+            # Set default output directory if not provided
+            if output_dir is None:
+                output_dir = "${paths.rainbow_json}"
+
+            # CRM file path is hardcoded as per requirements
+            crm_file_path = "${paths.ekg_data}/crm_export/report1750429630460_500lines.xlsx"
+
+            console.print(f"[bold]Generating {num_files} fake Rainbow JSON files from CRM data[/bold]")
+            if llm:
+                console.print(f"[cyan]Using LLM:[/cyan] {llm}")
+
+            try:
+                # Run the Prefect flow with ephemeral settings
+                result = run_flow_ephemeral(
+                    crm_fake_rainbow_flow,
+                    crm_file_path=crm_file_path,
+                    output_dir=output_dir,
+                    num_files=num_files,
+                    config_name=config_name,
+                    llm=llm,
+                    force=force,
+                )
+
+                # Display results
+                console.print("")
+                console.print(f"[green]✓ Generation completed.[/green] Generated: {result['total_generated']} files")
+                console.print(f"[cyan]Output directory:[/cyan] {result['output_dir']}/fake/")
+
+            except FileNotFoundError as exc:
+                logger.error(f"CRM file not found: {exc}")
+                console.print(f"[red]❌ CRM file not found: {exc}[/red]")
+                raise typer.Exit(1) from exc
+            except Exception as exc:
+                logger.error(f"Fake Rainbow generation failed: {exc}")
+                console.print(f"[red]❌ Generation failed: {exc}[/red]")
+                raise typer.Exit(1) from exc

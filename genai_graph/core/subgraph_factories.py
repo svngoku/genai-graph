@@ -5,7 +5,7 @@ import json
 import re
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any, Type
+from typing import Any, ClassVar, Type
 
 import pandas as pd
 from loguru import logger
@@ -127,13 +127,33 @@ class JsonFileBackedSubgraphFactory(SubgraphFactory):
 
     _files_cache: list[UPath] | None = None
 
+    # Class-level cache to track which (data_root, model) pairs have been initialized
+    _initialized_roots: ClassVar[set[tuple[str, str]]] = set()
+
     def model_post_init(self, _context: object) -> None:
-        """Initialize and discover JSON files matching the patterns."""
+        """Initialize and discover JSON files matching the patterns.
+
+        Uses class-level cache to avoid redundant file discovery when the same
+        factory is instantiated multiple times.
+        """
         from genai_tk.utils.file_patterns import resolve_config_path, resolve_files
+
+        model_name = self.TOP_CLASS.__name__
+
+        # Check if this root + model combination has already been initialized
+        root_key = (self.data_root, model_name)
+        if root_key in JsonFileBackedSubgraphFactory._initialized_roots:
+            logger.debug(
+                f"Skipping duplicate file discovery for {model_name} in {self.data_root} "
+                f"(already discovered in this session)"
+            )
+            # Set empty cache - the actual files were already processed
+            # This instance won't be used for actual data loading
+            self._files_cache = []
+            return
 
         resolved_root = resolve_config_path(self.data_root)
         root_path = UPath(resolved_root)
-        model_name = self.TOP_CLASS.__name__
 
         if not root_path.exists():
             logger.warning(f"Data root directory not found: {root_path}")
@@ -165,6 +185,9 @@ class JsonFileBackedSubgraphFactory(SubgraphFactory):
         self._files_cache = [UPath(f) for f in files]
         logger.info(f"Found {len(self._files_cache)} files for model {model_name} in {root_path}")
 
+        # Mark this root + model as initialized
+        JsonFileBackedSubgraphFactory._initialized_roots.add(root_key)
+
     def get_all_file_paths(self) -> list[UPath]:
         """Get all discovered JSON file paths."""
         if self._files_cache is None:
@@ -193,6 +216,10 @@ class TableBackedSubgraphFactory(SubgraphFactory):
     pd_read_parameters: dict[str, Any] = {}
 
     _db_engine: Engine | None = None
+
+    # Class-level cache to track which (db_dsn, table_name) pairs have been initialized
+    # This prevents duplicate initialization across multiple instances
+    _initialized_databases: ClassVar[set[tuple[str, str]]] = set()
 
     @property
     def table_name(self) -> str:
@@ -275,8 +302,24 @@ class TableBackedSubgraphFactory(SubgraphFactory):
         """
 
     def model_post_init(self, _context: Any) -> None:
-        """Initialize the database engine and load data from files."""
+        """Initialize the database engine and load data from files.
+
+        This method uses a class-level cache to ensure that each (db_dsn, table_name)
+        pair is only initialized once, even if the factory is instantiated multiple
+        times (e.g., during GraphRegistry initialization).
+        """
         from sqlalchemy import create_engine
+
+        # Check if this database + table combination has already been initialized
+        db_key = (self.db_dsn, self.table_name)
+        if db_key in TableBackedSubgraphFactory._initialized_databases:
+            logger.debug(
+                f"Skipping duplicate initialization for {self.table_name} "
+                f"(database already initialized in this session)"
+            )
+            # Still need to create engine for this instance to support queries
+            self._db_engine = create_engine(self.db_dsn)
+            return
 
         logger.info(f"Initializing TableBackedSubgraphFactory with db_dsn: {self.db_dsn}")
 
@@ -293,6 +336,9 @@ class TableBackedSubgraphFactory(SubgraphFactory):
         self._create_import_tracking_table()
         for file_path in self.files:
             self._process_file(file_path)
+
+        # Mark this database + table as initialized
+        TableBackedSubgraphFactory._initialized_databases.add(db_key)
 
     def _create_import_tracking_table(self) -> None:
         """Create a table to track imported files with checksums and timestamps."""
