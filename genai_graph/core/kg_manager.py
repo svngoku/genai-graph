@@ -120,7 +120,7 @@ class KgManager(BaseModel):
 
         return cls(ekg_config=ekg_config, profile=profile, tag=tag)
 
-    def _reset_cached_paths(self) -> None:
+    def reset_cached_paths(self) -> None:
         self._base_path = None
         self._db_path = None
         self._html_path = None

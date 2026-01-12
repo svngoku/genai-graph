@@ -16,11 +16,13 @@ from typing import TYPE_CHECKING
 
 import streamlit as st
 import streamlit.components.v1 as components
+from genai_tk.utils.config_mngr import global_config
 from loguru import logger
 from streamlit import session_state as sss
 
 from genai_graph.core.graph_backend import create_backend_from_config
 from genai_graph.core.graph_html import generate_html
+from genai_graph.core.kg_manager import get_kg_manager
 
 if TYPE_CHECKING:
     from genai_graph.core.graph_backend import GraphBackend
@@ -33,8 +35,6 @@ def get_available_kg_configs() -> list[str]:
         List of KG configuration names
     """
     try:
-        from genai_graph.core.kg_manager import get_kg_manager
-
         manager = get_kg_manager()
         return sorted(manager.ekg_config.kg_configs.keys())
     except Exception as e:
@@ -52,8 +52,7 @@ def get_node_types(backend: "GraphBackend") -> list[str]:
         List of node type names
     """
     try:
-        result = backend.execute("CALL show_tables() RETURN name, type")
-        df = result.get_as_df()
+        df = backend.execute_get_as_df("CALL show_tables() RETURN name, type", union=False)
         # Filter for NODE tables only
         node_tables = df[df["type"] == "NODE"]["name"].tolist()
         return sorted(node_tables)
@@ -72,8 +71,7 @@ def get_relationship_types(backend: "GraphBackend") -> list[str]:
         List of relationship type names
     """
     try:
-        result = backend.execute("CALL show_tables() RETURN name, type")
-        df = result.get_as_df()
+        df = backend.execute_get_as_df("CALL show_tables() RETURN name, type", union=False)
         # Filter for REL tables only
         rel_tables = df[df["type"] == "REL"]["name"].tolist()
         return sorted(rel_tables)
@@ -96,8 +94,7 @@ def get_nodes_of_type(backend: "GraphBackend", node_type: str, limit: int = 200)
     try:
         # Try to get a name field - common names are 'name', '_name', or the first non-internal field
         query = f"MATCH (n:{node_type}) RETURN n LIMIT {limit}"
-        result = backend.execute(query)
-        df = result.get_as_df()
+        df = backend.execute_get_as_df(query, union=False)
 
         node_names = []
         for _, row in df.iterrows():
@@ -164,8 +161,6 @@ def initialize_session_state() -> None:
     if "kg_config_selected" not in sss:
         # Get default config
         try:
-            from genai_graph.core.kg_manager import get_kg_manager
-
             manager = get_kg_manager()
             sss.kg_config_selected = manager.ekg_config.kg_config
         except Exception:
@@ -181,6 +176,8 @@ def initialize_session_state() -> None:
         sss.selected_node_name = None
     if "selected_rel_types" not in sss:
         sss.selected_rel_types = []
+    if "current_query" not in sss:
+        sss.current_query = None
 
 
 def main() -> None:
@@ -211,13 +208,20 @@ def main() -> None:
         if selected_config != sss.kg_config_selected:
             sss.kg_config_selected = selected_config
             sss.graph_html = None  # Clear cached visualization
+
+            # Invalidate KgManager singleton to pick up new config
+            config = global_config()
+            config.set("kg_config", selected_config)
+
+            get_kg_manager.invalidate()  # pyright: ignore[reportFunctionMemberAccess]
+
             st.rerun()
 
         st.markdown("---")
 
         # Get database connection for filters
         try:
-            backend = create_backend_from_config("default", sss.kg_config_selected)
+            backend = create_backend_from_config("default", selected_config)
             if not backend:
                 st.error("❌ No Knowledge Graph database found")
                 return
@@ -301,7 +305,8 @@ def main() -> None:
                         sss.viz_limit,
                     )
 
-                    st.info(f"Executing query: `{query}`")
+                    # Store the query in session state
+                    sss.current_query = query
 
                     # Generate HTML visualization
                     html_content = generate_html(
@@ -314,21 +319,12 @@ def main() -> None:
                     st.error(f"Failed to generate visualization: {e}")
                     logger.exception("Visualization generation failed")
 
-        st.markdown("---")
-        st.markdown("### 🔗 Resources")
-        st.markdown("""
-        - [Graph Visualization Guide](https://neo4j.com/docs/cypher-manual/current/patterns/)
-        - [D3.js Documentation](https://d3js.org/)
-        """)
-
-    # Main content area
-    st.markdown("### 📊 Interactive Graph")
-
     if sss.graph_html is None:
         # Show default visualization on first load
         with st.spinner("Loading default graph visualization..."):
             try:
                 query = f"MATCH (n)-[r]->(m) RETURN n, r, m LIMIT {sss.viz_limit}"
+                sss.current_query = query
                 html_content = generate_html(
                     backend,
                     query=query,
@@ -340,7 +336,7 @@ def main() -> None:
                 return
 
     if sss.graph_html:
-        # Display current filters
+        # Display current filters and query side by side
         filter_info = []
         if sss.selected_node_type:
             if sss.selected_node_name:
@@ -351,13 +347,16 @@ def main() -> None:
             filter_info.append(f"Relationships: {', '.join(sss.selected_rel_types)}")
         filter_info.append(f"Limit: {sss.viz_limit}")
 
-        st.caption("Current filters: " + " | ".join(filter_info))
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            st.caption("Filters: " + " | ".join(filter_info))
+        with col2:
+            if sss.current_query:
+                st.caption(f"Query: `{sss.current_query}`")
 
         # Display the graph
         with st.container():
-            components.html(sss.graph_html, height=800, scrolling=True)
-
-        st.info("💡 Tip: Use the filters in the sidebar to focus on specific parts of the graph.")
+            components.html(sss.graph_html, height=600, scrolling=True)
     else:
         st.info("Use the sidebar to generate a visualization.")
 

@@ -22,6 +22,7 @@ from loguru import logger
 from streamlit import session_state as sss
 
 from genai_graph.core.graph_backend import create_backend_from_config
+from genai_graph.core.graph_registry import GraphRegistry
 from genai_graph.core.text2cypher import text2cypher_chain
 
 if TYPE_CHECKING:
@@ -141,7 +142,8 @@ def main() -> None:
         st.markdown("---")
         st.markdown("### 🔗 Resources")
         st.markdown("""
-        - [Cypher Query Language](https://neo4j.com/docs/cypher-manual/current/)
+        - [Cypher Query Language (neo4j)](https://neo4j.com/docs/cypher-manual/current/)
+        - [Cypher Query Language (kuzu/ladybug)](https://docs.ladybugdb.com/cypher/)       
         - [Graph Patterns](https://neo4j.com/docs/cypher-manual/current/patterns/)
         """)
 
@@ -213,7 +215,6 @@ def main() -> None:
         st.markdown("Enter your question in natural language and it will be converted to Cypher")
 
         # Get available subgraphs
-        from genai_graph.core.graph_registry import GraphRegistry
 
         try:
             registry = GraphRegistry()

@@ -529,6 +529,7 @@ def _fetch_graph_data(
     node_configs: list | None = None,
     relation_configs: list | None = None,
     query: str = "MATCH (n)-[r]->(m) RETURN n, r, m LIMIT 1000",
+    union: bool = True,
 ) -> tuple[list[NodeRecord], list[RelationshipRecord]]:
     """Fetch all nodes and edges from the graph database via the provided connection/backend.
 
@@ -539,6 +540,7 @@ def _fetch_graph_data(
         query: Cypher query to fetch relationships and nodes (default: "MATCH (n)-[r]->(m) RETURN n, r, m LIMIT 1000")
                Can be customized to filter by node types, limit results, etc.
                Must return columns named 'n', 'r', 'm' for source node, relationship, target node.
+        union: If True and query contains multiple statements, union the results. Default True.
 
     Returns:
         Tuple of (nodes, relationships) where:
@@ -581,8 +583,7 @@ def _fetch_graph_data(
         kuzu_id_to_node_data: dict[str, dict[str, Any]] = {}
 
         # Execute the relationship query
-        rel_result = connection.execute(query)
-        rel_df = rel_result.get_as_df()
+        rel_df = connection.execute_get_as_df(query, union=union)
 
         # Process all nodes and relationships from the query result
         for _, row in rel_df.iterrows():
@@ -671,8 +672,7 @@ def _fetch_graph_data(
         # Fetch isolated nodes (nodes without relationships)
         try:
             isolated_query = "MATCH (n) WHERE NOT (n)-[]-() RETURN n"
-            isolated_result = connection.execute(isolated_query)
-            isolated_df = isolated_result.get_as_df()
+            isolated_df = connection.execute_get_as_df(isolated_query, union=False)
 
             for _, row in isolated_df.iterrows():
                 node_obj = row["n"]
@@ -726,6 +726,7 @@ def generate_html(
     relation_configs: list | None = None,
     custom_colors: dict[str, str] | None = None,
     query: str = "MATCH (n)-[r]->(m) RETURN n, r, m",
+    union: bool = True,
 ) -> str:
     """Generate an HTML graph visualization from a graph connection/backend.
 
@@ -740,11 +741,12 @@ def generate_html(
         query: Cypher query to fetch relationships and nodes (default: "MATCH (n)-[r]->(m) RETURN n, r, m")
                Can be customized to filter by node types, limit results, etc.
                Must return columns named 'n', 'r', 'm' for source node, relationship, target node.
+        union: If True and query contains multiple statements, union the results. Default True.
 
     Returns:
         The HTML content as a string.
     """
-    nodes_data, relationships_data = _fetch_graph_data(connection, node_configs, relation_configs, query)
+    nodes_data, relationships_data = _fetch_graph_data(connection, node_configs, relation_configs, query, union)
 
     # Build visualization model using generic color assignment
 

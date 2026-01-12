@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from upath import UPath
 
 
 class QueryExecutor(ABC):
@@ -475,6 +476,19 @@ def create_backend_from_config(config_key: str = "default", kg_config_name: str 
         from genai_graph.core.kg_manager import get_kg_manager
 
         manager = get_kg_manager()
+
+        # If the requested kg_config_name differs from the manager's current profile,
+        # we need to temporarily update it to get the correct paths
+        if kg_config_name != manager.profile:
+            # Validate that kg_config_name exists
+            if kg_config_name not in manager.ekg_config.kg_configs:
+                raise ValueError(
+                    f"KG config '{kg_config_name}' not found. Available: {sorted(manager.ekg_config.kg_configs.keys())}"
+                )
+            # Update the profile to get the correct path
+            manager.profile = kg_config_name
+            manager.reset_cached_paths()
+
         manager.activate()
         connection_path = str(manager.db_path)
         manager.ensure_directories()
@@ -503,7 +517,7 @@ def create_backend_from_config(config_key: str = "default", kg_config_name: str 
     return backend
 
 
-def get_backend_storage_path_from_config(config_key: str = "default", kg_config_name: str | None = None) -> Path:
+def get_backend_storage_path_from_config(config_key: str = "default", kg_config_name: str | None = None) -> UPath:
     """Return the filesystem path used by the configured graph backend.
 
     This helper reads the same configuration used by create_backend_from_config
@@ -538,7 +552,7 @@ def get_backend_storage_path_from_config(config_key: str = "default", kg_config_
     if not connection_path:
         raise ValueError(f"Missing 'path' in graph_db config for '{config_key}'")
 
-    return Path(connection_path)
+    return UPath(connection_path)
 
 
 def delete_backend_storage_from_config(config_key: str = "default", kg_config_name: str | None = None) -> None:
@@ -562,4 +576,4 @@ def delete_backend_storage_from_config(config_key: str = "default", kg_config_na
     if db_path.is_file():
         db_path.unlink()
     else:
-        shutil.rmtree(db_path)
+        shutil.rmtree(str(db_path))
