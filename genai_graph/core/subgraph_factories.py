@@ -1,4 +1,13 @@
-""" """
+"""Factory classes for creating and managing graph subgraphs.
+
+This module provides various implementations of subgraph factories that can
+load structured data from different sources like JSON files and SQL databases.
+
+Classes:
+    SubgraphFactory: Abstract base class for all subgraph factory implementations.
+    JsonFileBackedSubgraphFactory: Factory for loading data from JSON files.
+    TableBackedSubgraphFactory: Factory for loading data from SQL database tables.
+"""
 
 import hashlib
 import json
@@ -183,7 +192,7 @@ class JsonFileBackedSubgraphFactory(SubgraphFactory):
         )
 
         self._files_cache = [UPath(f) for f in files]
-        logger.info(f"Found {len(self._files_cache)} files for model {model_name} in {root_path}")
+        logger.debug(f"Found {len(self._files_cache)} files for model {model_name} in {root_path}")
 
         # Mark this root + model as initialized
         JsonFileBackedSubgraphFactory._initialized_roots.add(root_key)
@@ -220,6 +229,11 @@ class TableBackedSubgraphFactory(SubgraphFactory):
     # Class-level cache to track which (db_dsn, table_name) pairs have been initialized
     # This prevents duplicate initialization across multiple instances
     _initialized_databases: ClassVar[set[tuple[str, str]]] = set()
+
+    # Track warnings to avoid repetition
+    _shown_warnings: ClassVar[set[str]] = set()
+    db_dsn: str
+    files: list[UPath]
 
     @property
     def table_name(self) -> str:
@@ -321,7 +335,7 @@ class TableBackedSubgraphFactory(SubgraphFactory):
             self._db_engine = create_engine(self.db_dsn)
             return
 
-        logger.info(f"Initializing TableBackedSubgraphFactory with db_dsn: {self.db_dsn}")
+        logger.debug(f"Initializing TableBackedSubgraphFactory with db_dsn: {self.db_dsn}")
 
         # Ensure parent directory exists for SQLite databases
         if self.db_dsn.startswith("sqlite:///"):
@@ -356,7 +370,7 @@ class TableBackedSubgraphFactory(SubgraphFactory):
         with self._db_engine.connect() as conn:
             conn.execute(text(create_table_sql))
             conn.commit()
-        logger.info("Import tracking table created or verified")
+        logger.debug("Import tracking table created or verified")
 
     def _calculate_file_checksum(self, file_path: UPath) -> str:
         """Calculate SHA256 checksum of a file."""
@@ -401,7 +415,7 @@ class TableBackedSubgraphFactory(SubgraphFactory):
             result = conn.execute(query, {"file_path": str(file_path)}).fetchone()
             if result:
                 old_row_count = result[0]
-                logger.info(f"Deleting {old_row_count} rows from previous import of {file_path}")
+                logger.debug(f"Deleting {old_row_count} rows from previous import of {file_path}")
 
         # Delete all data from the table (simple approach: delete everything since we only have one file typically)
         # In multi-file scenarios, you'd want to track file_source column for selective deletion
@@ -412,7 +426,7 @@ class TableBackedSubgraphFactory(SubgraphFactory):
             result = conn.execute(delete_sql)
             conn.execute(delete_tracking_sql, {"file_path": str(file_path)})
             conn.commit()
-            logger.info(f"Deleted {result.rowcount} rows from table '{table_name}' for reimport")
+            logger.debug(f"Deleting {result.rowcount} rows from table '{table_name}' for reimport")
 
     def _record_import(self, file_path: UPath, checksum: str, row_count: int) -> None:
         """Record file import in tracking table."""
@@ -436,7 +450,7 @@ class TableBackedSubgraphFactory(SubgraphFactory):
                 },
             )
             conn.commit()
-        logger.info(f"Recorded import of {file_path} with {row_count} rows")
+        logger.debug(f"Recorded import of {file_path} with {row_count} rows")
 
     def _process_file(self, file_path: UPath) -> None:
         """Process a single file: check existence, checksum, and import if needed."""
@@ -446,7 +460,7 @@ class TableBackedSubgraphFactory(SubgraphFactory):
             logger.error(error_msg)
             raise FileNotFoundError(error_msg)
 
-        logger.info(f"Processing file: {file_path}")
+        logger.debug(f"Processing file: {file_path}")
 
         checksum = self._calculate_file_checksum(file_path)
         logger.debug(f"File checksum: {checksum}")
@@ -459,12 +473,15 @@ class TableBackedSubgraphFactory(SubgraphFactory):
             return
         elif file_changed is True:
             # File changed - delete existing data before reimport
-            logger.warning(f"File {file_path} has changed (checksum differs) - will delete old data and reimport")
+            warning_msg = f"File {file_path} has changed (checksum differs) - will delete old data and reimport"
+            if warning_msg not in TableBackedSubgraphFactory._shown_warnings:
+                logger.warning(warning_msg)
+                TableBackedSubgraphFactory._shown_warnings.add(warning_msg)
             self._delete_file_data(file_path)
 
         try:
             df = self._load_dataframe(file_path)
-            logger.info(f"Loaded {len(df)} rows from {file_path}")
+            logger.debug(f"Loaded {len(df)} rows from {file_path}")
             self._import_dataframe(df)
             self._record_import(file_path, checksum, len(df))
 
@@ -506,14 +523,22 @@ class TableBackedSubgraphFactory(SubgraphFactory):
             raise ValueError(f"Key field '{key_field}' not found in dataframe columns: {df.columns.tolist()}")
         null_keys = df[key_field].isna().sum()
         if null_keys > 0:
-            logger.warning(f"Found {null_keys} rows with null key field '{key_field}' - these will be skipped")
+            warning_msg = f"Found {null_keys} rows with null key field '{key_field}' - these will be skipped"
+            if warning_msg not in TableBackedSubgraphFactory._shown_warnings:
+                logger.warning(warning_msg)
+                TableBackedSubgraphFactory._shown_warnings.add(warning_msg)
             df = df[df[key_field].notna()]
 
         # Remove duplicates based on key field
         initial_rows = len(df)
         df = df.drop_duplicates(subset=[key_field], keep="last")
         if len(df) < initial_rows:
-            logger.warning(f"Removed {initial_rows - len(df)} duplicate rows based on key field '{key_field}'")
+            duplicate_count = initial_rows - len(df)
+            if duplicate_count > 0:
+                warning_msg = f"Removed {duplicate_count} duplicate rows based on key field '{key_field}'"
+                if warning_msg not in TableBackedSubgraphFactory._shown_warnings:
+                    logger.warning(warning_msg)
+                    TableBackedSubgraphFactory._shown_warnings.add(warning_msg)
 
         try:
             # Check if table exists to decide on index creation
@@ -526,7 +551,7 @@ class TableBackedSubgraphFactory(SubgraphFactory):
             # Try to import data - pandas will create the table on first call
             try:
                 df.to_sql(name=table_name, con=self._db_engine, if_exists="append", index=False, method="multi")
-                logger.info(f"Successfully imported {len(df)} rows to table '{table_name}'")
+                logger.debug(f"Successfully imported {len(df)} rows to table '{table_name}'")
             except IntegrityError as ie:
                 # Handle duplicate key errors gracefully
                 logger.warning(f"Integrity constraint violation during import: {str(ie)}")
@@ -585,7 +610,7 @@ class TableBackedSubgraphFactory(SubgraphFactory):
                             logger.warning(f"Failed to update row with key {key_value}: {update_err}")
                             skipped += 1
 
-                logger.info(f"Upsert complete: {inserted} inserted, {updated} updated, {skipped} skipped")
+                logger.debug(f"Upsert complete: {inserted} inserted, {updated} updated, {skipped} skipped")
 
             # Create unique index only if table was just created (first import)
             if not table_exists:
@@ -593,7 +618,7 @@ class TableBackedSubgraphFactory(SubgraphFactory):
                     index_sql = f'CREATE UNIQUE INDEX IF NOT EXISTS idx_{key_field.replace(" ", "_")} ON {table_name} ("{key_field}")'
                     conn.execute(text(index_sql))
                     conn.commit()
-                    logger.info(f"Created unique index on '{key_field}'")
+                    logger.debug(f"Created unique index on '{key_field}'")
 
         except Exception as e:
             logger.error(f"Failed to import dataframe to database: {str(e)}")
@@ -620,7 +645,7 @@ class TableBackedSubgraphFactory(SubgraphFactory):
                 results = conn.execute(query).fetchall()
 
             keys = [str(row[0]) for row in results]
-            logger.info(f"Found {len(keys)} unique keys in database")
+            logger.debug(f"Found {len(keys)} unique keys in database")
             return keys
 
         except Exception as e:
@@ -658,7 +683,7 @@ class TableBackedSubgraphFactory(SubgraphFactory):
                 logger.warning(f"Mapper function returned None for key: {key}")
                 return None
 
-            logger.info(f"Successfully retrieved and mapped data for key: {key}")
+            logger.debug(f"Successfully retrieved and mapped data for key: {key}")
             return model_instance
 
         except Exception as e:

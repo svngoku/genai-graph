@@ -44,7 +44,8 @@ ui:
       - settings/MCP_servers.py
     demos:
       - demos/reAct_agent.py
-      - demos/kg_explorer.py
+      - demos/kg_query.py
+      - demos/kg_visualization.py
 
 
 

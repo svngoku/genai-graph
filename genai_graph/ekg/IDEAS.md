@@ -1,20 +1,15 @@
 
 
+Split  the Streamlit page "/home/tcl/prj/genai-graph/genai_graph/webapp/pages/demos/kg_explorer.py" in 2 :
+- In one page, allow the user to enter a query either in Cypher or in natural language, and display the result in a dataframe
 
-Create a command 'ekg fake-raindow-from-crm'.
-It could be based on ```cli baml run FakeRainbowJson -i "Project for ESA; Marc Ferrer as sales lead in Atos team" --out-dir '${paths.rainbow_json}/fake' --out-file fake_esa_1.json ``` , with that changes: 
-- FakeRainbowJson BAML function will always be used
-- the "input" commes from the file ${paths.ekg_data}/crm_export/report1750429630460_500lines.xlsx  - name can can be hard coded 
-- the command has a parameter "n" to specify the number of fake files to be created (default : 5)
-- for each 'n' first rows, pass the following project context content (in a LLM readable string) to the BAML FakeRainbowJson function : "Atos Opportunity ID",	"Opportunity Name",	"Reason",	"Industry", 		"Client Leader"	 "Account Name",	 "Sub-Industry"
-- The name of the out file is made of the opportunity_id and account name. 
+- In the other page, allow the user to display the graph in HTML. It could either display the full graph (query = "MATCH (n)-[r]->(m) RETURN n, r, m LIMIT l"), or a subpart of it by filtering the initial node and the relatioships. For that, display in the sidebar a multi-select box with the list of node types (list), the list of associated nodes, and a list of relationship, and create a Cypher query accordingly that is passed to the HTML page generation. 
+Allow also the user to select the LIMIT parameter (default: 500)
 
-Proces files in parallel taking with Prefect (its io-bound).
+For both pages, have in top of the sidebar a selector to select the KG configuration (currencly selected via "kg_config" key and get_kg_manager() )
 
-Similar to the 'run' command, have a --force, --config, --llm ,  --out-dir parameter.
-Create the commmand as subcommand of 'kg' (ie in /home/tcl/prj/genai-graph/genai_graph/core/commands_ekg.py), as it is project specific. 
-  
-Test whith just 2 files to start with....
+
+
 
 # Ideas around evolution of the Tk and Bleuprin
 

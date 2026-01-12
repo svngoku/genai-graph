@@ -87,7 +87,7 @@ def resolve_config_task(config_name: str | None) -> tuple[str, dict[str, Any]]:
     effective, _ = manager.activate()
     kg_cfg = manager.get_profile_dict()
 
-    logger_pf.info(
+    logger_pf.debug(
         "Loaded KG config '%s', subgraphs=%d.",
         effective,
         len(kg_cfg.get("subgraphs", [])),
@@ -114,7 +114,7 @@ def initialize_backend_task(config_key: str = "default", kg_config_name: str | N
     backend = create_backend_from_config(config_key, kg_config_name)
     db_path = get_backend_storage_path_from_config(config_key, kg_config_name)
 
-    logger_pf.info("Initialized backend '%s' at path '%s'", config_key, db_path)
+    logger_pf.debug("Initialized backend '%s' at path '%s'", config_key, db_path)
     return backend
 
 
@@ -150,7 +150,7 @@ def load_factories_task(kg_cfg: dict[str, Any]) -> list[SubgraphBundle]:
                 manager.add_warning(msg)
                 continue
 
-            logger_pf.info("Loaded subgraph factory: %s", subgraph_impl.name)
+            logger_pf.debug("Loaded subgraph factory: %s", subgraph_impl.name)
             bundles.append(SubgraphBundle(config=subgraph_cfg, factory=subgraph_impl))
         except Exception as exc:  # pragma: no cover - defensive logging
             import traceback
@@ -223,7 +223,7 @@ def ingest_subgraphs_task(
         keys = subgraph_cfg.get("initial_load", [])
 
         if not keys and pull_cfg and isinstance(subgraph_impl, TableBackedSubgraphFactory):
-            logger_pf.info(
+            logger_pf.debug(
                 "Skipping automatic ingestion for pull-only subgraph: %s",
                 getattr(subgraph_impl, "name", factory_path),
             )
@@ -234,7 +234,7 @@ def ingest_subgraphs_task(
             try:
                 file_paths = subgraph_impl.get_all_file_paths()
                 keys = [str(fp) for fp in file_paths]
-                logger_pf.info(
+                logger_pf.debug(
                     "Retrieved %d file paths from JSON-backed factory",
                     len(keys),
                 )
@@ -248,7 +248,7 @@ def ingest_subgraphs_task(
         if not keys and isinstance(subgraph_impl, TableBackedSubgraphFactory):
             try:
                 keys = subgraph_impl.get_all_keys()
-                logger_pf.info(
+                logger_pf.debug(
                     "Retrieved %d keys from table-backed factory",
                     len(keys),
                 )
@@ -264,7 +264,7 @@ def ingest_subgraphs_task(
         try:
             assert schema is not None, "Schema must be created before ingestion"
             stats = add_documents_to_graph(keys, subgraph_impl, backend, schema, manager)
-            logger_pf.info(
+            logger_pf.debug(
                 "Ingest stats for %s: processed=%d failed=%d nodes=%d rels=%d",
                 factory_path,
                 stats.total_processed,
@@ -286,13 +286,13 @@ def ingest_subgraphs_task(
             # Assume all keys failed when we cannot be more precise
             total_stats.total_failed += len(keys)
 
-    logger_pf.info(
-        "Total ingest stats: processed=%d failed=%d nodes=%d rels=%d",
-        total_stats.total_processed,
-        total_stats.total_failed,
-        total_stats.nodes_created,
-        total_stats.relationships_created,
-    )
+            logger_pf.debug(
+                "Total ingest stats: processed=%d failed=%d nodes=%d rels=%d",
+                total_stats.total_processed,
+                total_stats.total_failed,
+                total_stats.nodes_created,
+                total_stats.relationships_created,
+            )
     return total_stats
 
 
@@ -353,7 +353,7 @@ def export_html_task(
         destination = output_dir / f"{config_name}_graph.html"
 
     generate_html(backend, destination_file_path=str(destination))
-    logger_pf.info("Exported KG HTML visualization to '%s'", destination)
+    logger_pf.debug("Exported KG HTML visualization to '%s'", destination)
 
     return HtmlExportResult(config_name=config_name, output_path=destination)
 

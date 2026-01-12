@@ -8,6 +8,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
 
 class QueryExecutor(ABC):
     """Thin abstraction for anything that can execute Cypher-like queries.
@@ -135,6 +137,61 @@ class GraphBackend(QueryExecutor, ABC):
             Query language name (e.g., 'Cypher', 'KuzuQL')
         """
         ...
+
+    def execute_get_as_df(
+        self, query: str, parameters: dict[str, Any] | None = None, union: bool = True
+    ) -> pd.DataFrame:
+        """Execute a query and return results as a pandas DataFrame.
+
+        Handles both single query results and multiple results (e.g., from queries
+        separated by semicolons). When multiple results are returned and union=True,
+        the dataframes are concatenated.
+
+        Args:
+            query: Query string in the backend's query language
+            parameters: Optional query parameters
+            union: If True, merge multiple result dataframes. If False, raise error for multiple results.
+
+        Returns:
+            Query results as a pandas DataFrame
+
+        Raises:
+            ValueError: If multiple results are returned but union=False
+            AttributeError: If result object doesn't support get_as_df()
+        """
+        result = self.execute(query, parameters)
+
+        # Handle single result
+        if not isinstance(result, list):
+            if hasattr(result, "get_as_df"):
+                return result.get_as_df()
+            else:
+                raise AttributeError(f"Result object of type {type(result).__name__} does not support get_as_df()")
+
+        # Handle multiple results (list)
+        if not result:
+            # Empty list - return empty dataframe
+            return pd.DataFrame()
+
+        if not union:
+            raise ValueError(
+                f"Query returned {len(result)} results, but union=False. "
+                "Set union=True to merge multiple results into a single dataframe."
+            )
+
+        # Merge multiple dataframes
+        dataframes = []
+        for i, res in enumerate(result):
+            if hasattr(res, "get_as_df"):
+                dataframes.append(res.get_as_df())
+            else:
+                raise AttributeError(f"Result object {i} of type {type(res).__name__} does not support get_as_df()")
+
+        # Concatenate all dataframes
+        if dataframes:
+            return pd.concat(dataframes, ignore_index=True)
+        else:
+            return pd.DataFrame()
 
 
 class KuzuBackend(GraphBackend):

@@ -258,8 +258,7 @@ class EkgCommands(CliTopCommand):
             from rich.table import Table as RichTable
 
             try:
-                tables_result = backend.execute("CALL show_tables() RETURN *")
-                tables_df = tables_result.get_as_df()
+                tables_df = backend.execute_get_as_df("CALL show_tables() RETURN *", union=False)
 
                 node_tables: list[str] = []
                 rel_tables: list[str] = []
@@ -295,7 +294,9 @@ class EkgCommands(CliTopCommand):
 
                     for node_type in sorted(node_tables):
                         try:
-                            result_df = backend.execute(f"MATCH (n:{node_type}) RETURN count(n) as count").get_as_df()
+                            result_df = backend.execute_get_as_df(
+                                f"MATCH (n:{node_type}) RETURN count(n) as count", union=False
+                            )
                             count = result_df.iloc[0]["count"]
                             node_stats_table.add_row(node_type, str(count))
                         except Exception as exc:  # pragma: no cover - defensive
@@ -315,9 +316,9 @@ class EkgCommands(CliTopCommand):
 
                     for rel_type in sorted(rel_tables):
                         try:
-                            result_df = backend.execute(
-                                f"MATCH ()-[r:{rel_type}]->() RETURN count(r) as count"
-                            ).get_as_df()
+                            result_df = backend.execute_get_as_df(
+                                f"MATCH ()-[r:{rel_type}]->() RETURN count(r) as count", union=False
+                            )
                             count = result_df.iloc[0]["count"]
                             rel_stats_table.add_row(rel_type, str(count))
                         except Exception as exc:  # pragma: no cover - defensive
@@ -668,8 +669,7 @@ class EkgCommands(CliTopCommand):
 
                 try:
                     console.print(f"[dim]Executing: {cypher_query}[/dim]")
-                    result = backend.execute(cypher_query)
-                    df = result.get_as_df()
+                    df = backend.execute_get_as_df(cypher_query, union=True)
 
                     if df.empty:
                         console.print("[yellow]Query returned no results[/yellow]")
