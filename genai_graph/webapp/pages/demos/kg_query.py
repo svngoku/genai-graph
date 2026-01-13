@@ -123,11 +123,9 @@ def main() -> None:
 
     # Sidebar - KG Configuration Selector
     with st.sidebar:
-        st.markdown("### ⚙️ Configuration")
-
         available_configs = get_available_kg_configs()
         selected_config = st.selectbox(
-            "KG Configuration",
+            "⚙️ KG Configuration",
             options=available_configs,
             index=available_configs.index(sss.kg_config_selected) if sss.kg_config_selected in available_configs else 0,
             help="Select the Knowledge Graph configuration to query",

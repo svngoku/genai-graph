@@ -43,7 +43,7 @@ $(warning .env file not found in current or parent directories)
 endif
 
 
-include deploy/docker.mk
+#include deploy/docker.mk
 #include deploy/prefect.mk
 #include deploy/aws.mk
 #include deploy/github.mk
@@ -182,6 +182,17 @@ test-install: .pythonpath ## Quick test install
 ##  Project specific commands
 ##############################
 
+
+kuzu-explorer:  ## Start KuzuDB explorer
+	docker run --rm -p 8000:8000 \
+		-v /home/tcl/kuzu:/database  \
+		-e KUZU_FILE=ekg_database.db \
+		--rm kuzudb/explorer:latest \
+	& chrome http://localhost:8000
+
+baml-generate:  ## Generate BAML code from baml_src
+	uv run baml-cli generate --from ./genai_graph/ekg/baml_src
+
 ##############################
 ##  MICS
 ##############################
@@ -216,11 +227,3 @@ chrome:  ## Start docker Chromium
 	--shm-size="1gb" --restart unless-stopped \
 	lscr.io/linuxserver/chromium:latest
 	xdg-open localhost:3000
-
-
-kuzu-explorer:  ## Start KuzuDB explorer
-	docker run --rm -p 8000:8000 \
-		-v /home/tcl/kuzu:/database  \
-		-e KUZU_FILE=ekg_database.db \
-		--rm kuzudb/explorer:latest \
-	& chrome http://localhost:8000

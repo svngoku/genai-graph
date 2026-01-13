@@ -82,12 +82,14 @@ class CrmExtractSubGraph(TableBackedSubgraphFactory, BaseModel):
                 to_node=Person,
                 name="LEAD_BY",
                 description="Account Sales Leader",
+                field_paths=[("opportunity", "lead")],  # Explicitly use lead field, not customer.employees
             ),
             GraphRelation(
                 from_node=Opportunity,
                 to_node=Customer,
                 name="FOR_CUSTOMER",
                 description="Customer organization for this opportunity",
+                field_paths=[("opportunity", "customer")],  # Explicitly use customer field
             ),
         ]
         return GraphSchema(root_model_class=self.TOP_CLASS, nodes=nodes, relations=relations)

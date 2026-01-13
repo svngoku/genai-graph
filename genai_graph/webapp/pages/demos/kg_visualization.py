@@ -132,7 +132,7 @@ def build_filtered_cypher_query(
         limit: Maximum number of results
 
     Returns:
-        Cypher query string
+        Cypher query string (comma-separated for union execution)
     """
     # Build relationship type filter
     if relationship_types:
@@ -144,11 +144,22 @@ def build_filtered_cypher_query(
     # Build query based on filters
     if node_type and node_name:
         # Specific node and type - filter by name
+        # Include both outgoing and incoming relationships (semicolon-separated for Kuzu)
         name_escaped = node_name.replace("'", "\\'")
-        query = f"MATCH (n:{node_type})-{rel_filter}->(m) WHERE n.name = '{name_escaped}' RETURN n, r, m LIMIT {limit}"
+        half_limit = limit // 2
+        query = (
+            f"MATCH (n:{node_type})-{rel_filter}->(m) WHERE n.name = '{name_escaped}' RETURN n, r, m LIMIT {half_limit}; "
+            f"MATCH (n)-{rel_filter}->(m:{node_type}) WHERE m.name = '{name_escaped}' RETURN n, r, m LIMIT {half_limit}"
+        )
     elif node_type:
-        # Just node type filter
-        query = f"MATCH (n:{node_type})-{rel_filter}->(m) RETURN n, r, m LIMIT {limit}"
+        # Just node type filter - include both directions
+        # There are type issues it seems with UNION in Kuzu, so the merge
+        # is done via comma-separated queries and dataframe merge afterwards
+        half_limit = limit // 2
+        query = (
+            f"MATCH (n:{node_type})-{rel_filter}->(m) RETURN n, r, m LIMIT {half_limit}; "
+            f"MATCH (n)-{rel_filter}->(m:{node_type}) RETURN n, r, m LIMIT {half_limit}"
+        )
     else:
         # No node type filter
         query = f"MATCH (n)-{rel_filter}->(m) RETURN n, r, m LIMIT {limit}"
@@ -194,11 +205,9 @@ def main() -> None:
 
     # Sidebar - Configuration and Filters
     with st.sidebar:
-        st.markdown("### ⚙️ Configuration")
-
         available_configs = get_available_kg_configs()
         selected_config = st.selectbox(
-            "KG Configuration",
+            "⚙️ KG Configuration",
             options=available_configs,
             index=available_configs.index(sss.kg_config_selected) if sss.kg_config_selected in available_configs else 0,
             help="Select the Knowledge Graph configuration to visualize",
@@ -230,6 +239,16 @@ def main() -> None:
             return
 
         st.markdown("### 🎯 Filters")
+
+        # Track previous filter values to detect changes
+        if "prev_node_type" not in sss:
+            sss.prev_node_type = None
+        if "prev_node_name" not in sss:
+            sss.prev_node_name = None
+        if "prev_rel_types" not in sss:
+            sss.prev_rel_types = []
+        if "prev_viz_limit" not in sss:
+            sss.prev_viz_limit = 500
 
         # Node type filter (single select)
         available_node_types = get_node_types(backend)
@@ -291,6 +310,19 @@ def main() -> None:
         )
         sss.viz_limit = limit
 
+        # Detect filter changes and clear cached visualization
+        if (
+            sss.selected_node_type != sss.prev_node_type
+            or sss.selected_node_name != sss.prev_node_name
+            or sss.selected_rel_types != sss.prev_rel_types
+            or sss.viz_limit != sss.prev_viz_limit
+        ):
+            sss.graph_html = None  # Clear cached graph when filters change
+            sss.prev_node_type = sss.selected_node_type
+            sss.prev_node_name = sss.selected_node_name
+            sss.prev_rel_types = sss.selected_rel_types.copy() if sss.selected_rel_types else []
+            sss.prev_viz_limit = sss.viz_limit
+
         st.markdown("---")
 
         # Generate button
@@ -319,21 +351,8 @@ def main() -> None:
                     st.error(f"Failed to generate visualization: {e}")
                     logger.exception("Visualization generation failed")
 
-    if sss.graph_html is None:
-        # Show default visualization on first load
-        with st.spinner("Loading default graph visualization..."):
-            try:
-                query = f"MATCH (n)-[r]->(m) RETURN n, r, m LIMIT {sss.viz_limit}"
-                sss.current_query = query
-                html_content = generate_html(
-                    backend,
-                    query=query,
-                )
-                sss.graph_html = html_content
-            except Exception as e:
-                st.error(f"Failed to generate default visualization: {e}")
-                st.info("Use the sidebar to configure filters and generate a custom visualization.")
-                return
+    # Main content area
+    st.markdown("### 📊 Interactive Graph")
 
     if sss.graph_html:
         # Display current filters and query side by side
@@ -358,7 +377,7 @@ def main() -> None:
         with st.container():
             components.html(sss.graph_html, height=600, scrolling=True)
     else:
-        st.info("Use the sidebar to generate a visualization.")
+        st.info("👈 Click 'Generate Visualization' in the sidebar to display the graph with your selected filters.")
 
 
 if __name__ == "__main__":

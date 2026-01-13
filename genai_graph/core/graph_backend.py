@@ -477,21 +477,20 @@ def create_backend_from_config(config_key: str = "default", kg_config_name: str 
 
         manager = get_kg_manager()
 
-        # If the requested kg_config_name differs from the manager's current profile,
-        # we need to temporarily update it to get the correct paths
-        if kg_config_name != manager.profile:
-            # Validate that kg_config_name exists
-            if kg_config_name not in manager.ekg_config.kg_configs:
-                raise ValueError(
-                    f"KG config '{kg_config_name}' not found. Available: {sorted(manager.ekg_config.kg_configs.keys())}"
-                )
-            # Update the profile to get the correct path
-            manager.profile = kg_config_name
-            manager.reset_cached_paths()
+        # Validate that kg_config_name exists
+        if kg_config_name not in manager.ekg_config.kg_configs:
+            raise ValueError(
+                f"KG config '{kg_config_name}' not found. Available: {sorted(manager.ekg_config.kg_configs.keys())}"
+            )
 
-        manager.activate()
-        connection_path = str(manager.db_path)
-        manager.ensure_directories()
+        # Construct the path for the specified kg_config without mutating the singleton
+        # Use the same path construction logic as KgManager
+        data_root = config.get_dir_path("paths.ekg_data")
+        kg_base_path = Path(data_root) / "kg_outputs" / kg_config_name
+        connection_path = str(kg_base_path / f"{kg_config_name}-{manager.tag}.db")
+
+        # Ensure directory exists
+        kg_base_path.mkdir(parents=True, exist_ok=True)
     elif not connection_path:
         raise ValueError(f"Missing 'path' in graph_db config for '{config_key}'")
 

@@ -71,7 +71,8 @@ kg_configs:
       - factory: ${schemas_root}.crm_export:CrmExtractSubGraph
         db_dsn: sqlite:///${paths.data_root}/ekg/crm_extract.db
         files:
-          - ${paths.ekg_data}/crm_export/report1750429630460_500lines.xlsx
+         # - ${paths.ekg_data}/crm_export/report1750429630460_500lines.xlsx
+         - ${paths.ekg_data}/crm_export/report1750429630460_SHORTEN.xlsx
         pd_read_parameters: {}         
         pull: 
           merge_on: Opportunity.opportunity_id
