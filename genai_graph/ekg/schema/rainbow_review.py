@@ -109,6 +109,7 @@ class ReviewedOpportunitySubgraph(JsonFileBackedSubgraphFactory, BaseModel):
                 to_node=Customer,
                 name="HAS_CUSTOMER",
                 description="Opportunity belongs to customer",
+                field_paths=[("opportunity", "opportunity.customer")],
             ),
             GraphRelation(
                 from_node=Customer, to_node=Person, name="HAS_CONTACT", description="Customer contact persons"
@@ -118,6 +119,7 @@ class ReviewedOpportunitySubgraph(JsonFileBackedSubgraphFactory, BaseModel):
                 to_node=Person,
                 name="HAS_TEAM_MEMBER",
                 description="Internal team members",
+                field_paths=[("", "team")],
             ),
             GraphRelation(
                 from_node=ReviewedOpportunity,
