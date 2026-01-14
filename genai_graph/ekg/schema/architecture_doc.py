@@ -52,7 +52,6 @@ class ArchitectureDocumentSubgraph(JsonFileBackedSubgraphFactory, BaseModel):
             # Root node - the architecture document itself
             GraphNode(
                 node_class=self.TOP_CLASS,
-                extra_classes=[FileMetadata],
                 name_from=lambda data, base: f"Architecture:{data.get('document_date', 'unknown')}",
                 description="Root node containing the complete architecture document with technical stack and solutions",
             ),

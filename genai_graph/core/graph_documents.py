@@ -1,18 +1,17 @@
 """Document ingestion helpers.
 
 This module provides a small wrapper that the CLI can call to add one or
-more documents (keys) to the graph. The previous implementation relied on
-separate Document nodes + SOURCE relationships. We now attach provenance
-into the root model's `metadata` map field (key: ``source``).
+more documents (keys) to the graph. Instead of separate Document nodes and
+SOURCE relationships, we attach provenance into the root model's
+``metadata`` map field (key: ``source``).
 
 Behavior:
-- Validate that the subgraph root model exposes a `metadata` field whose
+- Validate that the subgraph root model exposes a ``metadata`` field whose
   annotation is either ``dict`` or ``Optional[dict]``.
-- For each key, load the pydantic model using the provided subgraph
+- For each key, load the Pydantic model using the provided subgraph
   implementation and call ``create_graph(..., source_key=key)`` which will
-  populate the created root node(s) `metadata.source` value. If the
-  extracted model instance has `metadata` == None it is replaced with a
-  dict by the extraction/creation code.
+  set the created root node(s) ``metadata["source"]`` when not already
+  present.
 """
 
 from dataclasses import dataclass
@@ -36,38 +35,19 @@ class DocumentStats:
 
 
 def _has_metadata_map(root_class: Type[BaseModel], schema: GraphSchema) -> bool:
-    """Return True if root_class defines a `metadata` model field typed as dict or Optional[dict].
+    """Return True if root_class defines a ``metadata`` field typed as ``dict``.
 
-    Also return True if the schema config for the root class defines an
-    ExtraFields class named `FileMetadata` (compatibility for new behavior).
+    Older implementations relied on an ``ExtraFields`` configuration named
+    ``FileMetadata``. The simplified design only requires a real
+    ``metadata`` map on the root model, which is then normalised and
+    populated by :func:`apply_extra_fields`.
     """
     try:
         from typing import get_args, get_origin
 
-        if not hasattr(root_class, "model_fields"):
-            # If model_fields missing, fall back to schema inspection
-            root_node = None
-            if hasattr(schema, "nodes"):
-                for n in getattr(schema, "nodes", []):
-                    if getattr(n, "node_class", None) is root_class:
-                        root_node = n
-                        break
-            if root_node is not None:
-                extras = getattr(root_node, "extra_classes", []) or []
-                return any(getattr(ec, "__name__", "") == "FileMetadata" for ec in extras)
+        if not hasattr(root_class, "model_fields") or "metadata" not in root_class.model_fields:
             return False
-        if "metadata" not in root_class.model_fields:
-            # Check schema node extra classes as a fallback
-            root_node = None
-            if hasattr(schema, "nodes"):
-                for n in getattr(schema, "nodes", []):
-                    if getattr(n, "node_class", None) is root_class:
-                        root_node = n
-                        break
-            if root_node is not None:
-                extras = getattr(root_node, "extra_classes", []) or []
-                return any(getattr(ec, "__name__", "") == "FileMetadata" for ec in extras)
-            return False
+
         ann = root_class.model_fields["metadata"].annotation
         # Direct dict
         if ann is dict:

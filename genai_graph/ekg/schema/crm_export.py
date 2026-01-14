@@ -2,9 +2,7 @@ from typing import Any, Type
 
 from pydantic import BaseModel
 
-from genai_graph.core.graph_schema import (
-    GraphSchema,
-)
+from genai_graph.core.graph_schema import GraphNode, GraphRelation, GraphSchema
 from genai_graph.core.subgraph_factories import TableBackedSubgraphFactory
 from genai_graph.ekg.baml_client.types import Customer, Opportunity, Person
 from genai_graph.ekg.schema.common_nodes import FileMetadata, WinLoss, get_common_nodes
@@ -51,22 +49,21 @@ class CrmExtractSubGraph(TableBackedSubgraphFactory, BaseModel):
 
         Creates schema with Opportunity, Person, and WinLoss nodes and their relationships.
         """
-        from genai_graph.core.graph_schema import (
-            GraphNode,
-            GraphRelation,
-        )
-        from genai_graph.ekg.baml_client.types import (
-            Opportunity,
-            Person,
-        )
+        from genai_graph.ekg.baml_client.types import Opportunity, Person
 
-        # Use common nodes which includes Opportunity with WinLoss extra_classes
+        # Common business nodes (Opportunity, Customer, Person)
         nodes = get_common_nodes() + [
+            # Root node for the CRM extract row
             GraphNode(
                 node_class=self.TOP_CLASS,
-                extra_classes=[FileMetadata],
                 name_from=lambda data, base: f"{base}",
                 description="CRM extract root containing opportunity, lead, and win/loss data",
+            ),
+            # Win/loss outcome as a regular node
+            GraphNode(
+                node_class=WinLoss,
+                name_from="result",
+                description="Win/Loss outcome for the opportunity",
             ),
         ]
 
@@ -76,6 +73,14 @@ class CrmExtractSubGraph(TableBackedSubgraphFactory, BaseModel):
                 to_node=Opportunity,
                 name="CRM_INFO",
                 description="CRM extracted Information",
+            ),
+            # Link CRM extract root to its win/loss record
+            GraphRelation(
+                from_node=self.TOP_CLASS,
+                to_node=WinLoss,
+                name="WIN_LOSS_INFO",
+                description="Win/loss outcome for this CRM extract row",
+                field_paths=[("", "win_loss")],
             ),
             GraphRelation(
                 from_node=Opportunity,

@@ -8,7 +8,6 @@ to derive field paths and relationships, reducing boilerplate and errors.
 from __future__ import annotations
 
 import warnings
-from abc import ABC, abstractmethod
 from enum import Enum
 from typing import (
     Any,
@@ -24,19 +23,6 @@ from loguru import logger
 from pydantic import BaseModel, PrivateAttr, model_validator
 
 from genai_graph.core.kg_manager import KgManager
-
-
-class ExtraFields(BaseModel, ABC):
-    @classmethod
-    @abstractmethod
-    def get_data(cls, context: dict | None) -> Self | None:
-        """Return an instance (or None) containing extra structured data.
-
-        The `contex` parameter is a  dictionary provided by
-        the extractor and can contain keys like `root_model`, `item`,
-        `item_data` and `source_key` to help populate the extra fields.
-        """
-        ...
 
 
 def _find_embedded_field_for_class(parent_cls: type[BaseModel], embedded_cls: type[BaseModel]) -> str | None:
@@ -105,15 +91,10 @@ class GraphNode(BaseModel):
     determined by introspecting the Pydantic model structure.
 
     The ``extra_classes`` attribute is the unified configuration entry for
-    additional structured properties attached to a node. It can contain
-    either:
-
-    * ``ExtraFields`` subclasses (for synthetic/derived data such as
-      ``FileMetadata`` or ``WinLoss``) – values are computed via
-      :meth:`ExtraFields.get_data` and inserted as nested maps.
-    * Regular Pydantic models referenced from the main ``node_class``,
-      which are treated as embedded structs and stored as MAP/STRUCT
-      properties on the node.
+    additional structured properties attached to a node. It should contain
+    regular Pydantic models referenced from the main ``node_class``, which
+    are treated as embedded structs and stored as MAP/STRUCT properties on
+    the node.
     """
 
     node_class: type[BaseModel]
@@ -139,34 +120,16 @@ class GraphNode(BaseModel):
         return None
 
     @property
-    def extra_field_classes(self) -> list[type[ExtraFields]]:
-        """Return configured ``ExtraFields`` subclasses for this node.
-
-        These classes are used to compute synthetic/derived structured
-        properties that are stored directly on the node (e.g. ``file_metadata``).
-        """
-
-        extras: list[type[ExtraFields]] = []
-        for struct_cls in self.extra_classes:
-            try:
-                if issubclass(struct_cls, ExtraFields):
-                    extras.append(struct_cls)  # type: ignore[arg-type]
-            except TypeError:
-                # Not a class or not suitable for issubclass; ignore
-                continue
-        return extras
-
-    @property
     def embedded_struct_classes(self) -> list[type[BaseModel]]:
-        """Return non-``ExtraFields`` Pydantic classes used as embedded structs."""
+        """Return Pydantic classes configured as embedded structs.
+
+        These classes must be regular :class:`pydantic.BaseModel` subclasses
+        referenced from :attr:`node_class` fields. They will be materialised
+        as MAP/STRUCT properties on the parent node.
+        """
 
         embedded: list[type[BaseModel]] = []
         for struct_cls in self.extra_classes:
-            try:
-                if issubclass(struct_cls, ExtraFields):
-                    continue
-            except TypeError:
-                continue
             if isinstance(struct_cls, type) and issubclass(struct_cls, BaseModel):
                 embedded.append(struct_cls)
         return embedded
@@ -236,18 +199,13 @@ class GraphNode(BaseModel):
         return self.node_class.__name__
 
     def struct_field_names(self) -> list[str]:
-        """Return the field names under which extra structs are stored.
+        """Return the field names under which embedded structs are stored.
 
-        ExtraFields subclasses are exposed using their snake_case class name,
-        while embedded structs use the actual field names detected from the
-        parent Pydantic model.
+        For embedded structs configured via :attr:`extra_classes`, this
+        returns the actual field names detected from the parent Pydantic
+        model.
         """
         names: list[str] = []
-
-        # ExtraFields-based structs
-        for extra_cls in self.extra_field_classes:
-            struct_name = "".join(["_" + c.lower() if c.isupper() else c for c in extra_cls.__name__]).lstrip("_")
-            names.append(struct_name)
 
         # Embedded structs: resolve field names on the parent model
         for embedded_cls in self.embedded_struct_classes:
@@ -652,9 +610,7 @@ class GraphSchema(BaseModel):
 
         Notes:
             Relationship targets (other nodes) are excluded so they are not
-            materialised twice. Additional structured data modelled via
-            ``extra_classes`` is never excluded here; it is always represented
-            as MAP/STRUCT properties on the parent node.
+            materialised twice.
         """
         for node_config in self.nodes:
             excluded_fields = set()

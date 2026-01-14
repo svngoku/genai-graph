@@ -233,30 +233,6 @@ def create_schema(
             struct_type = f"STRUCT({', '.join(struct_parts)})"
             embedded_struct_fields_by_parent[parent_name].append((field_name, struct_type))
 
-    # Collect ExtraFields-based struct fields per parent node
-    extra_struct_fields_by_parent: dict[str, list[tuple[str, str]]] = {}
-    for node in nodes:
-        extras = getattr(node, "extra_field_classes", []) or []
-        if not extras:
-            continue
-        parent_name = node.node_class.__name__
-        if parent_name not in extra_struct_fields_by_parent:
-            extra_struct_fields_by_parent[parent_name] = []
-
-        for extra_cls in extras:
-            # Introspect pydantic model fields for the extra class
-            extra_fields = getattr(extra_cls, "model_fields", None)
-            if not extra_fields:
-                continue
-            struct_parts = []
-            for ef_name, ef_info in extra_fields.items():
-                kuzu_type = _get_kuzu_type(ef_info.annotation)
-                struct_parts.append(f"{ef_name} {kuzu_type}")
-            if struct_parts:
-                field_name = "".join(["_" + c.lower() if c.isupper() else c for c in extra_cls.__name__]).lstrip("_")
-                struct_type = f"STRUCT({', '.join(struct_parts)})"
-                extra_struct_fields_by_parent[parent_name].append((field_name, struct_type))
-
     # Create node tables
     for node in nodes:
         table_name = node.node_class.__name__
@@ -266,11 +242,6 @@ def create_schema(
         key_field = node.key
         fields: list[str] = []
         model_fields = node.node_class.model_fields
-
-        # Add ExtraFields-based struct fields (synthetic extras)
-        extra_struct_fields = dict(extra_struct_fields_by_parent.get(table_name, []))
-        for field_name, struct_type in extra_struct_fields.items():
-            fields.append(f"{field_name} {struct_type}")
 
         # Add metadata fields first
         fields.append("id STRING")  # UUID primary key
@@ -301,15 +272,8 @@ def create_schema(
                 if field_name in embedded_struct_fields:
                     kuzu_type = embedded_struct_fields[field_name]
                 elif field_name == "metadata":
-                    # Create metadata as a STRUCT type only when not handled by an ExtraFields class
-                    metadata_handled = any(
-                        getattr(ec, "__name__", "") == "FileMetadata"
-                        for ec in getattr(node, "extra_field_classes", []) or []
-                    )
-                    if metadata_handled:
-                        # Skip creating legacy metadata column when FileMetadata is used
-                        continue
-                    kuzu_type = "STRUCT(source STRING)"
+                    # Persist metadata as a JSON string for maximum flexibility.
+                    kuzu_type = "STRING"
                 else:
                     kuzu_type = _get_kuzu_type(field_info.annotation)
                 fields.append(f"{field_name} {kuzu_type}")
@@ -455,12 +419,23 @@ def extract_graph_data(
                 # Add embedded fields to this parent record
                 _add_embedded_fields(item_data, model, nodes, node_info)
 
-                # Normalize legacy `metadata` and populate any configured ExtraFields
-                # Use the central helper to keep extraction logic consistent.
+                # Normalise legacy `metadata` and attach provenance.
                 try:
                     apply_extra_fields(item_data, node_info, model, item, source_key)
                 except Exception:
                     # Defensive: do not break extraction if helper fails
+                    pass
+
+                # When persisting to the database, store metadata as a JSON string
+                # so that arbitrary keys/values are supported without schema
+                # evolution on the Kuzu side.
+                try:
+                    if "metadata" in item_data and isinstance(item_data["metadata"], dict):
+                        import json
+
+                        item_data["metadata"] = json.dumps(item_data["metadata"])
+                except Exception:
+                    # Best-effort only; falling back to the original value is fine.
                     pass
 
                 # Add timestamps

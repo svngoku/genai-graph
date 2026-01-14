@@ -1,12 +1,20 @@
 
 
-Split  the Streamlit page "/home/tcl/prj/genai-graph/genai_graph/webapp/pages/demos/kg_explorer.py" in 2 :
-- In one page, allow the user to enter a query either in Cypher or in natural language, and display the result in a dataframe
+Some time ago we introduced the 'ExtraFields' class to allow a class to be 'embedded'  in another one.  
+That lead to a lot of complexity, for a limited interest.
+'extra_classes' in nodes should be limited to normal Pydantic classes, without need to add specific logic. 
+So simplify the design: make 'FileMetaData' and 'WinLos' normal nodes, and suppress all that complexity. 
+To try to keep legacy code for compatibilty of else. KISS
+Propose improvement is you see them.
 
-- In the other page, allow the user to display the graph in HTML. It could either display the full graph (query = "MATCH (n)-[r]->(m) RETURN n, r, m LIMIT l"), or a subpart of it by filtering the initial node and the relatioships. For that, display in the sidebar a multi-select box with the list of node types (list), the list of associated nodes, and a list of relationship, and create a Cypher query accordingly that is passed to the HTML page generation. 
-Allow also the user to select the LIMIT parameter (default: 500)
+You can check with 'export KG_CONFIG=test1_with_db; cli kg create; '  and verify the node existence in "pull" mode.
+Also test non-pull mode with 'KG_CONFIG=db_only'
 
-For both pages, have in top of the sidebar a selector to select the KG configuration (currencly selected via "kg_config" key and get_kg_manager() )
+
+
+
+Today the user has the capability to create sub-graphs from BAML (see genai_graph/ekg/schema/rainbow_review.py for an exemple) or from a table (genai_graph/ekg/schema/crm_export.py).
+Bith are similar, except that in second case the user has access to a untyped dict 
 
 
 

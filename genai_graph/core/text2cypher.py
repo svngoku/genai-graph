@@ -45,6 +45,7 @@ Translate the given question into a single, valid Cypher statement that respects
   Never compare an opportunity_id string to a date literal.
 
 - Ensure all node labels, relationship types and properties exist in the schema.
+- If you need a value that belongs to a related node, always traverse the relationship first and read the property from the target node variable. Never use dot-notation on the anchor node to reach “through” the relationship (e.g. avoid anchor.rel.field); it will fail.
 </SYNTAX>
 
 <RETURN_RESULTS>

@@ -361,47 +361,10 @@ def format_schema_description(schema: GraphSchema, baml_docs: dict[str, Any], pr
                         line += f" // {field_desc}"
                     lines.append(line)
 
-        # If this node exposes a provenance field, prefer `file_metadata.source`
-        # when an ExtraFields class `FileMetadata` is configured; otherwise
-        # fall back to the legacy `metadata.source` map.
+        # If this node exposes a provenance field, document ``metadata.source``.
         try:
-            extras = getattr(node, "extra_field_classes", []) or []
-            has_file_meta = any(getattr(ec, "__name__", "") == "FileMetadata" for ec in extras)
-            if has_file_meta:
-                lines.append("  file_metadata.source: string // Source of the file from which the data was extracted")
-            elif hasattr(node.node_class, "model_fields") and "metadata" in node.node_class.model_fields:
+            if hasattr(node.node_class, "model_fields") and "metadata" in node.node_class.model_fields:
                 lines.append("  metadata.source: string // source of the document")
-        except Exception:
-            pass
-
-        # Document any extra structured fields added via ExtraFields classes
-        try:
-            for extra_cls in getattr(node, "extra_field_classes", []) or []:
-                # Skip FileMetadata as it's documented in the provenance section above
-                if getattr(extra_cls, "__name__", "") == "FileMetadata":
-                    continue
-                extra_name = "".join(["_" + c.lower() if c.isupper() else c for c in extra_cls.__name__]).lstrip("_")
-                # Introspect fields on the extra class
-                if hasattr(extra_cls, "model_fields"):
-                    for sub_field, sub_info in extra_cls.model_fields.items():
-                        sub_type = _humanize_type_compact(sub_info.annotation)
-
-                        # Try multiple ways to get a Field description from pydantic
-                        sub_desc = ""
-                        if getattr(sub_info, "description", None):
-                            sub_desc = sub_info.description or ""
-                        else:
-                            field_info_obj = getattr(sub_info, "field_info", None)
-                            if field_info_obj is not None and getattr(field_info_obj, "description", None):
-                                sub_desc = field_info_obj.description or ""
-
-                        line = f"  {extra_name}.{sub_field}: {sub_type}"
-                        if sub_desc:
-                            line += f" // {sub_desc}"
-                        lines.append(line)
-                else:
-                    # Unknown structure - at least document the field name
-                    lines.append(f"  {extra_name}: struct // extra structured fields")
         except Exception:
             pass
 

@@ -105,7 +105,7 @@ class RiskAnalysis {
   risk_category SWProjectRisks? @description("classification of the risk")
 
   p_mitigation_strategy_ string? @description("Planned mitigation approach")
-  p_risk_description_ string @description("Risk description in the document")
+  p_risk_description_ string @description("Risk as described in the document")
 }
 
 class CompetitiveLandscape {

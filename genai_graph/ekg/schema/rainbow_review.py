@@ -51,7 +51,7 @@ class ReviewedOpportunitySubgraph(JsonFileBackedSubgraphFactory, BaseModel):
             # Root node
             GraphNode(
                 node_class=self.TOP_CLASS,
-                extra_classes=[FileMetadata, FinancialMetrics, CompetitiveLandscape],
+                extra_classes=[FinancialMetrics, CompetitiveLandscape],
                 name_from=lambda data, base: "Rainbow:" + str(data.get("start_date")),
                 description="Root node containing the complete reviewed opportunity",
             ),
