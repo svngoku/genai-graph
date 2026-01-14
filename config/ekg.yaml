@@ -77,6 +77,10 @@ kg_configs:
         pull: 
           merge_on: Opportunity.opportunity_id
           db_field: "Atos Opportunity ID" 
-    agent:
-      mcp_servers:
-        - filesystem
+  test1_with_real:
+    subgraphs:
+      - factory: genai_graph.ekg.schema.rainbow_review:ReviewedOpportunitySubgraph
+        data_root: ${paths.rainbow_json}
+        include: 
+          - "*.json"
+        recursive: true

@@ -45,6 +45,16 @@ def create_kg_flow(
 
     logger = get_run_logger()
 
+    # Clear subgraph factory caches to ensure fresh file/data discovery
+    from genai_graph.core.subgraph_factories import (
+        JsonFileBackedSubgraphFactory,
+        TableBackedSubgraphFactory,
+    )
+
+    JsonFileBackedSubgraphFactory.clear_cache()
+    TableBackedSubgraphFactory.clear_cache()
+    logger.info("Cleared subgraph factory caches for fresh discovery")
+
     if delete_first:
         logger.info("Deleting existing backend before KG creation")
         delete_backend_task.submit("default", config_name)

@@ -181,21 +181,44 @@ class JsonFileBackedSubgraphFactory(SubgraphFactory):
                 # Direct subdirectory only: ReviewedOpportunity/*.json
                 include_patterns.append(f"{model_name}/{pattern}")
 
+        # Always exclude manifest.json files (metadata files from baml extract)
+        exclude_patterns = self.exclude or []
+        if not isinstance(exclude_patterns, list):
+            exclude_patterns = [exclude_patterns]
+        else:
+            exclude_patterns = list(exclude_patterns)  # Copy to avoid modifying the original
+
+        # Add manifest.json exclusions if not already present
+        manifest_patterns = ["manifest.json", "**/manifest.json"]
+        for manifest_pattern in manifest_patterns:
+            if manifest_pattern not in exclude_patterns:
+                exclude_patterns.append(manifest_pattern)
+
         # Use resolve_files to find all matching files
         # The exclude patterns will automatically filter out unwanted paths
         files = resolve_files(
             str(root_path),
             include_patterns=include_patterns,
-            exclude_patterns=self.exclude,
+            exclude_patterns=exclude_patterns,
             recursive=self.recursive,
             case_sensitive=self.case_sensitive,
         )
 
         self._files_cache = [UPath(f) for f in files]
-        logger.debug(f"Found {len(self._files_cache)} files for model {model_name} in {root_path}")
+        logger.debug(f"Discovered {len(self._files_cache)} files for model {model_name} in {root_path}")
 
         # Mark this root + model as initialized
         JsonFileBackedSubgraphFactory._initialized_roots.add(root_key)
+
+    @classmethod
+    def clear_cache(cls) -> None:
+        """Clear the class-level initialization cache.
+
+        Call this at the start of a new KG creation workflow to ensure
+        fresh file discovery, especially when file contents may have changed.
+        """
+        cls._initialized_roots.clear()
+        logger.debug(f"Cleared JsonFileBackedSubgraphFactory cache ({cls.__name__})")
 
     def get_all_file_paths(self) -> list[UPath]:
         """Get all discovered JSON file paths."""
@@ -234,6 +257,16 @@ class TableBackedSubgraphFactory(SubgraphFactory):
     _shown_warnings: ClassVar[set[str]] = set()
     db_dsn: str
     files: list[UPath]
+
+    @classmethod
+    def clear_cache(cls) -> None:
+        """Clear the class-level initialization cache.
+
+        Call this at the start of a new KG creation workflow to ensure
+        fresh data loading from database files.
+        """
+        cls._initialized_databases.clear()
+        logger.debug(f"Cleared TableBackedSubgraphFactory cache ({cls.__name__})")
 
     @property
     def table_name(self) -> str:

@@ -120,7 +120,7 @@ https://docs.chonkie.ai/oss/pipelines
 # To Test :
 - ``` export KG_CONFIG="db_only"; cli kg delete -f ; cli kg create ; cli kg schema --no-enums; cli kg export-html ; cli kg info```
 
-- ```cli baml extract '${paths.rainbow_md}/real' '${paths.rainbow_json}' --include "*CNES_TMA_VENUS*.md"  --force```
+- ```cli baml extract  '${paths.rainbow_md}/real' '${paths.rainbow_json}'  --function ExtractRainbow  --include "*CNES_TMA_VENUS*.md"  --force```
 
 - ```cli baml run FakeRainbowJson -i "Project for ESA; Marc Ferrer as sales lead in Atos team" --out-dir '${paths.rainbow_json}/fake' --out-file fake_esa_1.json ```
 
