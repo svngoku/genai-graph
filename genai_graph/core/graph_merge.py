@@ -40,15 +40,25 @@ def _format_value_for_cypher(value: Any) -> str:
     Returns:
         Formatted string ready for Cypher query insertion
     """
-    if value is None:
+    # Check for TypedNull first (must import to check type)
+    if hasattr(value, "__class__") and value.__class__.__name__ == "TypedNull":
+        # Return the CAST expression directly
+        return repr(value)
+    elif value is None:
         return "NULL"
     elif isinstance(value, bool):
         return "true" if value else "false"
     elif isinstance(value, str):
+        # Empty strings should be NULL to avoid type inference issues in STRUCT_PACK
+        if value.strip() == "":
+            return "NULL"
         # Escape single quotes for Cypher
         escaped = value.replace("'", "\\'")
         return f"'{escaped}'"
     elif isinstance(value, list):
+        # Empty lists should be NULL for STRUCT compatibility
+        if len(value) == 0:
+            return "NULL"
         # Recursively format list elements
         formatted_items = [_format_value_for_cypher(item) for item in value]
         return f"[{', '.join(formatted_items)}]"
@@ -57,6 +67,21 @@ def _format_value_for_cypher(value: Any) -> str:
         # Empty dicts cannot be represented in Cypher, use NULL instead
         if not value:
             return "NULL"
+
+        # Check if all values are None, empty, or TypedNull - if so, use NULL for the whole struct
+        # This avoids Kuzu creating a struct with only NULL fields
+        def is_null_like(v: Any) -> bool:
+            return (
+                v is None
+                or (isinstance(v, str) and v.strip() == "")
+                or (isinstance(v, list) and len(v) == 0)
+                or (hasattr(v, "__class__") and v.__class__.__name__ == "TypedNull")
+            )
+
+        if all(is_null_like(v) for v in value.values()):
+            return "NULL"
+
+        # Format each value - TypedNull and NULLs will be handled appropriately
         items = [f"{k}: {_format_value_for_cypher(v)}" for k, v in value.items()]
         return "{" + ", ".join(items) + "}"
     elif isinstance(value, (int, float)):

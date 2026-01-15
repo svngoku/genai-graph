@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import Any, Dict, NamedTuple
+from typing import Any, Dict, NamedTuple, Union
 
 from loguru import logger
 from pydantic import BaseModel
@@ -11,6 +11,16 @@ from genai_graph.core.graph_backend import GraphBackend, create_in_memory_backen
 from genai_graph.core.graph_merge import merge_nodes_batch
 from genai_graph.core.graph_schema import GraphNode, GraphRelation, GraphSchema, _find_embedded_field_for_class
 from genai_graph.core.kg_manager import KgManager
+
+
+class TypedNull:
+    """Marker for NULL values with explicit type information for Kuzu STRUCT fields."""
+
+    def __init__(self, type_name: str):
+        self.type_name = type_name
+
+    def __repr__(self) -> str:
+        return f"CAST(NULL AS {self.type_name})"
 
 
 class NodeRecord(NamedTuple):
@@ -134,7 +144,111 @@ def _add_embedded_fields(
         else:
             embedded_dict = dict(getattr(embedded_data, "__dict__", {}))
 
+        # Normalize the embedded dict to match expected schema types
+        embedded_dict = _normalize_embedded_dict(embedded_dict, embedded_cls)
+
         parent_data[field_name] = embedded_dict
+
+
+def _normalize_embedded_dict(data: dict[str, Any], model_class: type[BaseModel]) -> dict[str, Any]:
+    """Normalize embedded dict values to match Pydantic model schema types.
+
+    This handles common type mismatches and ensures all fields are present:
+    - Empty strings -> TypedNull for numeric fields
+    - String values -> [string] for list fields
+    - Missing fields -> TypedNull (ensures complete STRUCT for Kuzu)
+    - None values -> TypedNull with proper type for Kuzu
+
+    Args:
+        data: Dictionary to normalize
+        model_class: The Pydantic model class defining the expected schema
+
+    Returns:
+        Normalized dictionary with type-consistent values and all fields present
+    """
+    from typing import get_args, get_origin
+
+    if not hasattr(model_class, "model_fields"):
+        return data
+
+    normalized = {}
+
+    # Ensure ALL fields from the model are present in the output
+    # This is critical for Kuzu's STRUCT type which requires complete structs
+    for field_name, field_info in model_class.model_fields.items():
+        value = data.get(field_name)
+
+        # Get the field type annotation
+        annotation = field_info.annotation
+        origin = get_origin(annotation)
+
+        # Unwrap Optional types
+        is_optional = False
+        if origin is Union or (hasattr(annotation, "__args__") and type(None) in get_args(annotation)):
+            is_optional = True
+            args = get_args(annotation)
+            # Get the non-None type
+            actual_type = next((arg for arg in args if arg is not type(None)), None)
+            if actual_type:
+                origin = get_origin(actual_type)
+                annotation = actual_type
+
+        # Determine Kuzu type name for NULL casting
+        kuzu_type = None
+        if annotation is int or (origin and origin is int):
+            kuzu_type = "INT64"
+        elif annotation is float or (origin and origin is float):
+            kuzu_type = "DOUBLE"
+        elif annotation is str or (origin and origin is str):
+            kuzu_type = "STRING"
+        elif annotation is bool or (origin and origin is bool):
+            kuzu_type = "BOOL"
+
+        # Handle None/empty values with typed NULL
+        if value is None or (isinstance(value, str) and value.strip() == ""):
+            if kuzu_type and is_optional:
+                # Use TypedNull for proper Kuzu STRUCT initialization
+                normalized[field_name] = TypedNull(kuzu_type)
+            else:
+                normalized[field_name] = None
+            continue
+
+        # Handle type mismatches for list fields
+        if origin is list:
+            if isinstance(value, str):
+                # Convert single string to list
+                if value.strip():
+                    normalized[field_name] = [value]
+                else:
+                    # Empty string for a list field -> typed NULL
+                    normalized[field_name] = TypedNull("STRING[]") if is_optional else None
+            elif isinstance(value, list):
+                # Empty list -> typed NULL for consistency
+                if len(value) == 0 and is_optional:
+                    normalized[field_name] = TypedNull("STRING[]")
+                else:
+                    normalized[field_name] = value
+            else:
+                # Fallback: try to convert to list
+                try:
+                    converted = list(value) if value else None
+                    if converted is None and is_optional:
+                        normalized[field_name] = TypedNull("STRING[]")
+                    else:
+                        normalized[field_name] = converted
+                except (TypeError, ValueError):
+                    if is_optional:
+                        normalized[field_name] = TypedNull("STRING[]")
+                    else:
+                        normalized[field_name] = None
+        else:
+            # Keep value as-is, but if missing, set to TypedNull
+            if field_name not in data and is_optional and kuzu_type:
+                normalized[field_name] = TypedNull(kuzu_type)
+            else:
+                normalized[field_name] = value
+
+    return normalized
 
 
 def restart_database() -> GraphBackend:
