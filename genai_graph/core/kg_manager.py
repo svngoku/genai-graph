@@ -82,6 +82,8 @@ class KgManager(BaseModel):
     _base_path: UPath | None = None
     _db_path: UPath | None = None
     _html_path: UPath | None = None
+    _schema_path: UPath | None = None
+    _info_path: UPath | None = None
     _outcomes_file: UPath | None = None
     _warnings_file: UPath | None = None
 
@@ -124,6 +126,8 @@ class KgManager(BaseModel):
         self._base_path = None
         self._db_path = None
         self._html_path = None
+        self._schema_path = None
+        self._info_path = None
         self._outcomes_file = None
         self._warnings_file = None
 
@@ -195,6 +199,22 @@ class KgManager(BaseModel):
         if self._html_path is None:
             self._html_path = self.base_path / f"{self.profile}-{self.tag}.html"
         return self._html_path
+
+    @property
+    def schema_path(self) -> UPath:
+        """Path to the schema text file for this KG."""
+
+        if self._schema_path is None:
+            self._schema_path = self.base_path / f"{self.profile}-{self.tag}-schema.txt"
+        return self._schema_path
+
+    @property
+    def info_path(self) -> UPath:
+        """Path to the info markdown file for this KG."""
+
+        if self._info_path is None:
+            self._info_path = self.base_path / f"{self.profile}-{self.tag}-info.md"
+        return self._info_path
 
     @property
     def outcomes_file(self) -> UPath:
@@ -387,7 +407,16 @@ class KgManager(BaseModel):
 
 
 @once
-def get_kg_manager() -> KgManager:
-    """Return the process-wide KgManager singleton."""
+def get_kg_manager(activate: bool = True) -> KgManager:
+    """Return the process-wide KgManager singleton.
 
-    return KgManager.from_global_config()
+    Args:
+        activate: If True (default), validate profile and log warnings if needed.
+
+    Returns:
+        The singleton KgManager instance.
+    """
+    manager = KgManager.from_global_config()
+    if activate:
+        manager.activate()
+    return manager

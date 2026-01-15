@@ -9,14 +9,18 @@ from prefect.task_runners import ThreadPoolTaskRunner
 from genai_graph.core.graph_backend import get_backend_storage_path_from_config
 from genai_graph.orchestration.tasks import (
     KgRunResult,
-    create_schema_task,
+    create_schema,
     delete_backend_task,
-    export_html_task,
+    export_info,
+    export_schema,
     ingest_subgraphs_task,
     initialize_backend_task,
     load_factories_task,
     resolve_config_task,
-    summarize_warnings_task,
+    summarize_warnings,
+)
+from genai_graph.orchestration.tasks import (
+    export_html as export_html_file,
 )
 
 # Kuzu is an embedded database; we must avoid multi-process execution.
@@ -72,10 +76,10 @@ def create_kg_flow(
     db_path = get_backend_storage_path_from_config("default", cfg_name)
 
     bundles = load_factories_task.submit(kg_cfg).result()
-    bundles = create_schema_task.submit(bundles, backend).result()
+    bundles = create_schema(bundles, backend)
 
     stats = ingest_subgraphs_task.submit(bundles, backend).result()
-    warnings = summarize_warnings_task.submit(cfg_name).result()
+    warnings = summarize_warnings(cfg_name)
 
     # Log completion outcome
     outcome_status = "warning" if warnings else "success"
@@ -125,9 +129,25 @@ def create_kg_flow(
             exc,
         )
 
+    # Export schema to text file
+    export_schema(cfg_name)
+    manager.log_outcome(
+        "export_schema",
+        "success",
+        f"Schema exported to {manager.schema_path}",
+    )
+
+    # Export info to markdown file
+    export_info(cfg_name, backend)
+    manager.log_outcome(
+        "export_info",
+        "success",
+        f"Info exported to {manager.info_path}",
+    )
+
     html_result = None
     if export_html:
-        html_result = export_html_task.submit(cfg_name, backend).result()
+        html_result = export_html_file(cfg_name, backend)
         manager.log_outcome(
             "export_html",
             "success",

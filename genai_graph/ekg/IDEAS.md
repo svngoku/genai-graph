@@ -118,9 +118,15 @@ https://docs.chonkie.ai/oss/pipelines
 
 
 # To Test :
-- ``` export KG_CONFIG="db_only"; cli kg delete -f ; cli kg create ; cli kg schema --no-enums; cli kg export-html ; cli kg info```
 
-- ```cli baml extract  '${paths.rainbow_md}/real' '${paths.rainbow_json}'  --function ExtractRainbow  --include "*CNES_TMA_VENUS*.md"  --force```
+
+- ```uv run cli tools markdownize  '${paths.rainbow_pdf}' '${paths.rainbow_md}.real'  --include "*Pizza Service*"  --mistral-ocr  --force --recursive  ```
+
+
+- ```cli baml extract  '${paths.rainbow_md}/real' '${paths.rainbow_json}'  --function ExtractRainbow  --include "*CNES_TMA_VENUS*.md"  --force``
+
+- ``` export KG_CONFIG="db_only"; cli kg delete -f ; cli kg create ; cli kg schema --no-enums; cli kg export-html ; cli kg info```
+`
 
 - ```cli baml run FakeRainbowJson -i "Project for ESA; Marc Ferrer as sales lead in Atos team" --out-dir '${paths.rainbow_json}/fake' --out-file fake_esa_1.json ```
 
@@ -134,7 +140,7 @@ uv run cli kg delete -f ; uv run cli kg add-doc --key fake-cnes-1 --subgraph Arc
 
 uv run cli kg delete -f ; uv run cli kg add-doc --key cnes-venus-tma --g ReviewedOpportunity ; uv run cli kg add-doc --key fake-cnes-1 -g ArchitectureDocument; uv run cli kg export-html``
 
-uv run cli tools markdownize  '${paths.rainbow_pdf}' '${paths.rainbow_md}'  --include "*Pizza Service*"  --mistral-ocr  --force --recursive  
+
 
 # Misc
 

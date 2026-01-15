@@ -486,7 +486,7 @@ def create_backend_from_config(config_key: str = "default", kg_config_name: str 
         # Construct the path for the specified kg_config without mutating the singleton
         # Use the same path construction logic as KgManager
         data_root = config.get_dir_path("paths.ekg_data")
-        kg_base_path = Path(data_root) / "kg_outputs" / kg_config_name
+        kg_base_path = Path(str(data_root)) / "kg_outputs" / kg_config_name
         connection_path = str(kg_base_path / f"{kg_config_name}-{manager.tag}.db")
 
         # Ensure directory exists
@@ -537,7 +537,6 @@ def get_backend_storage_path_from_config(config_key: str = "default", kg_config_
         from genai_graph.core.kg_manager import get_kg_manager
 
         manager = get_kg_manager()
-        manager.activate()
         return manager.db_path
 
     config = global_config()

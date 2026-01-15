@@ -59,9 +59,6 @@ class GraphRegistry(BaseModel):
         """
         # Load subgraph providers for the active KG profile via KgManager
         manager = get_kg_manager()
-        # Ensure manager is activated at least once; if not, this will
-        # select the default profile from ekg.yaml.
-        manager.activate()
         profile_cfg = manager.get_profile_dict()
 
         # Get subgraphs: [{factory: "module:Class", initial_load: [...]}, ...]

@@ -207,7 +207,7 @@ def main() -> None:
     with st.sidebar:
         available_configs = get_available_kg_configs()
         selected_config = st.selectbox(
-            "⚙️ KG Configuration",
+            "### ⚙️ KG Configuration",
             options=available_configs,
             index=available_configs.index(sss.kg_config_selected) if sss.kg_config_selected in available_configs else 0,
             help="Select the Knowledge Graph configuration to visualize",
@@ -225,8 +225,6 @@ def main() -> None:
             get_kg_manager.invalidate()  # pyright: ignore[reportFunctionMemberAccess]
 
             st.rerun()
-
-        st.markdown("---")
 
         # Get database connection for filters
         try:
