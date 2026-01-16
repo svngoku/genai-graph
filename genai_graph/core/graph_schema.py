@@ -12,7 +12,6 @@ from enum import Enum
 from typing import (
     Any,
     Callable,
-    Self,
     Union,
     get_args,
     get_origin,
@@ -629,30 +628,24 @@ class GraphSchema(BaseModel):
                         # Extract the field name from the path
                         # Only exclude if this relationship applies to this node's field_path
                         for node_field_path in node_config.field_paths:
-                            applies = False
-
                             if to_path and "." in to_path:
                                 if from_path == "":
                                     # Root node excluding direct field
                                     if node_field_path == "":
                                         field_name = to_path.split(".")[0]
                                         excluded_fields.add(field_name)
-                                        applies = True
                                 elif from_path == node_field_path:
                                     # from_path matches this node's field path
                                     if to_path.startswith(from_path + "."):
                                         relative_path = to_path[len(from_path) + 1 :]
                                         field_name = relative_path.split(".")[0]
                                         excluded_fields.add(field_name)
-                                        applies = True
                             elif to_path and "." not in to_path:
                                 # Direct field reference
                                 if from_path == "" and node_field_path == "":
                                     excluded_fields.add(to_path)
-                                    applies = True
                                 elif from_path == node_field_path:
                                     excluded_fields.add(to_path)
-                                    applies = True
 
             # Note: legacy `embed_in_parent` behaviour has been removed. All
             # additional structured data should now be modelled via

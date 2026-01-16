@@ -78,14 +78,13 @@ USER_PROMPT = """
 
 def _get_schema_from_file() -> str:
     """Read the schema description from the stored schema file.
-    
+
     The schema file is automatically created during graph creation.
     """
     manager = get_kg_manager()
     if not manager.schema_path.exists():
         raise FileNotFoundError(
-            f"Schema file not found at {manager.schema_path}. "
-            "Run 'cli kg create' to generate the schema."
+            f"Schema file not found at {manager.schema_path}. Run 'cli kg create' to generate the schema."
         )
     return manager.schema_path.read_text(encoding="utf-8")
 

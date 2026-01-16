@@ -25,8 +25,7 @@ def build_ekg_agent_system_prompt(single_tool_mode: bool = False) -> str:
     manager = get_kg_manager()
     if not manager.schema_path.exists():
         raise FileNotFoundError(
-            f"Schema file not found at {manager.schema_path}. "
-            "Run 'cli kg create' to generate the schema."
+            f"Schema file not found at {manager.schema_path}. Run 'cli kg create' to generate the schema."
         )
     schema_markdown = manager.schema_path.read_text(encoding="utf-8")
     # SYSTEM_PROMPT contains detailed guidance originally written for a

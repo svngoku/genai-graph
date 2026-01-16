@@ -7,20 +7,22 @@ from prefect.artifacts import create_markdown_artifact
 from prefect.task_runners import ThreadPoolTaskRunner
 
 from genai_graph.core.graph_backend import get_backend_storage_path_from_config
-from genai_graph.orchestration.tasks import (
-    KgRunResult,
-    create_schema,
-    delete_backend_task,
+from genai_graph.core.kg_exports import (
+    export_html as export_html_file,
+)
+from genai_graph.core.kg_exports import (
     export_info,
     export_schema,
+)
+from genai_graph.orchestration.models import KgRunResult
+from genai_graph.orchestration.tasks import (
+    create_schema,
+    delete_backend_task,
     ingest_subgraphs_task,
     initialize_backend_task,
     load_factories_task,
     resolve_config_task,
     summarize_warnings,
-)
-from genai_graph.orchestration.tasks import (
-    export_html as export_html_file,
 )
 
 # Kuzu is an embedded database; we must avoid multi-process execution.

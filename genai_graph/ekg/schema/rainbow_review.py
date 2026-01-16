@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from genai_graph.core.graph_schema import GraphSchema
 from genai_graph.core.subgraph_factories import JsonFileBackedSubgraphFactory
 from genai_graph.ekg.baml_client.types import ReviewedOpportunity
-from genai_graph.ekg.schema.common_nodes import FileMetadata, get_common_nodes
+from genai_graph.ekg.schema.common_nodes import get_common_nodes
 
 
 class ReviewedOpportunitySubgraph(JsonFileBackedSubgraphFactory, BaseModel):

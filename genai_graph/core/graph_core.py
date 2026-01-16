@@ -16,7 +16,7 @@ from genai_graph.core.kg_manager import KgManager
 class TypedNull:
     """Marker for NULL values with explicit type information for Kuzu STRUCT fields."""
 
-    def __init__(self, type_name: str):
+    def __init__(self, type_name: str) -> None:
         self.type_name = type_name
 
     def __repr__(self) -> str:
