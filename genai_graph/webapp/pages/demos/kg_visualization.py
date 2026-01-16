@@ -122,6 +122,7 @@ def build_filtered_cypher_query(
     node_name: str | None,
     relationship_types: list[str],
     limit: int,
+    excluded_node_type: str | None = None,
 ) -> str:
     """Build a Cypher query based on selected filters.
 
@@ -130,6 +131,7 @@ def build_filtered_cypher_query(
         node_name: Selected specific node name (None means all of that type)
         relationship_types: Selected relationship types (empty means all)
         limit: Maximum number of results
+        excluded_node_type: Node type to exclude from results (None means no exclusion)
 
     Returns:
         Cypher query string (comma-separated for union execution)
@@ -141,28 +143,48 @@ def build_filtered_cypher_query(
     else:
         rel_filter = "[r]"
 
+    # Build exclusion filter for WHERE clause
+    exclusion_filter = ""
+    if excluded_node_type:
+        exclusion_filter = f"label(n) <> '{excluded_node_type}' AND label(m) <> '{excluded_node_type}'"
+
     # Build query based on filters
     if node_type and node_name:
         # Specific node and type - filter by name
         # Include both outgoing and incoming relationships (semicolon-separated for Kuzu)
         name_escaped = node_name.replace("'", "\\'")
         half_limit = limit // 2
-        query = (
-            f"MATCH (n:{node_type})-{rel_filter}->(m) WHERE n.name = '{name_escaped}' RETURN n, r, m LIMIT {half_limit}; "
-            f"MATCH (n)-{rel_filter}->(m:{node_type}) WHERE m.name = '{name_escaped}' RETURN n, r, m LIMIT {half_limit}"
-        )
+        if exclusion_filter:
+            query = (
+                f"MATCH (n:{node_type})-{rel_filter}->(m) WHERE n.name = '{name_escaped}' AND {exclusion_filter} RETURN n, r, m LIMIT {half_limit}; "
+                f"MATCH (n)-{rel_filter}->(m:{node_type}) WHERE m.name = '{name_escaped}' AND {exclusion_filter} RETURN n, r, m LIMIT {half_limit}"
+            )
+        else:
+            query = (
+                f"MATCH (n:{node_type})-{rel_filter}->(m) WHERE n.name = '{name_escaped}' RETURN n, r, m LIMIT {half_limit}; "
+                f"MATCH (n)-{rel_filter}->(m:{node_type}) WHERE m.name = '{name_escaped}' RETURN n, r, m LIMIT {half_limit}"
+            )
     elif node_type:
         # Just node type filter - include both directions
         # There are type issues it seems with UNION in Kuzu, so the merge
         # is done via comma-separated queries and dataframe merge afterwards
         half_limit = limit // 2
-        query = (
-            f"MATCH (n:{node_type})-{rel_filter}->(m) RETURN n, r, m LIMIT {half_limit}; "
-            f"MATCH (n)-{rel_filter}->(m:{node_type}) RETURN n, r, m LIMIT {half_limit}"
-        )
+        if exclusion_filter:
+            query = (
+                f"MATCH (n:{node_type})-{rel_filter}->(m) WHERE {exclusion_filter} RETURN n, r, m LIMIT {half_limit}; "
+                f"MATCH (n)-{rel_filter}->(m:{node_type}) WHERE {exclusion_filter} RETURN n, r, m LIMIT {half_limit}"
+            )
+        else:
+            query = (
+                f"MATCH (n:{node_type})-{rel_filter}->(m) RETURN n, r, m LIMIT {half_limit}; "
+                f"MATCH (n)-{rel_filter}->(m:{node_type}) RETURN n, r, m LIMIT {half_limit}"
+            )
     else:
         # No node type filter
-        query = f"MATCH (n)-{rel_filter}->(m) RETURN n, r, m LIMIT {limit}"
+        if exclusion_filter:
+            query = f"MATCH (n)-{rel_filter}->(m) WHERE {exclusion_filter} RETURN n, r, m LIMIT {limit}"
+        else:
+            query = f"MATCH (n)-{rel_filter}->(m) RETURN n, r, m LIMIT {limit}"
 
     return query
 
@@ -187,6 +209,8 @@ def initialize_session_state() -> None:
         sss.selected_node_name = None
     if "selected_rel_types" not in sss:
         sss.selected_rel_types = []
+    if "excluded_node_type" not in sss:
+        sss.excluded_node_type = None
     if "current_query" not in sss:
         sss.current_query = None
 
@@ -247,6 +271,8 @@ def main() -> None:
             sss.prev_rel_types = []
         if "prev_viz_limit" not in sss:
             sss.prev_viz_limit = 500
+        if "prev_excluded_node_type" not in sss:
+            sss.prev_excluded_node_type = None
 
         # Node type filter (single select)
         available_node_types = get_node_types(backend)
@@ -264,6 +290,23 @@ def main() -> None:
         else:
             st.info("No node types available")
             sss.selected_node_type = None
+
+        # Exclude node type filter (single select)
+        if available_node_types:
+            # Filter out the selected include node type to prevent conflict
+            exclude_options = [t for t in available_node_types if t != sss.selected_node_type]
+            exclude_type_options = ["(None)"] + exclude_options
+            selected_exclude_type_display = st.selectbox(
+                "Exclude Node Type",
+                options=exclude_type_options,
+                index=0,
+                help="Select a node type to exclude from the visualization",
+            )
+            sss.excluded_node_type = (
+                None if selected_exclude_type_display == "(None)" else selected_exclude_type_display
+            )
+        else:
+            sss.excluded_node_type = None
 
         # Specific node selector (only if a node type is selected)
         if sss.selected_node_type:
@@ -314,12 +357,14 @@ def main() -> None:
             or sss.selected_node_name != sss.prev_node_name
             or sss.selected_rel_types != sss.prev_rel_types
             or sss.viz_limit != sss.prev_viz_limit
+            or sss.excluded_node_type != sss.prev_excluded_node_type
         ):
             sss.graph_html = None  # Clear cached graph when filters change
             sss.prev_node_type = sss.selected_node_type
             sss.prev_node_name = sss.selected_node_name
             sss.prev_rel_types = sss.selected_rel_types.copy() if sss.selected_rel_types else []
             sss.prev_viz_limit = sss.viz_limit
+            sss.prev_excluded_node_type = sss.excluded_node_type
 
         st.markdown("---")
 
@@ -333,6 +378,7 @@ def main() -> None:
                         sss.selected_node_name,
                         sss.selected_rel_types,
                         sss.viz_limit,
+                        sss.excluded_node_type,
                     )
 
                     # Store the query in session state
@@ -360,6 +406,8 @@ def main() -> None:
                 filter_info.append(f"Node: {sss.selected_node_type}/{sss.selected_node_name}")
             else:
                 filter_info.append(f"Node Type: {sss.selected_node_type}")
+        if sss.excluded_node_type:
+            filter_info.append(f"Excluding: {sss.excluded_node_type}")
         if sss.selected_rel_types:
             filter_info.append(f"Relationships: {', '.join(sss.selected_rel_types)}")
         filter_info.append(f"Limit: {sss.viz_limit}")
