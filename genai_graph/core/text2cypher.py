@@ -6,7 +6,7 @@ from langchain_core.runnables import Runnable, RunnableLambda
 from loguru import logger
 
 from genai_graph.core.graph_backend import create_backend_from_config
-from genai_graph.core.schema_doc_generator import generate_schema_description
+from genai_graph.core.kg_manager import get_kg_manager
 
 # taken from https://kuzudb.github.io/blog/post/improving-text2cypher-for-graphrag-via-schema-pruning/
 
@@ -76,44 +76,46 @@ USER_PROMPT = """
 """
 
 
-def _schema_markdown_for_subgraphs(subgraphs: list[str]) -> str:
-    """Return schema Markdown for one or more subgraphs.
-
-    If multiple (or zero) subgraphs are provided, a combined schema is
-    generated. When exactly one subgraph name is given, the single-subgraph
-    documentation is used for backwards-compatible behavior.
+def _get_schema_from_file() -> str:
+    """Read the schema description from the stored schema file.
+    
+    The schema file is automatically created during graph creation.
     """
-    if not subgraphs or len(subgraphs) > 1:
-        # Empty list means "all registered" for the combined generator
-        return generate_schema_description(subgraphs)
-    return generate_schema_description(subgraphs[0])
+    manager = get_kg_manager()
+    if not manager.schema_path.exists():
+        raise FileNotFoundError(
+            f"Schema file not found at {manager.schema_path}. "
+            "Run 'cli kg create' to generate the schema."
+        )
+    return manager.schema_path.read_text(encoding="utf-8")
 
 
-def text2cypher_chain(question: str, subgraphs: list[str], llm_id: str | None = None) -> Runnable:
+def text2cypher_chain(question: str, llm_id: str | None = None) -> Runnable:
     """Generate system and user prompts for text to Cypher conversion.
 
     Args:
         question: The user's question in natural language.
-        subgraphs: Names of the subgraphs whose combined schema should be used.
+        llm_id: Optional LLM identifier to use for generation.
     """
     prompt = {
         "question": RunnableLambda(lambda _: question),
-        "schema": RunnableLambda(lambda _: _schema_markdown_for_subgraphs(subgraphs)),
+        "schema": RunnableLambda(lambda _: _get_schema_from_file()),
     } | def_prompt(system=SYSTEM_PROMPT, user=USER_PROMPT)
     return prompt | get_llm(llm_id=llm_id) | StrOutputParser()
 
 
-def query_kg(query: str, subgraphs: list[str], llm_id: str | None = None) -> pd.DataFrame:
+def query_kg(query: str, llm_id: str | None = None) -> pd.DataFrame:
     """Generate a Cypher query from a natural language query and execute it against the knowledge graph.
 
     Args:
         query: The user's question in natural language.
-        subgraphs: Names of the subgraphs whose combined schema should be used.
+        llm_id: Optional LLM identifier to use for generation.
     """
-    backend = create_backend_from_config("default")
+    manager = get_kg_manager()
+    backend = create_backend_from_config("default", manager.profile)
     if not backend:
         raise Exception("EKG database not found")
-    cypher_query = text2cypher_chain(query, subgraphs, llm_id=llm_id).invoke({})
+    cypher_query = text2cypher_chain(query, llm_id=llm_id).invoke({})
     logger.info(f"Generated Cypher query: {cypher_query}")
     try:
         result = backend.execute(cypher_query)
@@ -126,5 +128,5 @@ def query_kg(query: str, subgraphs: list[str], llm_id: str | None = None) -> pd.
 if __name__ == "__main__":
     # Quick test
     query = "List the names of all competitors for opportunities created after January 1, 2012."
-    df = query_kg(query, subgraphs=["ReviewedOpportunity"], llm_id=None)
+    df = query_kg(query, llm_id=None)
     print(df)

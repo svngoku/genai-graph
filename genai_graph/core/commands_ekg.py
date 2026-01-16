@@ -275,23 +275,15 @@ class EkgCommands(CliTopCommand):
                 build_ekg_agent_system_prompt,
                 create_ekg_cypher_tool,
             )
-            from genai_graph.core.graph_registry import GraphRegistry
             from genai_graph.core.kg_manager import get_kg_manager
 
             # Get the current KG manager (auto-activates)
             manager = get_kg_manager()
             kg_config_name = manager.profile
 
-            registry = GraphRegistry.get_instance()
-            selected_subgraphs = registry.listsubgraphs()
-
-            if not selected_subgraphs:
-                console.print("[red]❌ No subgraphs are currently registered.[/red]")
-                raise typer.Exit(1)
-
             setup_langchain(llm, lc_debug, lc_verbose)
 
-            system_prompt = build_ekg_agent_system_prompt(selected_subgraphs, single_tool_mode=first_tool)
+            system_prompt = build_ekg_agent_system_prompt(single_tool_mode=first_tool)
             ekg_tool = create_ekg_cypher_tool(
                 backend_config=GRAPH_DB_CONFIG,
                 kg_config_name=kg_config_name,
@@ -416,13 +408,7 @@ class EkgCommands(CliTopCommand):
             try:
                 from rich.table import Table
 
-                from genai_graph.core.graph_registry import GraphRegistry
-
-                # Get all registered subgraphs
-                registry = GraphRegistry.get_instance()
-                selected_subgraphs = registry.listsubgraphs()
-
-                df = query_kg(query, subgraphs=selected_subgraphs, llm_id=llm)
+                df = query_kg(query, llm_id=llm)
 
                 if df.empty:
                     console.print("[yellow]Query returned no results[/yellow]")

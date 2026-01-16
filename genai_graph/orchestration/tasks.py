@@ -63,7 +63,7 @@ class HtmlExportResult(BaseModel):
     """Result of HTML export task."""
 
     config_name: str
-    output_path: Path
+    output_path: UPath
 
 
 class KgRunResult(BaseModel):
@@ -325,7 +325,7 @@ def delete_backend_task(config_key: str = "default", kg_config_name: str | None 
 def export_html(
     config_name: str,
     backend: GraphBackend,
-    output_dir: Path | None = None,
+    output_dir: UPath | None = None,
 ) -> HtmlExportResult:
     """Export an HTML visualization of the current KG and return its path.
 

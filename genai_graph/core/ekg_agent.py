@@ -9,21 +9,26 @@ from langchain_core.tools import BaseTool, tool
 from rich.console import Console
 
 from genai_graph.core.graph_backend import create_backend_from_config
-from genai_graph.core.text2cypher import SYSTEM_PROMPT, _schema_markdown_for_subgraphs
+from genai_graph.core.kg_manager import get_kg_manager
+from genai_graph.core.text2cypher import SYSTEM_PROMPT
 
 
-def build_ekg_agent_system_prompt(subgraphs: list[str], single_tool_mode: bool = False) -> str:
+def build_ekg_agent_system_prompt(single_tool_mode: bool = False) -> str:
     """Build the system prompt for the EKG LangChain agent.
 
     The prompt explains the agent's role, how to use the Cypher tool, and
     embeds the graph schema and Cypher authoring guidelines.
 
     Args:
-        subgraphs: List of subgraph names to include in the schema
         single_tool_mode: If True, adjusts prompt for single tool call behavior
     """
-
-    schema_markdown = _schema_markdown_for_subgraphs(subgraphs)
+    manager = get_kg_manager()
+    if not manager.schema_path.exists():
+        raise FileNotFoundError(
+            f"Schema file not found at {manager.schema_path}. "
+            "Run 'cli kg create' to generate the schema."
+        )
+    schema_markdown = manager.schema_path.read_text(encoding="utf-8")
     # SYSTEM_PROMPT contains detailed guidance originally written for a
     # standalone text-to-Cypher translator. Here it serves as the canonical
     # reference for how the agent should construct Cypher queries that it

@@ -630,7 +630,7 @@ class GraphSchema(BaseModel):
                         # Only exclude if this relationship applies to this node's field_path
                         for node_field_path in node_config.field_paths:
                             applies = False
-                            
+
                             if to_path and "." in to_path:
                                 if from_path == "":
                                     # Root node excluding direct field
