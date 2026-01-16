@@ -1,22 +1,9 @@
-Refactor /home/tcl/prj/genai-tk/genai_tk/extra/rag/commands_rag.py 
-- add a command to add a set of files 
-- The overall command parameters should be like "baml extract", ie with  root_dir , --include, --exclude, --force, ...
-- Use Prefect to process in parallel 
-- The hashcode of the file is used as ids to avoid recalculation ( use from genai_tk.utils.hashing )
-- Use /home/tcl/prj/genai-tk/genai_tk/core/embeddings_store.py  and related stuff.  Configuration is in /home/tcl/prj/genai-graph/config/overrides.yaml, keep it there.  
-- You can modify embeddings_store.py. Have reusability in mind.
-- Use RecursiveCharacterTextSplitter by default, but if the file is Markdow use first MarkdownHeaderTextSplitter.  Hardcode chunking parameters for now, but prepare they could me modified by config
-- Put in metadata the short name of the file  and its hash
-- check / possibly improve other rag commands 
+Refactor totaly  /home/tcl/prj/genai-tk/genai_tk/tools/langchain/rag_tool_factory.py .  
+The created LangChain tool should behave like the 'query' command in /home/tcl/prj/genai-tk/genai_tk/extra/rag/commands_rag.py, ie accept a query string and an optional metadata filter in JSON. 
+In the factory, we pass the name of the embedding store (to be used by EmbeddingsStore.create_from_config...) , 
+tool name, tool descripton and default metadata filter  (to be merge with the one given when calling the tool).
+You can look at /home/tcl/prj/genai-tk/genai_tk/tools/langchain/sql_tool_factory.py, that works.
 
-
-
-Update KG creation to buid a vector store along the graph for hybrid search.
-- Create Prefect tasks / flow to import Markdown files and index them in a vector store (after being chunked and vectorized.)
-- The task is called after 
-- The overall command parameters should be like "baml extract", ie with  root_dir , --include, --exclude, --batch-size etc
-
-- We know the content is Markdown.   Use  optimized chunker /home/tcl/prj/genai-tk/genai_tk/extra/loaders/markdown_loader.py . This module has nevevr been used / tested, so you can modify it. You can anso modify embeddings_store.py. Have reusability in mind. 
 
 
 
@@ -115,6 +102,9 @@ https://docs.chonkie.ai/oss/pipelines
 
 
 - ```cli baml extract  '${paths.rainbow_md}/real' '${paths.rainbow_json}'  --function ExtractRainbow  --include "*CNES_TMA_VENUS*.md"  --force``
+
+- ```cli rag add-files '${paths.rainbow_md}/real' ```
+- ```cli rag query "CNES" --filter '{"file_hash": "1fa730def69ff25e"}'  ```
 
 - ``` export KG_CONFIG="db_only"; cli kg delete -f ; cli kg create ; cli kg schema --no-enums; cli kg export-html ; cli kg info```
 `

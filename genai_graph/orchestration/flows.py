@@ -73,7 +73,7 @@ def create_kg_flow(
     manager = get_kg_manager()
     manager.activate()
     manager.log_outcome("create_kg", "started", "Starting KG creation flow")
-
+    
     backend = initialize_backend_task.submit("default", cfg_name).result()
     db_path = get_backend_storage_path_from_config("default", cfg_name)
 
