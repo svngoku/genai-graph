@@ -1,20 +1,22 @@
-
-
-Some time ago we introduced the 'ExtraFields' class to allow a class to be 'embedded'  in another one.  
-That lead to a lot of complexity, for a limited interest.
-'extra_classes' in nodes should be limited to normal Pydantic classes, without need to add specific logic. 
-So simplify the design: make 'FileMetaData' and 'WinLos' normal nodes, and suppress all that complexity. 
-To try to keep legacy code for compatibilty of else. KISS
-Propose improvement is you see them.
-
-You can check with 'export KG_CONFIG=test1_with_db; cli kg create; '  and verify the node existence in "pull" mode.
-Also test non-pull mode with 'KG_CONFIG=db_only'
-
+Refactor /home/tcl/prj/genai-tk/genai_tk/extra/rag/commands_rag.py 
+- add a command to add a set of files 
+- The overall command parameters should be like "baml extract", ie with  root_dir , --include, --exclude, --force, ...
+- Use Prefect to process in parallel 
+- The hashcode of the file is used as ids to avoid recalculation ( use from genai_tk.utils.hashing )
+- Use /home/tcl/prj/genai-tk/genai_tk/core/embeddings_store.py  and related stuff.  Configuration is in /home/tcl/prj/genai-graph/config/overrides.yaml, keep it there.  
+- You can modify embeddings_store.py. Have reusability in mind.
+- Use RecursiveCharacterTextSplitter by default, but if the file is Markdow use first MarkdownHeaderTextSplitter.  Hardcode chunking parameters for now, but prepare they could me modified by config
+- Put in metadata the short name of the file  and its hash
+- check / possibly improve other rag commands 
 
 
 
-Today the user has the capability to create sub-graphs from BAML (see genai_graph/ekg/schema/rainbow_review.py for an exemple) or from a table (genai_graph/ekg/schema/crm_export.py).
-Bith are similar, except that in second case the user has access to a untyped dict 
+Update KG creation to buid a vector store along the graph for hybrid search.
+- Create Prefect tasks / flow to import Markdown files and index them in a vector store (after being chunked and vectorized.)
+- The task is called after 
+- The overall command parameters should be like "baml extract", ie with  root_dir , --include, --exclude, --batch-size etc
+
+- We know the content is Markdown.   Use  optimized chunker /home/tcl/prj/genai-tk/genai_tk/extra/loaders/markdown_loader.py . This module has nevevr been used / tested, so you can modify it. You can anso modify embeddings_store.py. Have reusability in mind. 
 
 
 
@@ -37,17 +39,6 @@ Bith are similar, except that in second case the user has access to a untyped di
 
 
 - Use LangChain Midlewares to print tool calls in Streamlit (like in CLI)
-
-
-# Doc  Manager
-Create a repository "doc_manager" with files to manage docs (import, export, index, ...).
-The backend is a relational database, handled by SQLAlchemy .
-There are 2 tables: 
-   - One for documents, with title, path, hash-code of the document, language (english by default), date, the content itself (in Markdown), metadata (JSON) 
-   - One for Chunks; with fields for the chunk, the embeddings (a vector)
- and metadata. The table name encore the name of the embeddings (as the size of vector depends of it). 
- Use the pg_vectorstore langchain library, and possibly code from /home/tcl/prj/genai-tk/genai_tk/extra/pgvector_factory.py
-Commands to load ....
 
 
  ...

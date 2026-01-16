@@ -18,7 +18,8 @@ kg_configs:
         exclude: 
           - "fake/*"
         recursive: true
-
+        file_embedding:
+          metadata: ["Opportunity.opportunity_id","Customer.name"]
   # test1:
   #   subgraphs:
   #     - factory: genai_graph.ekg.schema.rainbow_review:ReviewedOpportunitySubgraph
@@ -48,6 +49,7 @@ kg_configs:
         exclude: 
           - "fake/*"
         recursive: true
+
       - factory: ${schemas_root}.crm_export:CrmExtractSubGraph
         db_dsn: sqlite:///${paths.data_root}/ekg/crm_extract.db
         files:

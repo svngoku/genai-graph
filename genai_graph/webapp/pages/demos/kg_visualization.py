@@ -398,9 +398,6 @@ def main() -> None:
                     st.error(f"Failed to generate visualization: {e}")
                     logger.exception("Visualization generation failed")
 
-    # Main content area
-    st.markdown("### 📊 Interactive Graph")
-
     if sss.graph_html:
         # Display current filters and query side by side
         filter_info = []

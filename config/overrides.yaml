@@ -29,18 +29,31 @@ ekg_local:
       default: qwen3_06b_deepinfra
 
   embeddings_store:
-    default:
+    chroma_simple:
       backend: Chroma 
       embeddings: default
       table_name_prefix: embeddings
       record_manager: sqlite:///${paths.data_root}/vector_store/record_manager_cache.sql
       config:
         storage: ${paths.data_root}/vector_store  # Updated: was 'chroma_path'
+    
+    chroma_indexed: &default_store
+      backend: Chroma
+      embeddings: default
+      table_name_prefix: embeddings
+      index_document: true
+      record_manager: sqlite:///${paths.data_root}/vector_store/test_record_manager.sql
+      config:
+        storage: ${paths.data_root}/vector_store/test
+      
+    default: *default_store
+    
   cli:
     commands:  
     - genai_tk.core.commands_core:CoreCommands
     - genai_tk.core.commands_info:InfoCommands
     - genai_tk.extra.commands_extra:ExtraCommands
+    - genai_tk.extra.rag.commands_rag:RagCommands
     - genai_tk.extra.agents.commands_agents:AgentCommands
     - genai_tk.extra.structured.commands_baml:BamlCommands
     - genai_graph.core.commands_ekg:EkgCommands

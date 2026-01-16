@@ -150,10 +150,7 @@ def create_schema(
         try:
             core_create_schema(backend, schema.nodes, schema.relations, manager)
             schema.validate_with_context(manager)
-            logger.info(
-                "Created schema for subgraph '%s'",
-                getattr(subgraph_impl, "name", "<unknown>"),
-            )
+            logger.info(f"Created schema for subgraph {getattr(subgraph_impl, 'name', '<unknown>')}")
         except Exception as exc:  # pragma: no cover - defensive
             import traceback
 
