@@ -1,3 +1,11 @@
+Refactor /home/tcl/prj/genai-graph/genai_graph/webapp/pages/demos/reAct_agent.py
+- take as inspiration for main window of /home/tcl/prj/genai-blueprint/genai_blueprint/webapp/pages/demos/graph_RAG.py 
+- copy required files from genai_blueprint (notably genai_blueprint.webapp.ui_components.trace_middleware)
+- The logic and behavior should be the same as CLI command "kg agent" genai_graph/core/commands_ekg.py
+- the KG is selected through the KG Manager, like in other Streamlit pages
+- Compared to the demo in genai_graph, there's no need to let the user select the agent conf, the LLM etc
+- The list of tools is fixed (same as CLI command "kg agent"  ) and is hard-coded. Same for MCP servers. 
+- allow the user to take a query example from a popup window.  Examples include "quels sont les opportunitéc où on a eu CAP comme compétiteur ? " , "list the win or loss status and reasons for each opportunity, the tcv, and the source document", "what are the opportunities with risks  of exposing sensitive data "
 
 
 create a Streamlit page to display the data source from which the graph is created.
