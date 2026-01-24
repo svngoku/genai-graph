@@ -10,13 +10,16 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from genai_tk.utils.config_mngr import global_config
 from genai_tk.utils.singleton import once
 from loguru import logger
 from pydantic import BaseModel, Field
 from upath import UPath
+
+if TYPE_CHECKING:  # pragma: no cover - type checking only
+    from genai_graph.core.data_lineage import MarkdownLineage
 
 
 class KgOutcome(BaseModel):
@@ -373,6 +376,23 @@ class KgManager(BaseModel):
             info["warnings"] = None
 
         return info
+
+    def get_data_lineage(self) -> list["MarkdownLineage"]:
+        """Return data lineage entries for JSON/Markdown/source artifacts.
+
+        This delegates to :mod:`genai_graph.core.data_lineage` so that
+        lineage computation remains independent from this manager's other
+        responsibilities while still exposing a convenient entry point for
+        callers.
+
+        Returns:
+            List of MarkdownLineage objects describing source documents and
+            associated JSON files for the active KG profile.
+        """
+
+        from genai_graph.core.data_lineage import build_lineage_for_manager
+
+        return build_lineage_for_manager(self)
 
     # ------------------------------------------------------------------
     # Warning collection helpers (for use as a context object)

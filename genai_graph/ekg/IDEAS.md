@@ -1,3 +1,19 @@
+
+
+create a Streamlit page to display the data source from which the graph is created.
+1/ like in genai_graph/webapp/pages/demos/kg_query.py or kg_visualization, let the user select a configuration
+2/ From the graph config,  get the list of BAML generated JSON file from which the graph has been created
+3/ From the manifest.json file in the directory of the JSON file, get the Markdown file from which the JSON file has been created
+4/ From the manifest.json file in the directory of the Markdown file, get the PDF (or else) file from which the JSON file has been created
+4/ Make an UI so the user can select a Markdown (possibly in a tree directory view), that visuaze (in tabs, nicely) the Markdown, the PDF (using new st.pdf streamli widget)  and the JSON file content
+5 / register the page in config/app_conf.yaml
+
+
+
+
+
+
+
 Refactor totaly  /home/tcl/prj/genai-tk/genai_tk/tools/langchain/rag_tool_factory.py .  
 The created LangChain tool should behave like the 'query' command in /home/tcl/prj/genai-tk/genai_tk/extra/rag/commands_rag.py, ie accept a query string and an optional metadata filter in JSON. 
 In the factory, we pass the name of the embedding store (to be used by EmbeddingsStore.create_from_config...) , 

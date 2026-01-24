@@ -10,7 +10,6 @@ from __future__ import annotations
 from typing import Annotated
 
 import typer
-from genai_tk.extra.prefect.runtime import ephemeral_prefect_settings
 from genai_tk.main.cli import CliTopCommand
 from loguru import logger
 from rich.console import Console
@@ -55,6 +54,8 @@ class EkgCommands(CliTopCommand):
             """
 
             # Get the configured KG config name.
+            from genai_tk.extra.prefect.runtime import ephemeral_prefect_settings
+
             from genai_graph.core.kg_manager import get_kg_manager
             from genai_graph.orchestration.flows import create_kg_flow
 

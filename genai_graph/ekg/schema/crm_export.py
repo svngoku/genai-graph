@@ -47,7 +47,7 @@ class CrmExtractSubGraph(TableBackedSubgraphFactory, BaseModel):
     def build_schema(self) -> GraphSchema:
         """Build the graph schema for CRM extract data.
 
-        Creates schema with Opportunity, Person, and WinLoss nodes and their relationships.
+        Creates schema with Opportunity, Person, and WinLoss nodes  their relationships.
         """
         from genai_graph.ekg.baml_client.types import Opportunity, Person
 
@@ -73,7 +73,7 @@ class CrmExtractSubGraph(TableBackedSubgraphFactory, BaseModel):
             #     to_node=Opportunity,
             #     name="CRM_INFO",
             #     description="CRM extracted Information",
-            # ),
+            # ),and
             # Link CRM extract root to its win/loss record
             GraphRelation(
                 from_node=Opportunity,
