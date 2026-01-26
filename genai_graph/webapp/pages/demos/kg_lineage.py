@@ -6,6 +6,7 @@ This page lets users:
 - Trace each JSON file back to the originating Markdown and source
   document (PDF or similar) using nearby manifest.json files.
 - View Markdown, source PDF, and JSON content side by side.
+- View how the Markdown file is chunked for RAG processing.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 
 import streamlit as st
+from genai_tk.extra.rag.markdown_chunking import chunk_markdown_file
 from genai_tk.utils.config_mngr import global_config
 from genai_tk.utils.file_patterns import resolve_config_path
 from loguru import logger
@@ -363,6 +365,75 @@ def _render_baml_schema(baml_dir: UPath) -> None:
             st.error(f"Failed to read file: {exc}")
 
 
+def _increase_markdown_header_levels(content: str) -> str:
+    """Increase markdown header levels by 1 (# -> ##, ## -> ###, etc).
+
+    This makes top-level headers appear smaller in the UI.
+    """
+    import re
+
+    def replace_header(match: re.Match[str]) -> str:
+        hashes = match.group(1)
+        # Add one more hash to increase header level
+        return "#" + hashes + match.group(2)
+
+    # Match markdown headers (# at start of line with optional whitespace)
+    return re.sub(r"^(#+)(\s+.*)$", replace_header, content, flags=re.MULTILINE)
+
+
+def _render_chunks_tab(entry: "MarkdownLineage", data_roots: list[UPath]) -> None:
+    """Render the Markdown chunks tab showing how the file is chunked for RAG."""
+
+    st.subheader("Markdown Chunks")
+    relative_path = _make_relative_path(entry.markdown_path, data_roots)
+    st.caption(f"Chunks for: {relative_path}")
+
+    try:
+        chunks = chunk_markdown_file(entry.markdown_path)
+    except FileNotFoundError:
+        st.error(f"Markdown file not found: {relative_path}")
+        return
+    except Exception as exc:
+        st.error(f"Failed to chunk markdown file: {exc}")
+        return
+
+    if not chunks:
+        st.info("No chunks generated from this file.")
+        return
+
+    # Summary statistics
+    total_chars = sum(c.char_count for c in chunks)
+    type_counts: dict[str, int] = {}
+    for c in chunks:
+        type_counts[c.chunk_type] = type_counts.get(c.chunk_type, 0) + 1
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Chunks", len(chunks))
+    with col2:
+        st.metric("Total Characters", f"{total_chars:,}")
+    with col3:
+        types_str = ", ".join(f"{k}: {v}" for k, v in sorted(type_counts.items()))
+        st.metric("Chunk Types", types_str)
+
+    st.markdown("---")
+
+    # Display chunks as a table with full content in markdown
+    for chunk in chunks:
+        with st.container(border=True):
+            col_meta, col_content = st.columns([1, 6])
+            with col_meta:
+                st.markdown(
+                    f"**#{chunk.index + 1}**  \n"
+                    f"`{chunk.chunk_type}`  \n"
+                    f"{chunk.char_count} chars  \n"
+                    f"pos: {chunk.start_pos}–{chunk.end_pos}"
+                )
+            with col_content:
+                display_content = _increase_markdown_header_levels(chunk.content)
+                st.markdown(display_content)
+
+
 def main() -> None:
     """Main Streamlit app for KG data source lineage exploration."""
 
@@ -410,12 +481,13 @@ def main() -> None:
 
     # Tabs for different artifact types
     default = "📄 Markdown ➥"
-    tab_src, tab_md, tab_json, tab_schema = st.tabs(
+    tab_src, tab_md, tab_json, tab_schema, tab_chunks = st.tabs(
         [
             "📎 Source Document ➥",
             default,
-            "🧱 Generated JSON",
+            "🧱 LLM Structured Output",
             "📋 Schema Code",
+            "🧩 Chunks (for Embeddings/RAG)",
         ],
         default=default,
     )
@@ -425,6 +497,9 @@ def main() -> None:
 
     with tab_src:
         _render_source_tab(selected_entry, data_roots)
+
+    with tab_chunks:
+        _render_chunks_tab(selected_entry, data_roots)
 
     with tab_json:
         _render_json_tab(selected_entry, data_roots)
