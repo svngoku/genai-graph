@@ -402,7 +402,7 @@ def _render_chunks_tab(entry: "MarkdownLineage", data_roots: list[UPath]) -> Non
         return
 
     # Summary statistics
-    total_chars = sum(c.char_count for c in chunks)
+    total_tokens = sum(c.token_count for c in chunks)
     type_counts: dict[str, int] = {}
     for c in chunks:
         type_counts[c.chunk_type] = type_counts.get(c.chunk_type, 0) + 1
@@ -411,7 +411,7 @@ def _render_chunks_tab(entry: "MarkdownLineage", data_roots: list[UPath]) -> Non
     with col1:
         st.metric("Total Chunks", len(chunks))
     with col2:
-        st.metric("Total Characters", f"{total_chars:,}")
+        st.metric("Total Tokens", f"{total_tokens:,}")
     with col3:
         types_str = ", ".join(f"{k}: {v}" for k, v in sorted(type_counts.items()))
         st.metric("Chunk Types", types_str)
@@ -426,7 +426,7 @@ def _render_chunks_tab(entry: "MarkdownLineage", data_roots: list[UPath]) -> Non
                 st.markdown(
                     f"**#{chunk.index + 1}**  \n"
                     f"`{chunk.chunk_type}`  \n"
-                    f"{chunk.char_count} chars  \n"
+                    f"{chunk.token_count} tokens  \n"
                     f"pos: {chunk.start_pos}–{chunk.end_pos}"
                 )
             with col_content:
