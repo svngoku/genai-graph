@@ -1,24 +1,3 @@
-Refactor /home/tcl/prj/genai-graph/genai_graph/webapp/pages/demos/reAct_agent.py
-- take as inspiration for main window of /home/tcl/prj/genai-blueprint/genai_blueprint/webapp/pages/demos/graph_RAG.py 
-- copy required files from genai_blueprint (notably genai_blueprint.webapp.ui_components.trace_middleware)
-- The logic and behavior should be the same as CLI command "kg agent" genai_graph/core/commands_ekg.py
-- the KG is selected through the KG Manager, like in other Streamlit pages
-- Compared to the demo in genai_graph, there's no need to let the user select the agent conf, the LLM etc
-- The list of tools is fixed (same as CLI command "kg agent"  ) and is hard-coded. Same for MCP servers. 
-- allow the user to take a query example from a popup window.  Examples include "quels sont les opportunitéc où on a eu CAP comme compétiteur ? " , "list the win or loss status and reasons for each opportunity, the tcv, and the source document", "what are the opportunities with risks  of exposing sensitive data "
-
-
-create a Streamlit page to display the data source from which the graph is created.
-1/ like in genai_graph/webapp/pages/demos/kg_query.py or kg_visualization, let the user select a configuration
-2/ From the graph config,  get the list of BAML generated JSON file from which the graph has been created
-3/ From the manifest.json file in the directory of the JSON file, get the Markdown file from which the JSON file has been created
-4/ From the manifest.json file in the directory of the Markdown file, get the PDF (or else) file from which the JSON file has been created
-4/ Make an UI so the user can select a Markdown (possibly in a tree directory view), that visuaze (in tabs, nicely) the Markdown, the PDF (using new st.pdf streamli widget)  and the JSON file content
-5 / register the page in config/app_conf.yaml
-
-
-
-
 
 
 
@@ -38,21 +17,9 @@ You can look at /home/tcl/prj/genai-tk/genai_tk/tools/langchain/sql_tool_factory
 - use embeddings  ? 
 
 ## Better HTML visualisation
-- Use G.V() ? 
-- User can 
-  - select the types of nodes and relationsips
-
 - Use G.V()
 
 
-
-## Better React with Agent Midleware
-
-
-- Use LangChain Midlewares to print tool calls in Streamlit (like in CLI)
-
-
- ...
 
 
  ## better LLM support
@@ -74,9 +41,6 @@ LiteLLM
 
 
 ## Better HTML visualisation
-- User can 
-  - select the types of nodes and relationsips
-
 - Use G.V()
 
 ## Hybrid search extension to genai_tk/core/embeddings_store.py

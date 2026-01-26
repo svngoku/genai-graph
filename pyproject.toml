@@ -33,6 +33,7 @@ dependencies = [
     "sqlmodel>=0.0.31",
     "xxhash>=3.6.0",
     "baml-lib>=0.42.0",
+    "chonkie>=1.5.2",
 ]
 
 [project.urls]

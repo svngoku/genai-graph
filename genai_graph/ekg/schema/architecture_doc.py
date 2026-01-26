@@ -79,7 +79,7 @@ class ArchitectureDocumentSubgraph(JsonFileBackedSubgraphFactory, BaseModel):
         relations = [
             # Document to project
             GraphRelation(
-                from_node=SWArchitectureDocument,
+                from_node=SWArchitectureDocument,  # Top class
                 to_node=Opportunity,
                 name="SOFWARE_ARCHITECURE",
                 description="Architecture document for the opportunity/project",
