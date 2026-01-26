@@ -6,6 +6,9 @@ authors = [{ name = "Thierry Caminel", email = "thierry.caminel@atos.net" }]
 requires-python = ">=3.12,<3.13"
 dependencies = [
     # GenAI Toolkit - core AI components
+    # For local development with unpushed genai-tk changes, use local path:
+    # "genai_tk @ file:///home/tcl/prj/genai-tk",
+    # For production or when using GitHub version:
     "genai_tk @ git+https://github.com/tclatos/genai-tk@main",
     # Application framework dependencies
     "pydantic>=2.7.0,<3",         # Data validation framework
@@ -34,6 +37,7 @@ dependencies = [
     "xxhash>=3.6.0",
     "baml-lib>=0.42.0",
     "chonkie>=1.5.2",
+    "tokenizers>=0.21.0",           # Hugging Face tokenizers (for chonkie)
 ]
 
 [project.urls]
@@ -83,7 +87,9 @@ dev = [
 [tool.uv]
 package = true
 default-groups = ["ui", "demos", "extra", "dev"]
-constraint-dependencies = ["ruamel-yaml-clibz==0.2.12"] # required because of Prefect update. Might be removed later.
+constraint-dependencies = [
+    "ruamel-yaml-clibz==0.2.12",
+] # required because of Prefect update. Might be removed later.
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]

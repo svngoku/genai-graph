@@ -14,7 +14,7 @@ from numpy.typing import NDArray
 # Module-level configuration for the flow
 _flow_config: dict[str, Any] = {
     "source": {"path": ".", "included_patterns": ["*.md"], "excluded_patterns": [".venv/**", ".git/**"]},
-    "chunking": {"chunk_size": 2000, "chunk_overlap": 500, "language": "markdown"},
+    "chunking": {"chunk_size": 512, "chunk_overlap": 128, "language": "markdown"},
     "embedding": {"api_type": "openai", "model": "text-embedding-3-small"},
 }
 
@@ -61,8 +61,8 @@ def text_embedding_flow(flow_builder: cocoindex.FlowBuilder, data_scope: cocoind
     excluded_patterns = source_config.get("excluded_patterns", [".venv/**", ".git/**"])
 
     chunking_config = _flow_config.get("chunking", {})
-    chunk_size = chunking_config.get("chunk_size", 2000)
-    chunk_overlap = chunking_config.get("chunk_overlap", 500)
+    chunk_size = chunking_config.get("chunk_size", 512)
+    chunk_overlap = chunking_config.get("chunk_overlap", 128)
     language = chunking_config.get("language", "markdown")
 
     data_scope["documents"] = flow_builder.add_source(
