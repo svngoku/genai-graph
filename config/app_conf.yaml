@@ -37,16 +37,23 @@ ui:
   app_name : Enterprise Knowledge Graph Demos
   pages_dir : ${paths.src}/webapp/pages
   navigation:
-
     Settings:
       - settings/welcome.py
       - settings/configuration.py
       - settings/MCP_servers.py
+    ETL:
+      - path: demos/kg_lineage.py
+        name: "Markdown Files Lineage"
+      - path: demos/kg_tables.py
+        name: "Data Tables Imports"
     Knowledge Graph:
-      - demos/reAct_agent.py
-      - demos/kg_query.py
-      - demos/kg_visualization.py
-      - demos/kg_lineage.py
+      - path: demos/reAct_agent.py
+        name: "ReAct Agent"
+      - path: demos/kg_query.py
+        name: "Cypher/NL Query "
+      - path: demos/kg_visualization.py
+        name: "Graph Visualization"
+
 
 
 

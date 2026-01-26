@@ -11,10 +11,12 @@ This page lets users:
 from __future__ import annotations
 
 from collections import defaultdict
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import streamlit as st
 from genai_tk.utils.config_mngr import global_config
+from genai_tk.utils.file_patterns import resolve_config_path
 from loguru import logger
 from streamlit import session_state as sss
 
@@ -22,6 +24,51 @@ from genai_graph.core.kg_manager import get_kg_manager
 
 if TYPE_CHECKING:  # pragma: no cover - type checking only
     from genai_graph.core.data_lineage import JsonArtifact, MarkdownLineage
+
+
+def _get_data_roots() -> list[Path]:
+    """Get resolved data root paths for relative path display.
+
+    Includes paths.ekg_data (common parent for all data) plus any
+    explicit data_root values from subgraph configurations.
+    """
+    roots = []
+    try:
+        cfg = global_config()
+        # Primary root: paths.ekg_data is the common parent for md/, json/, pdf/
+        ekg_data = cfg.get_dir_path("paths.ekg_data")
+        if ekg_data:
+            roots.append(Path(ekg_data))
+
+        # Also include explicit data_root values from subgraphs
+        manager = get_kg_manager()
+        profile_cfg = manager.get_profile_dict()
+        subgraphs_cfg = profile_cfg.get("subgraphs", []) or []
+
+        for subgraph_cfg in subgraphs_cfg:
+            if isinstance(subgraph_cfg, dict) and "data_root" in subgraph_cfg:
+                resolved = resolve_config_path(subgraph_cfg["data_root"])
+                roots.append(Path(resolved))
+    except Exception as exc:
+        logger.warning("Could not extract data_roots: %s", exc)
+
+    return roots
+
+
+def _make_relative_path(full_path: Path | str, data_roots: list[Path]) -> str:
+    """Convert a full path to a relative path based on data_root.
+
+    Tries each data_root and returns the relative path for the first match.
+    Falls back to the full path if no data_root matches.
+    """
+    full_path = Path(full_path)
+    for root in data_roots:
+        try:
+            if full_path.is_relative_to(root):
+                return str(full_path.relative_to(root))
+        except (ValueError, TypeError):
+            continue
+    return str(full_path)
 
 
 def _get_available_kg_configs() -> list[str]:
@@ -79,12 +126,16 @@ def _select_configuration() -> None:
             st.rerun()
 
 
-def _group_lineage_by_directory(lineage: list["MarkdownLineage"]) -> dict[str, list["MarkdownLineage"]]:
-    """Group lineage entries by their markdown parent directory."""
+def _group_lineage_by_directory(
+    lineage: list["MarkdownLineage"],
+    data_roots: list[Path],
+) -> dict[str, list["MarkdownLineage"]]:
+    """Group lineage entries by their markdown parent directory (relative to data_root)."""
 
     grouped: dict[str, list["MarkdownLineage"]] = defaultdict(list)
     for entry in lineage:
-        grouped[str(entry.markdown_path.parent)].append(entry)
+        relative_dir = _make_relative_path(entry.markdown_path.parent, data_roots)
+        grouped[relative_dir].append(entry)
     for entries in grouped.values():
         entries.sort(key=lambda e: e.markdown_path.name.lower())
     return dict(sorted(grouped.items(), key=lambda item: item[0]))
@@ -134,22 +185,23 @@ def _select_markdown_entry(
     return entries[0]
 
 
-def _render_markdown_tab(entry: "MarkdownLineage") -> None:
+def _render_markdown_tab(entry: "MarkdownLineage", data_roots: list[Path]) -> None:
     """Render the Markdown content tab."""
 
     st.subheader("Markdown Document")
-    st.caption(str(entry.markdown_path))
+    relative_path = _make_relative_path(entry.markdown_path, data_roots)
+    st.caption(relative_path)
 
     try:
         content = entry.markdown_path.read_text(encoding="utf-8")
         st.markdown(content)
     except FileNotFoundError:
-        st.error(f"Markdown file not found: {entry.markdown_path}")
+        st.error(f"Markdown file not found: {relative_path}")
     except Exception as exc:  # pragma: no cover - defensive
         st.error(f"Failed to read markdown file: {exc}")
 
 
-def _render_source_tab(entry: "MarkdownLineage") -> None:
+def _render_source_tab(entry: "MarkdownLineage", data_roots: list[Path]) -> None:
     """Render the source (PDF or other) tab."""
 
     st.subheader("Source Document (PDF or original)")
@@ -158,7 +210,8 @@ def _render_source_tab(entry: "MarkdownLineage") -> None:
         st.info("No source document could be resolved from manifest files for this markdown.")
         return
 
-    st.caption(str(entry.source_path))
+    relative_path = _make_relative_path(entry.source_path, data_roots)
+    st.caption(relative_path)
 
     if entry.source_path.suffix.lower() == ".pdf":
         # Use the new Streamlit PDF widget when available
@@ -170,7 +223,7 @@ def _render_source_tab(entry: "MarkdownLineage") -> None:
         )
 
 
-def _render_json_tab(entry: "MarkdownLineage") -> None:
+def _render_json_tab(entry: "MarkdownLineage", data_roots: list[Path]) -> None:
     """Render the JSON content tab with optional per-file selector."""
 
     st.subheader("BAML Generated Files")
@@ -195,12 +248,13 @@ def _render_json_tab(entry: "MarkdownLineage") -> None:
 
     artifact = json_files[selected_index]
 
-    st.caption(f"Path: {artifact.path}\nSubgraph: {artifact.subgraph}")
+    relative_path = _make_relative_path(artifact.path, data_roots)
+    st.caption(f"Path: {relative_path}\nSubgraph: {artifact.subgraph}")
 
     try:
         raw = artifact.path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        st.error(f"JSON file not found: {artifact.path}")
+        st.error(f"JSON file not found: {relative_path}")
         return
     except Exception as exc:  # pragma: no cover - defensive
         st.error(f"Failed to read JSON file: {exc}")
@@ -228,13 +282,16 @@ def main() -> None:
 
     _initialize_session_state()
 
-    st.title("🧬 Knowledge Graph Data Source Lineage")
+    st.title("🧬 Knowledge Graph Lineage")
     st.markdown(
         """Inspect how your Knowledge Graph was built from BAML JSON
         files, intermediate Markdown, and original source documents.""",
     )
 
     _select_configuration()
+
+    # Get data_roots for relative path display
+    data_roots = _get_data_roots()
 
     # Load lineage information for the active configuration
     try:
@@ -252,7 +309,7 @@ def main() -> None:
         )
         return
 
-    grouped = _group_lineage_by_directory(lineage_entries)
+    grouped = _group_lineage_by_directory(lineage_entries, data_roots)
     selected_entry = _select_markdown_entry(grouped)
 
     if not selected_entry:
@@ -260,22 +317,24 @@ def main() -> None:
         return
 
     # Tabs for different artifact types
-    tab_md, tab_src, tab_json = st.tabs(
+    default = "📄 Markdown ➥"
+    tab_src, tab_md, tab_json = st.tabs(
         [
-            "📄 Markdown",
-            "📎 Source Document",
+            "📎 Source Document ➥",
+            default,
             "🧱 Generated JSON",
-        ]
+        ],
+        default=default,
     )
 
     with tab_md:
-        _render_markdown_tab(selected_entry)
+        _render_markdown_tab(selected_entry, data_roots)
 
     with tab_src:
-        _render_source_tab(selected_entry)
+        _render_source_tab(selected_entry, data_roots)
 
     with tab_json:
-        _render_json_tab(selected_entry)
+        _render_json_tab(selected_entry, data_roots)
 
 
 if __name__ == "__main__":  # pragma: no cover - manual execution

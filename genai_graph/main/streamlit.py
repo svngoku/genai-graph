@@ -121,10 +121,20 @@ def file_name_to_page_name(file_name: str) -> str:
 
 for section_name, page_files in nav_config.items():
     section_pages = []
-    for page_file_name in page_files:
+    for page_item in page_files:
+        # Support both string format and dict format
+        # String: "demos/reAct_agent.py"
+        # Dict: {path: "demos/reAct_agent.py", name: "ReAct Agent"}
+        if isinstance(page_item, str):
+            page_file_name = page_item
+            page_title = file_name_to_page_name(page_file_name)
+        else:
+            page_file_name = page_item.get("path", "")
+            page_title = page_item.get("name", file_name_to_page_name(page_file_name))
+
         page_path = pages_dir / page_file_name
         if page_path.exists():
-            section_pages.append(st.Page(page=page_path, title=file_name_to_page_name(page_file_name)))
+            section_pages.append(st.Page(page=page_path, title=page_title))
         else:
             logger.warning(f"page not found: {page_path} ")
     if section_pages:
