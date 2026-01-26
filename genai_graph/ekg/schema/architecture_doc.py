@@ -51,7 +51,7 @@ class ArchitectureDocumentSubgraph(JsonFileBackedSubgraphFactory, BaseModel):
         nodes = get_common_nodes() + [
             # Root node - the architecture document itself
             GraphNode(
-                node_class=self.TOP_CLASS,
+                node_class=SWArchitectureDocument,
                 name_from=lambda data, base: f"Architecture:{data.get('document_date', 'unknown')}",
                 description="Root node containing the complete architecture document with technical stack and solutions",
             ),
@@ -79,7 +79,7 @@ class ArchitectureDocumentSubgraph(JsonFileBackedSubgraphFactory, BaseModel):
         relations = [
             # Document to project
             GraphRelation(
-                from_node=self.TOP_CLASS,
+                from_node=SWArchitectureDocument,
                 to_node=Opportunity,
                 name="SOFWARE_ARCHITECURE",
                 description="Architecture document for the opportunity/project",

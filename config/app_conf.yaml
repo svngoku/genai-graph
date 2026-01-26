@@ -41,7 +41,7 @@ ui:
       - settings/welcome.py
       - settings/configuration.py
       - settings/MCP_servers.py
-    ETL:
+    Data Lineage:
       - path: demos/kg_lineage.py
         name: "Markdown Files Lineage"
       - path: demos/kg_tables.py

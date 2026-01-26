@@ -50,9 +50,9 @@ class ReviewedOpportunitySubgraph(JsonFileBackedSubgraphFactory, BaseModel):
         nodes = get_common_nodes() + [
             # Root node
             GraphNode(
-                node_class=self.TOP_CLASS,
+                node_class=ReviewedOpportunity,
                 extra_classes=[FinancialMetrics, CompetitiveLandscape],
-                name_from=lambda data, base: "Rainbow:" + str(data.get("start_date")),
+                name_from=lambda data, _: "Rainbow:" + str(data.get("start_date")),
                 description="Root node containing the complete reviewed opportunity",
             ),
             # Regular nodes - field paths auto-deduced
@@ -152,7 +152,7 @@ class ReviewedOpportunitySubgraph(JsonFileBackedSubgraphFactory, BaseModel):
                 description="Known competitors",
             ),
         ]
-        return GraphSchema(root_model_class=self.TOP_CLASS, nodes=nodes, relations=relations)
+        return GraphSchema(root_model_class=ReviewedOpportunity, nodes=nodes, relations=relations)
 
     def get_sample_queries(self) -> list[str]:
         """Get list of sample Cypher queries for opportunity data."""
