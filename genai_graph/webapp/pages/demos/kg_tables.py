@@ -297,7 +297,7 @@ def _render_table_data(table_info: TableInfo) -> None:
     # Display the dataframe
     st.dataframe(
         df_filtered,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
@@ -330,7 +330,7 @@ def _render_import_history(table_info: TableInfo, data_roots: list[Path]) -> Non
                 )
 
             df = pd.DataFrame(history_data)
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.dataframe(df, width="stretch", hide_index=True)
 
     except Exception as exc:
         st.warning(f"Could not load import history: {exc}")

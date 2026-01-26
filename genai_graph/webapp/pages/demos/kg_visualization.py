@@ -372,7 +372,7 @@ def main() -> None:
         st.markdown("---")
 
         # Generate button
-        if st.button("🎨 Generate Visualization", type="primary", use_container_width=True):
+        if st.button("🎨 Generate Visualization", type="primary", width="stretch"):
             with st.spinner("Generating visualization..."):
                 try:
                     # Build query based on filters

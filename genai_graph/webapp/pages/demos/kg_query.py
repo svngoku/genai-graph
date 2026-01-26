@@ -181,7 +181,7 @@ def main() -> None:
             st.markdown("**Cypher Query**")
 
         with col3:
-            execute_btn = st.button("▶️ Execute", type="primary", use_container_width=True)
+            execute_btn = st.button("▶️ Execute", type="primary", width="stretch")
 
         # Editable Cypher query input
         cypher_query = st.text_area(
@@ -247,7 +247,7 @@ def main() -> None:
 
         with col2:
             st.markdown("<br>", unsafe_allow_html=True)
-            generate_btn = st.button("🤖 Generate Cypher", type="primary", use_container_width=True)
+            generate_btn = st.button("🤖 Generate Cypher", type="primary", width="stretch")
 
         if generate_btn and nl_query:
             if not selected_subgraphs:

@@ -304,10 +304,10 @@ def display_sidebar() -> None:
         # Actions
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("📝 Examples", use_container_width=True):
+            if st.button("📝 Examples", width="stretch"):
                 show_examples_dialog()
         with col2:
-            if st.button("🗑️ Clear Chat", use_container_width=True):
+            if st.button("🗑️ Clear Chat", width="stretch"):
                 clear_chat_history()
                 st.rerun()
 
@@ -507,7 +507,7 @@ async def main() -> None:
     if total_events > 0:
         if st.button(
             f"🔍 View Execution Traces ({total_events} events)",
-            use_container_width=False,
+            width="content",
         ):
             show_execution_traces_dialog()
 

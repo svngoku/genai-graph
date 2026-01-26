@@ -627,7 +627,7 @@ def display_interleaved_traces(
     if show_clear_button:
         col1, col2 = ctx.columns([3, 1])
         with col2:
-            if ctx.button("🗑️ Clear Traces", key=f"{unique_prefix}_clear_btn", use_container_width=True):
+            if ctx.button("🗑️ Clear Traces", key=f"{unique_prefix}_clear_btn", width="stretch"):
                 middleware.clear()
                 st.rerun()
 
