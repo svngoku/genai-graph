@@ -223,6 +223,31 @@ def initialize_session_state() -> None:
         sss.current_query = None
 
 
+def show_empty_kg_message(config_name: str) -> None:
+    """Show message when KG has no data, with CLI command to create it.
+
+    Args:
+        config_name: Name of the KG configuration
+    """
+    st.warning(
+        f"""
+        ### 📊 Knowledge Graph '{config_name}' is Empty
+
+        The Knowledge Graph configuration **{config_name}** has not been generated yet,
+        or the database is empty.
+
+        To create the Knowledge Graph, run the following command in your terminal:
+
+        ```bash
+        export KG_CONFIG={config_name}
+        cli kg create
+        ```
+
+        Then refresh this page to visualize the graph.
+        """
+    )
+
+
 def main() -> None:
     """Main Streamlit app for KG visualization."""
     st.set_page_config(
@@ -268,6 +293,15 @@ def main() -> None:
             st.error(f"Failed to connect to database: {e}")
             return
 
+        # Check if KG has any data - get node and relationship types early
+        available_node_types = get_node_types(backend)
+        available_rel_types = get_relationship_types(backend)
+
+        # If no data exists, show message with CLI command
+        if not available_node_types and not available_rel_types:
+            show_empty_kg_message(selected_config)
+            return
+
         st.markdown("### 🎯 Filters")
 
         # Track previous filter values to detect changes
@@ -283,7 +317,6 @@ def main() -> None:
             sss.prev_excluded_node_types = []
 
         # Node type filter (multiselect)
-        available_node_types = get_node_types(backend)
         if available_node_types:
             selected_node_types = st.multiselect(
                 "Node Types",
@@ -329,8 +362,7 @@ def main() -> None:
         else:
             sss.selected_node_name = None
 
-        # Relationship type filter
-        available_rel_types = get_relationship_types(backend)
+        # Relationship type filter (available_rel_types already fetched above)
         if available_rel_types:
             selected_rel_types = st.multiselect(
                 "Relationship Types",

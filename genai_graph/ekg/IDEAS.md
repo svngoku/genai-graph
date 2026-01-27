@@ -75,31 +75,34 @@ CREATE (existingNode)-[:RELATED_TO]->(newNode)
 
 ## better llm / embeddings naming
 
-
-## Better 'rag' commands
-- pass a configurable chunker
-https://docs.chonkie.ai/oss/pipelines 
-
 ##  Better KG
 
 
 # To Test :
 
 
+## PPT tp PDF
+- ```uv run cli tools ppt2pdf '${paths.rainbow_ppt}' '${paths.rainbow_pdf}' --force --recursive- ```
+
+## PDF to Markdown
 - ```uv run cli tools markdownize  '${paths.rainbow_pdf}' '${paths.rainbow_md}.real'  --include "*Pizza Service*"  --mistral-ocr  --force --recursive  ```
 
-
+## Markdown to JSON
 - ```cli baml extract  '${paths.rainbow_md}/real' '${paths.rainbow_json}'  --function ExtractRainbow  --include "*CNES_TMA_VENUS*.md"  --force``
 
+## Markdown to Vector
 - ```cli rag add-files '${paths.rainbow_md}/real' ```
+
+## Markdown to Graph
+- ``` export KG_CONFIG="db_only"; cli kg delete -f ; cli kg create ; cli kg schema --no-enums; cli kg export-html ; cli kg info```
+
+## RAG query
 - ```cli rag query "CNES" --filter '{"file_hash": "1fa730def69ff25e"}'  ```
 
-- ``` export KG_CONFIG="db_only"; cli kg delete -f ; cli kg create ; cli kg schema --no-enums; cli kg export-html ; cli kg info```
-`
-
+# Fake Rainbow JSON
 - ```cli baml run FakeRainbowJson -i "Project for ESA; Marc Ferrer as sales lead in Atos team" --out-dir '${paths.rainbow_json}/fake' --out-file fake_esa_1.json ```
 
-
+# Fake ADD JSON
 - ```cli baml run FakeArchitectureJson -i "IT platform for CNES with 3-tier, Java based"  --out-dir '${paths.add_json}/fake' --out-file fake_add_CNES_1.json ```
 
 

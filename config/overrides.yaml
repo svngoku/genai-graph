@@ -82,6 +82,6 @@ ekg_local:
     rainbow: &default_baml_client
       baml_client: genai_graph.ekg.baml_client
 
-    default:: *default_baml_client
+    default: *default_baml_client
 
 
