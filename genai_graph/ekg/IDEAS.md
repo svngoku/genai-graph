@@ -1,3 +1,20 @@
+I want to import a KG from neo4j to Kuzu graph database. 
+I have a large JSONL export of the Neo4j database (> 150 lines).
+I want you create a set of functions to 
+1/ analyse ithe JSONL export and extract a schema, in the form of a list of Kuzu Cypher commands 'CREATE NODE" and "CREATE REL TABLE"
+2/ transform the incomming JSONL file to a JSON files for table and relationship that can be loaded into Kuzu using COPY <table> FROM <json file> and COPY <relationship> FROM <json file> ; (see https://kuzudb.github.io/docs/extensions/json/ ) 
+3/ create a subset of the JSONL file for quicker tests (can be with fake data)
+4/ Create a Kuzu database from this subset, using work done before. 
+
+Then, 
+1/ Implement these commmands in the usual way  (command 'neo4j' + subcommands ) in a sun-directory of genai_graph
+2/ register this top 'neo4j' command in config/overrides.yaml 
+3/ test with subset that the Kuzu import works 
+
+The JSON file is here : /home/tcl/OneDrive/prj/atos-kg/data/stratnav/sn-v3-q4-2026-01-28.jsonl
+
+
+
 
 
 
@@ -78,7 +95,7 @@ CREATE (existingNode)-[:RELATED_TO]->(newNode)
 ##  Better KG
 
 
-# To Test :
+# CLI Examples :
 
 
 ## PPT tp PDF
@@ -105,12 +122,29 @@ CREATE (existingNode)-[:RELATED_TO]->(newNode)
 # Fake ADD JSON
 - ```cli baml run FakeArchitectureJson -i "IT platform for CNES with 3-tier, Java based"  --out-dir '${paths.add_json}/fake' --out-file fake_add_CNES_1.json ```
 
+# Neo4j Import
+## Analyze schema
+```uv run cli neo4j analyze '${paths.stratnav_db}/26-01-2018/sn-v3-q4-2026-01-28.jsonl' -o '${paths.stratnav_db}/26-01-2018/schema.cypher' ```
+
+## Create subset for testing (with optional anonymization)
+```uv run cli neo4j subset '${paths.stratnav_db}/26-01-2018/sn-v3-q4-2026-01-28.jsonl'  '${paths.stratnav_db}/subset/sn-subset.jsonl' --max-nodes 20 --max-rels 20  ```
+
+## import 
+```uv run cli neo4j import '${paths.stratnav_db}/subset/sn-subset.jsonl' --db '${paths.stratnav_db}/subset/kuzu_db' -f```
+```uv run cli neo4j import '${paths.stratnav_db}/26-01-2018/sn-v3-q4-2026-01-28.jsonl' --db '${paths.stratnav_db}/26-01-2018/sn-v3-q4-2026-01-28/kuzu_db' -f```
 
 
-uv run cli kg delete -f ; uv run cli kg add-doc --key fake-cnes-1 --subgraph ArchitectureDocument
+## Query the database
+```uv run cli neo4j query "MATCH (n) RETURN labels(n), count(*)" --db '${paths.stratnav_db}/subset/kuzu_db'  ```
+
+## Get database info
+```uv run cli neo4j info --db --db '${paths.stratnav_db}/subset/kuzu_db' ```
 
 
-uv run cli kg delete -f ; uv run cli kg add-doc --key cnes-venus-tma --g ReviewedOpportunity ; uv run cli kg add-doc --key fake-cnes-1 -g ArchitectureDocument; uv run cli kg export-html``
+```uv run cli kg delete -f ; uv run cli kg add-doc --key fake-cnes-1 --subgraph ArchitectureDocument```
+
+
+```uv run cli kg delete -f ; uv run cli kg add-doc --key cnes-venus-tma --g ReviewedOpportunity ; uv run cli kg add-doc --key fake-cnes-1 -g ArchitectureDocument; uv run cli kg export-html``
 
 
 

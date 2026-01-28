@@ -8,6 +8,7 @@ paths:
   rainbow_pdf : ${paths.ekg_data}/rainbow/pdf/
   rainbow_ppt : ${paths.ekg_data}/rainbow/ppt/
   add_json : ${paths.ekg_data}/arch_doc/json/
+  stratnav_db : ${paths.ekg_data}/stratnav
 
 kg_configs:
   simple:
