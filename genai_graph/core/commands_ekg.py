@@ -65,7 +65,7 @@ class EkgCommands(CliTopCommand):
 
             The flow is executed with an in-process runner and ephemeral client
             so that no long-lived Prefect server or agent is required.
-            
+
             Examples:
                 cli kg create                        # Use kg_config from config
                 cli kg create --kg simple            # Create specific KG
@@ -82,7 +82,7 @@ class EkgCommands(CliTopCommand):
 
             # Determine which KG configs to process
             kg_configs_to_process: list[str] = []
-            
+
             if all_graphs:
                 # Get all KG configs from global_config
                 try:
@@ -107,9 +107,7 @@ class EkgCommands(CliTopCommand):
                 # Use default from kg_config
                 cfg_name = get_kg_manager().profile
                 kg_configs_to_process = [cfg_name]
-                console.print(
-                    f"[bold]Processing default KG configuration:[/bold] [cyan]{cfg_name}[/cyan]"
-                )
+                console.print(f"[bold]Processing default KG configuration:[/bold] [cyan]{cfg_name}[/cyan]")
 
             # Track results for all KG configs
             all_results: list[tuple[str, Any]] = []
@@ -130,9 +128,9 @@ class EkgCommands(CliTopCommand):
                             delete_first=delete_first,
                             export_html=export_html,
                         )
-                    
+
                     all_results.append((cfg_name, result))
-                    
+
                     stats = result.stats
                     warnings = result.warnings
 
@@ -173,12 +171,12 @@ class EkgCommands(CliTopCommand):
                 console.print(f"[bold cyan]{'=' * 60}[/bold cyan]")
                 console.print(f"[bold]Summary: Processed {len(kg_configs_to_process)} KG configuration(s)[/bold]")
                 console.print(f"[bold cyan]{'=' * 60}[/bold cyan]")
-                
+
                 if all_results:
                     console.print(f"[green]✓ Successfully created: {len(all_results)}[/green]")
                     for cfg_name, result in all_results:
                         console.print(f"  • [cyan]{cfg_name}[/cyan]: {result.stats.total_processed} docs processed")
-                
+
                 if failed_configs:
                     console.print(f"[red]✗ Failed: {len(failed_configs)}[/red]")
                     for cfg_name, error in failed_configs:

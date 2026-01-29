@@ -8,7 +8,7 @@ from rich.console import Console
 
 from genai_graph.core.extra_fields_utils import apply_extra_fields
 from genai_graph.core.graph_backend import GraphBackend, create_in_memory_backend
-from genai_graph.core.graph_merge import merge_nodes_batch
+from genai_graph.core.graph_merge import merge_nodes_batch, merge_relationships_batch
 from genai_graph.core.graph_schema import GraphNode, GraphRelation, GraphSchema, _find_embedded_field_for_class
 from genai_graph.core.kg_manager import KgManager
 
@@ -705,20 +705,20 @@ def load_graph_data(
     relationships: list[RelationshipRecord] | list[tuple[Any, ...]],
     context: KgManager | None = None,
 ) -> None:
-    """Load nodes and relationships into the graph database using MERGE semantics.
+    """Load nodes and relationships into the graph database.
 
-    Uses MERGE statements to insert or update nodes, preserving _created_at timestamps
-    and updating _updated_at on matches. Relationships are created using MATCH + CREATE.
+    Uses Kuzu's DataFrame MERGE for efficient batch operations:
+    - LOAD FROM df MERGE for batch node merging
+    - LOAD FROM df MATCH ... CREATE for batch relationship creation
 
     Args:
         backend: GraphBackend instance
         nodes: List of GraphNode configurations
         nodes_dict: Dictionary mapping node types to list of node data dicts
         relationships: List of relationship tuples
-        context: Optional KgContext for collecting warnings
+        context: Optional KgManager for collecting warnings
     """
-
-    # Build a mapping from node type to primary key field
+    # Build mappings from node type to primary key configuration
     node_type_to_key_field: dict[str, str] = {}
     node_type_to_is_auto_id: dict[str, bool] = {}
     for node in nodes:
@@ -736,7 +736,7 @@ def load_graph_data(
         node_type_to_key_field[node_type] = primary_key_field
         node_type_to_is_auto_id[node_type] = is_auto_id
 
-    # Merge nodes using MERGE statements (creates new or updates existing).
+    # Merge nodes using DataFrame-based batch operations
     logger.debug("Merging nodes into graph...")
     _merge_stats, id_mapping = merge_nodes_batch(
         conn=backend,
@@ -780,71 +780,19 @@ def load_graph_data(
             )
         )
 
-    # Relationships - use merged IDs for all node references
-    # TODO: Implement relationship deduplication to avoid duplicate edges between same node pairs.
-    # Currently, relationships are created even if they already exist. A future enhancement
-    # could use MERGE for relationships as well, matching on (from_node, to_node, rel_type)
-    # and optionally updating edge properties.
-
+    # Create relationships using DataFrame-based batch operations
     logger.debug(f"Creating {len(normalised_rels)} relationships...")
     edge_props_count = sum(1 for r in normalised_rels if r.properties)
     if edge_props_count > 0:
         logger.debug(f"  {edge_props_count} relationships have properties")
 
-    relationships_created = 0
-    for rel in normalised_rels:
-        # Translate original IDs to merged IDs using id_mapping
-        merged_from_id = id_mapping.get((rel.from_type, rel.from_id), rel.from_id)
-        merged_to_id = id_mapping.get((rel.to_type, rel.to_id), rel.to_id)
-
-        # Get the primary key fields for from and to node types
-        # For AUTO_ID nodes, we match by 'name' since 'id' is SERIAL and we can't match by UUID
-        from_is_auto_id = node_type_to_is_auto_id.get(rel.from_type, False)
-        to_is_auto_id = node_type_to_is_auto_id.get(rel.to_type, False)
-        
-        # Use 'name' for matching AUTO_ID nodes, otherwise use the primary key field
-        from_match_field = "name" if from_is_auto_id else node_type_to_key_field.get(rel.from_type, "id")
-        to_match_field = "name" if to_is_auto_id else node_type_to_key_field.get(rel.to_type, "id")
-
-        # Ensure we have strings before calling replace (defensive)
-        merged_from_id_str = "" if merged_from_id is None else str(merged_from_id)
-        merged_to_id_str = "" if merged_to_id is None else str(merged_to_id)
-
-        from_id_escaped = merged_from_id_str.replace("'", "\\'")
-        to_id_escaped = merged_to_id_str.replace("'", "\\'")
-
-        # Build properties string for edge
-        props_str = ""
-        edge_properties = rel.properties or {}
-        if edge_properties:
-            prop_parts = []
-            for key, value in edge_properties.items():
-                if value is None:
-                    prop_parts.append(f"{key}: NULL")
-                elif isinstance(value, str):
-                    escaped = value.replace("'", "\\'")
-                    prop_parts.append(f"{key}: '{escaped}'")
-                elif isinstance(value, (int, float)):
-                    prop_parts.append(f"{key}: {value}")
-                else:
-                    escaped = str(value).replace("'", "\\'")
-                    prop_parts.append(f"{key}: '{escaped}'")
-            if prop_parts:
-                props_str = " {" + ", ".join(prop_parts) + "}"
-
-        match_sql = f"""
-        MATCH (from:{rel.from_type}), (to:{rel.to_type})
-        WHERE from.{from_match_field} = '{from_id_escaped}'
-          AND to.{to_match_field} = '{to_id_escaped}'
-        CREATE (from)-[:{rel.name}{props_str}]->(to)
-        """
-        try:
-            backend.execute(match_sql)
-            relationships_created += 1
-        except Exception as e:
-            logger.error(f"Error creating {rel.name} relationship: {e}")
-            logger.error(f"SQL: {match_sql}")
-
+    relationships_created = merge_relationships_batch(
+        conn=backend,
+        relationships=normalised_rels,
+        node_type_to_key_field=node_type_to_key_field,
+        node_type_to_is_auto_id=node_type_to_is_auto_id,
+        id_mapping=id_mapping,
+    )
     logger.debug(f"Created {relationships_created} relationships")
 
 

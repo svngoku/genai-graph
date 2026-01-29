@@ -2,11 +2,16 @@
 
 This module provides utilities for adding nodes and edges to the graph,
 handling automatic merging based on key fields (typically 'name').
+
+Uses Kuzu's DataFrame MERGE capability for efficient batch operations:
+- LOAD FROM df MERGE (n:NodeType {key: key}) for batch node merging
+- LOAD FROM df MATCH ... CREATE for batch relationship creation
 """
 
 from datetime import datetime
 from typing import Any
 
+import pandas as pd
 from genai_tk.core.prompts import dedent_ws
 from loguru import logger
 
@@ -293,6 +298,85 @@ def merge_node_in_graph(
         raise
 
 
+# =============================================================================
+# DataFrame-based batch merge operations
+# =============================================================================
+
+
+def _prepare_node_dataframe(
+    node_list: list[dict[str, Any]],
+    key_field: str,
+    is_auto_id: bool,
+) -> pd.DataFrame:
+    """Prepare a DataFrame from a list of node dictionaries for batch merge.
+
+    Handles data cleaning:
+    - Removes excluded metadata fields
+    - Adds timestamps if not present
+
+    Args:
+        node_list: List of node data dictionaries
+        key_field: Primary key field name
+        is_auto_id: Whether this uses AUTO_ID (SERIAL) primary key
+
+    Returns:
+        DataFrame ready for LOAD FROM MERGE operation
+    """
+    if not node_list:
+        return pd.DataFrame()
+
+    # Fields to exclude from the DataFrame
+    excluded_metadata_fields = {"created_at", "updated_at", "dedup_key"}
+    if is_auto_id:
+        excluded_metadata_fields.add(key_field)
+
+    # Clean each node dict
+    cleaned_nodes = []
+    timestamp = datetime.utcnow().isoformat() + "Z"
+
+    for node_data in node_list:
+        cleaned = {}
+        for key, value in node_data.items():
+            if key in excluded_metadata_fields:
+                continue
+            # Keep the value as-is for DataFrame - Kuzu handles Python types directly
+            cleaned[key] = value
+
+        # Ensure timestamps are present
+        if "_created_at" not in cleaned:
+            cleaned["_created_at"] = timestamp
+        if "_updated_at" not in cleaned:
+            cleaned["_updated_at"] = timestamp
+
+        cleaned_nodes.append(cleaned)
+
+    return pd.DataFrame(cleaned_nodes)
+
+
+def _get_columns_for_set_clause(
+    df: pd.DataFrame,
+    key_field: str,
+    exclude_on_match: set[str] | None = None,
+) -> tuple[list[str], list[str]]:
+    """Get column names for ON CREATE SET and ON MATCH SET clauses.
+
+    Args:
+        df: DataFrame with node data
+        key_field: Primary key field (excluded from SET)
+        exclude_on_match: Fields to exclude from ON MATCH SET (like _created_at)
+
+    Returns:
+        Tuple of (on_create_columns, on_match_columns)
+    """
+    if exclude_on_match is None:
+        exclude_on_match = {"_created_at"}  # Don't update creation timestamp on match
+
+    all_columns = [c for c in df.columns if c != key_field]
+    on_match_columns = [c for c in all_columns if c not in exclude_on_match]
+
+    return all_columns, on_match_columns
+
+
 def merge_nodes_batch(
     conn: GraphBackend,
     nodes_dict: dict[str, list[dict[str, Any]]],
@@ -300,13 +384,13 @@ def merge_nodes_batch(
     node_type_to_is_auto_id: dict[str, bool],
     context: KgManager | None = None,
 ) -> tuple[dict[str, dict[str, int]], dict[tuple[str, str], str]]:
-    """Merge multiple nodes into the graph database in batch.
+    """Merge multiple nodes using DataFrame-based batch operations.
 
-    Processes all nodes by type, tracking statistics and building an ID mapping
-    for relationship creation.
+    Uses Kuzu's LOAD FROM df MERGE capability for efficient batch inserts.
+    This is significantly faster than individual MERGE queries.
 
     Args:
-        conn: Graph database connection (kuzu.Connection or similar)
+        conn: Graph database connection (kuzu.Connection or GraphBackend)
         nodes_dict: Mapping of node_type to list of node data dicts
         node_type_to_key_field: Mapping of node_type to primary key field name
         node_type_to_is_auto_id: Mapping of node_type to whether it uses AUTO_ID
@@ -324,39 +408,266 @@ def merge_nodes_batch(
         if not node_list:
             continue
 
-        logger.debug(f"Merging {len(node_list)} {node_type} nodes...")
-
-        # Get the primary key field for this node type
         primary_key_field = node_type_to_key_field.get(node_type, "id")
         is_auto_id = node_type_to_is_auto_id.get(node_type, False)
 
+        logger.debug(f"Merging {len(node_list)} {node_type} nodes via DataFrame...")
+
         type_stats = {"created": 0, "matched": 0, "total": len(node_list)}
 
-        for node_data in node_list:
-            # Get original ID before merge (use the primary key field)
-            original_id = node_data.get(primary_key_field, "")
+        # Prepare DataFrame
+        df = _prepare_node_dataframe(node_list, primary_key_field, is_auto_id)
 
-            # Merge the node
-            was_created, merged_id = merge_node_in_graph(
-                conn=conn,
-                node_type=node_type,
-                node_data=node_data,
-                key_field=primary_key_field,
-                is_auto_id=is_auto_id,
-                context=context,
-            )
+        if df.empty:
+            stats[node_type] = type_stats
+            continue
 
-            # Update statistics
-            if was_created:
-                type_stats["created"] += 1
+        # Get columns for SET clauses
+        on_create_cols, on_match_cols = _get_columns_for_set_clause(df, primary_key_field)
+
+        # Get the Kuzu connection (handle both GraphBackend and raw connection)
+        kuzu_conn = conn.conn if hasattr(conn, "conn") else conn  # type: ignore[union-attr]
+
+        try:
+            if is_auto_id:
+                # For AUTO_ID nodes, we use 'name' as the merge key for deduplication
+                # This prevents duplicates when multiple subgraphs reference the same entity
+                if "name" not in df.columns:
+                    raise ValueError(f"AUTO_ID node type {node_type} requires 'name' column for deduplication")
+
+                # Build MERGE query using 'name' as the merge key
+                # Exclude both the SERIAL primary key and 'name' from SET clauses
+                merge_cols = [c for c in df.columns if c not in (primary_key_field, "name")]
+                on_create_set = ", ".join([f"n.{c} = {c}" for c in merge_cols]) if merge_cols else "n._updated_at = _updated_at"
+                on_match_set = ", ".join([f"n.{c} = {c}" for c in merge_cols if c != "_created_at"]) if merge_cols else "n._updated_at = _updated_at"
+
+                merge_query = f"""
+                    LOAD FROM df
+                    MERGE (n:{node_type} {{name: name}})
+                    ON CREATE SET {on_create_set}
+                    ON MATCH SET {on_match_set}
+                """
+                kuzu_conn.execute(merge_query)
+
+                # For AUTO_ID nodes, store name->name mapping (since relationships match on name)
+                # We don't need to query back serial IDs because relationships use 'name' field
+                name_list = df["name"].tolist()
+                for name_val in name_list:
+                    # Store name as both key and value - relationships will match on name
+                    id_mapping[(node_type, str(name_val))] = str(name_val)
+
+                type_stats["created"] = len(df)  # Approximation
             else:
-                type_stats["matched"] += 1
+                # Build MERGE query with ON CREATE/ON MATCH SET
+                on_create_set = ", ".join([f"n.{c} = {c}" for c in on_create_cols])
+                on_match_set = ", ".join([f"n.{c} = {c}" for c in on_match_cols])
 
-            # Register ID mapping for relationship creation
-            if original_id and merged_id:
-                id_mapping[(node_type, original_id)] = merged_id
+                # Update the timestamp for ON MATCH
+                timestamp = datetime.utcnow().isoformat() + "Z"
+                if "_updated_at" in on_match_cols:
+                    # Will be set from DataFrame, but let's ensure it's current
+                    df["_updated_at"] = timestamp
+
+                merge_query = f"""
+                    LOAD FROM df
+                    MERGE (n:{node_type} {{{primary_key_field}: {primary_key_field}}})
+                    ON CREATE SET {on_create_set}
+                    ON MATCH SET {on_match_set}
+                """
+
+                kuzu_conn.execute(merge_query)
+
+                # For statistics: count how many already existed vs new
+                # We can't easily track this with batch MERGE, so estimate based on total
+                # A future enhancement could query before/after counts
+                type_stats["created"] = len(df)  # Approximation
+                type_stats["matched"] = 0  # Can't distinguish in batch mode
+
+                # Build ID mapping - for non-AUTO_ID, the key value IS the ID
+                for _, row in df.iterrows():
+                    key_value = row.get(primary_key_field, "")
+                    if key_value:
+                        key_str = str(key_value)
+                        id_mapping[(node_type, key_str)] = key_str
+
+        except Exception as e:
+            logger.error(f"Error in batch merge for {node_type}: {e}")
+            logger.error("Falling back to individual node merges...")
+
+            # Fallback to individual merges
+            for node_data in node_list:
+                original_id = node_data.get(primary_key_field, "")
+                try:
+                    was_created, merged_id = merge_node_in_graph(
+                        conn=conn,
+                        node_type=node_type,
+                        node_data=node_data,
+                        key_field=primary_key_field,
+                        is_auto_id=is_auto_id,
+                        context=context,
+                    )
+                    if was_created:
+                        type_stats["created"] += 1
+                    else:
+                        type_stats["matched"] += 1
+                    if original_id and merged_id:
+                        id_mapping[(node_type, original_id)] = merged_id
+                except Exception as inner_e:
+                    logger.error(f"Error merging individual node: {inner_e}")
+                    if context:
+                        context.add_warning(f"Failed to merge {node_type} node: {inner_e}")
 
         stats[node_type] = type_stats
-        logger.debug(f"  {node_type}: {type_stats['created']} created, {type_stats['matched']} matched")
+        logger.debug(f"  {node_type}: {type_stats['total']} processed via batch merge")
 
     return stats, id_mapping
+
+
+def merge_relationships_batch(
+    conn: GraphBackend,
+    relationships: list[Any],
+    node_type_to_key_field: dict[str, str],
+    node_type_to_is_auto_id: dict[str, bool],
+    id_mapping: dict[tuple[str, str], str],
+) -> int:
+    """Merge relationships using DataFrame-based batch operations.
+
+    Groups relationships by type and uses LOAD FROM df MATCH ... CREATE
+    for efficient batch relationship creation.
+
+    Args:
+        conn: Graph database connection
+        relationships: List of RelationshipRecord objects
+        node_type_to_key_field: Mapping of node_type to primary key field name
+        node_type_to_is_auto_id: Mapping of node_type to whether it uses AUTO_ID
+        id_mapping: Mapping from (node_type, original_id) to merged_id
+
+    Returns:
+        Number of relationships created
+    """
+    if not relationships:
+        return 0
+
+    # Group relationships by (from_type, to_type, rel_name) for batch processing
+    rel_groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+
+    for rel in relationships:
+        # Handle both RelationshipRecord and tuple formats
+        if hasattr(rel, "from_type"):
+            from_type = rel.from_type
+            from_id = rel.from_id
+            to_type = rel.to_type
+            to_id = rel.to_id
+            rel_name = rel.name
+            properties = rel.properties or {}
+        elif isinstance(rel, tuple) and len(rel) >= 5:
+            from_type, from_id, to_type, to_id, rel_name = rel[:5]
+            properties = rel[5] if len(rel) > 5 else {}
+        else:
+            continue
+
+        # Translate IDs using mapping
+        merged_from_id = id_mapping.get((from_type, str(from_id)), str(from_id))
+        merged_to_id = id_mapping.get((to_type, str(to_id)), str(to_id))
+
+        # Determine match fields based on whether nodes use AUTO_ID
+        from_is_auto_id = node_type_to_is_auto_id.get(from_type, False)
+        to_is_auto_id = node_type_to_is_auto_id.get(to_type, False)
+        from_match_field = "name" if from_is_auto_id else node_type_to_key_field.get(from_type, "id")
+        to_match_field = "name" if to_is_auto_id else node_type_to_key_field.get(to_type, "id")
+
+        group_key = (from_type, to_type, rel_name)
+        if group_key not in rel_groups:
+            rel_groups[group_key] = []
+
+        rel_data = {
+            "from_id": merged_from_id,
+            "to_id": merged_to_id,
+            "from_match_field": from_match_field,
+            "to_match_field": to_match_field,
+            **properties,
+        }
+        rel_groups[group_key].append(rel_data)
+
+    # Get the Kuzu connection
+    kuzu_conn = conn.conn if hasattr(conn, "conn") else conn  # type: ignore[union-attr]
+
+    total_created = 0
+
+    for (from_type, to_type, rel_name), rel_list in rel_groups.items():
+        if not rel_list:
+            continue
+
+        logger.debug(f"Creating {len(rel_list)} {rel_name} relationships ({from_type} -> {to_type})...")
+
+        # Get the match fields from first relationship (all should be the same)
+        from_match_field = rel_list[0]["from_match_field"]
+        to_match_field = rel_list[0]["to_match_field"]
+
+        # Build DataFrame - remove match field info before creating DataFrame
+        df_data = []
+        property_cols = set()
+        for rel_data in rel_list:
+            row = {
+                "from_id": rel_data["from_id"],
+                "to_id": rel_data["to_id"],
+            }
+            for k, v in rel_data.items():
+                if k not in ("from_id", "to_id", "from_match_field", "to_match_field"):
+                    row[k] = v
+                    property_cols.add(k)
+            df_data.append(row)
+
+        df = pd.DataFrame(df_data)
+
+        # Build property assignment for CREATE
+        if property_cols:
+            prop_assignments = ", ".join([f"{c}: {c}" for c in property_cols])
+            props_str = f" {{{prop_assignments}}}"
+        else:
+            props_str = ""
+
+        # Use MATCH + CREATE for relationships
+        create_rel_query = f"""
+            LOAD FROM df
+            MATCH (from:{from_type} {{{from_match_field}: from_id}}), (to:{to_type} {{{to_match_field}: to_id}})
+            CREATE (from)-[:{rel_name}{props_str}]->(to)
+        """
+        try:
+            kuzu_conn.execute(create_rel_query)
+            total_created += len(df)
+
+        except Exception as e:
+            logger.error(f"Error in batch relationship creation for {rel_name}: {e}")
+            logger.error(f"Query: {create_rel_query}")
+            # Fallback: create relationships individually
+            for _, row in df.iterrows():
+                try:
+                    from_id_escaped = str(row["from_id"]).replace("'", "\\'")
+                    to_id_escaped = str(row["to_id"]).replace("'", "\\'")
+
+                    if property_cols:
+                        prop_parts = []
+                        for c in property_cols:
+                            val = row.get(c)
+                            if val is None:
+                                prop_parts.append(f"{c}: NULL")
+                            elif isinstance(val, str):
+                                prop_parts.append(f"{c}: '{val.replace(chr(39), chr(92) + chr(39))}'")
+                            else:
+                                prop_parts.append(f"{c}: {val}")
+                        single_props_str = " {" + ", ".join(prop_parts) + "}"
+                    else:
+                        single_props_str = ""
+
+                    single_query = f"""
+                        MATCH (from:{from_type} {{{from_match_field}: '{from_id_escaped}'}}),
+                              (to:{to_type} {{{to_match_field}: '{to_id_escaped}'}})
+                        CREATE (from)-[:{rel_name}{single_props_str}]->(to)
+                    """
+                    kuzu_conn.execute(single_query)
+                    total_created += 1
+                except Exception as inner_e:
+                    logger.warning(f"Failed to create individual relationship: {inner_e}")
+
+    return total_created
