@@ -1,18 +1,11 @@
-I want to import a KG from neo4j to Kuzu graph database. 
-I have a large JSONL export of the Neo4j database (> 150 lines).
-I want you create a set of functions to 
-1/ analyse ithe JSONL export and extract a schema, in the form of a list of Kuzu Cypher commands 'CREATE NODE" and "CREATE REL TABLE"
-2/ transform the incomming JSONL file to a JSON files for table and relationship that can be loaded into Kuzu using COPY <table> FROM <json file> and COPY <relationship> FROM <json file> ; (see https://kuzudb.github.io/docs/extensions/json/ ) 
-3/ create a subset of the JSONL file for quicker tests (can be with fake data)
-4/ Create a Kuzu database from this subset, using work done before. 
 
-Then, 
-1/ Implement these commmands in the usual way  (command 'neo4j' + subcommands ) in a sun-directory of genai_graph
-2/ register this top 'neo4j' command in config/overrides.yaml 
-3/ test with subset that the Kuzu import works 
+Allow user to define a PRIMARY KEY in the generated Kuzu table.
 
-The JSON file is here : /home/tcl/OneDrive/prj/atos-kg/data/stratnav/sn-v3-q4-2026-01-28.jsonl
-
+Update class GraphNode with a mandatory argument 'key'. The value can any field, such as "opportunity_id" or "name" (that can me generated). It can also be "SERIAL", so in that case Kuzu default key is used. 
+Generate "CREATE NODE" statement accordingly (ie with PRIMARY KEY ( <...> )) 
+Update files in genai_graph/ekg/schema 
+You can test with 
+export KG_CONFIG="simple"; cli kg delete -f ; cli kg create ; 
 
 
 
@@ -111,7 +104,7 @@ CREATE (existingNode)-[:RELATED_TO]->(newNode)
 - ```cli rag add-files '${paths.rainbow_md}/real' ```
 
 ## Markdown to Graph
-- ``` export KG_CONFIG="db_only"; cli kg delete -f ; cli kg create ; cli kg schema --no-enums; cli kg export-html ; cli kg info```
+- ``` export KG_CONFIG=simple_with_db; cli kg create;cli kg view
 
 ## RAG query
 - ```cli rag query "CNES" --filter '{"file_hash": "1fa730def69ff25e"}'  ```

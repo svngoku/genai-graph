@@ -7,6 +7,7 @@ to derive field paths and relationships, reducing boilerplate and errors.
 
 from __future__ import annotations
 
+import uuid
 import warnings
 from enum import Enum
 from typing import (
@@ -103,9 +104,8 @@ class GraphNode(BaseModel):
         "populate_by_name": True,
     }
     name_from: str | Callable[[dict[str, Any], str], str]
+    key_from: str | Callable[[dict[str, Any], str], str] = "AUTO_ID"
     description: str = ""
-    # Can be a field name or a callable similar to ``name_from``
-    deduplication_key: str | Callable[[dict[str, Any], str], Any] | None = None
     index_fields: list[str] = []
 
     # Auto-deduced attributes (populated during schema validation)
@@ -132,14 +132,6 @@ class GraphNode(BaseModel):
             if isinstance(struct_cls, type) and issubclass(struct_cls, BaseModel):
                 embedded.append(struct_cls)
         return embedded
-
-    @property
-    def key(self) -> str:
-        """Get the primary key field name.
-
-        All nodes use 'id' as the primary key (UUID).
-        """
-        return "id"
 
     def get_name_value(self, data: dict[str, Any], node_type: str) -> str:
         """Get the node name value for a node instance.
@@ -168,29 +160,35 @@ class GraphNode(BaseModel):
         else:
             return str(value)
 
-    def get_dedup_value(self, data: dict[str, Any], node_type: str) -> str | None:
-        """Get the value used for deduplication for a node instance.
+    def get_key_value(self, data: dict[str, Any], node_type: str) -> str:
+        """Get the primary key value for a node instance.
 
-        When ``deduplication_key`` is not set, this falls back to the
-        computed ``name`` so that all downstream components can always
-        rely on a single canonical dedup value.
+        This computes the primary key based on the ``key_from`` configuration.
+
+        Args:
+            data: Node data dictionary
+            node_type: Name of the node type
+
+        Returns:
+            Primary key value as string
         """
-
-        # Default: use the name as dedup key
-        if not self.deduplication_key:
-            return self.get_name_value(data, node_type)
-
-        if isinstance(self.deduplication_key, str):
-            value = data.get(self.deduplication_key)
+        if self.key_from == "AUTO_ID":
+            # For AUTO_ID, we'll generate a UUID
+            return str(uuid.uuid4())
+        elif isinstance(self.key_from, str):
+            # Use the specified field value
+            value = data.get(self.key_from)
+            if not value:
+                raise ValueError(f"Key field '{self.key_from}' not found or empty in data for {node_type}")
+            return str(value)
         else:
-            # deduplication_key is a callable
-            value = self.deduplication_key(data, node_type)
-
-        if value is None or value == "":
-            return None
-        if isinstance(value, Enum):
-            return value.name
-        return str(value)
+            # key_from is a callable - compute the key value
+            value = self.key_from(data, node_type)
+            if not value:
+                raise ValueError(f"Computed key is empty for {node_type}")
+            if isinstance(value, Enum):
+                return value.name
+            return str(value)
 
     @property
     def label(self) -> str:

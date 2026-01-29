@@ -57,12 +57,14 @@ class CrmExtractSubGraph(TableBackedSubgraphFactory, BaseModel):
             GraphNode(
                 node_class=CrmExtract,
                 name_from=lambda data, base: f"{base}",
+                key_from="AUTO_ID",  # Use auto-generated SERIAL id
                 description="CRM extract root containing opportunity, lead, and win/loss data",
             ),
             # Win/loss outcome as a regular node
             GraphNode(
                 node_class=WinLoss,
                 name_from=lambda data, _base: data.get("reason") or data.get("result") or "other/unset",
+                key_from="AUTO_ID",  # Use auto-generated SERIAL id
                 description="Win/Loss outcome for the opportunity",
             ),
         ]
@@ -87,14 +89,18 @@ class CrmExtractSubGraph(TableBackedSubgraphFactory, BaseModel):
                 to_node=Person,
                 name="LEAD_BY",
                 description="Account Sales Leader",
-                field_paths=[("opportunity", "lead")],  # Explicitly use lead field, not customer.employees
             ),
             GraphRelation(
                 from_node=Opportunity,
                 to_node=Customer,
                 name="FOR_CUSTOMER",
                 description="Customer organization for this opportunity",
-                field_paths=[("opportunity", "customer")],  # Explicitly use customer field
+            ),
+            GraphRelation(
+                from_node=Customer,
+                to_node=Person,
+                name="HAS_CONTACT",
+                description="Customer contact persons",
             ),
         ]
         return GraphSchema(root_model_class=CrmExtract, nodes=nodes, relations=relations)

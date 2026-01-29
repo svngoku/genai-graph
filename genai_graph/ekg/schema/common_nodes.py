@@ -22,20 +22,21 @@ def get_common_nodes() -> list[GraphNode]:
         GraphNode(
             node_class=Opportunity,
             name_from="name",
+            key_from="opportunity_id",  # Use opportunity_id as primary key
             description="Core opportunity information with financial metrics embedded",
-            deduplication_key="opportunity_id",
             index_fields=["name", "status"],
         ),
         GraphNode(
             node_class=Customer,
             name_from="name",
+            key_from="AUTO_ID",  # Use auto-generated SERIAL id
             description="Customer organization details",
             index_fields=["name"],
         ),
         GraphNode(
             node_class=Person,
             name_from="name",
-            deduplication_key="name",
+            key_from="name",  # Use name as primary key for deduplication
             description="Individual contacts and team members",
         ),
     ]

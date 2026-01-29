@@ -58,20 +58,22 @@ def create_configuration():
     # Define nodes - just specify the class and name_from field
     nodes = [
         # Root node
-        GraphNode(node_class=ReviewedOpportunity, name_from="start_date"),
+        GraphNode(node_class=ReviewedOpportunity, name_from="start_date", key_from="AUTO_ID"),
         # Regular nodes - field paths auto-deduced
-        GraphNode(node_class=Opportunity, name_from="name"),
-        GraphNode(node_class=Customer, name_from="name"),
-        GraphNode(node_class=Person, name_from="name", deduplication_key="name"),  # Handles both contacts and team
-        GraphNode(node_class=Partner, name_from="name"),
-        GraphNode(node_class=RiskAnalysis, name_from="risk_description"),
+        GraphNode(node_class=Opportunity, name_from="name", key_from="AUTO_ID"),
+        GraphNode(node_class=Customer, name_from="name", key_from="AUTO_ID"),
+        GraphNode(node_class=Person, name_from="name", key_from="AUTO_ID"),  # Handles both contacts and team
+        GraphNode(node_class=Partner, name_from="name", key_from="AUTO_ID"),
+        GraphNode(node_class=RiskAnalysis, name_from="risk_description", key_from="AUTO_ID"),
         GraphNode(
             node_class=TechnicalApproach,
             name_from=lambda data, base: data.get("technical_stack") or data.get("architecture") or f"{base}_default",
+            key_from="AUTO_ID",
         ),
         GraphNode(
             node_class=CompetitiveLandscape,
             name_from=lambda data, base: data.get("competitive_position") or f"{base}_competitive_position",
+            key_from="AUTO_ID",
         ),
         # FinancialMetrics is now expected to be provided via extra_classes on the
         # appropriate node in real schemas; we do not configure embed_in_parent here.

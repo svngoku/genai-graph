@@ -46,6 +46,7 @@ class TestSchemaCreation:
             node_class=ReviewedOpportunity,
             extra_classes=[FinancialMetrics, CompetitiveLandscape],
             name_from="name",
+            key_from="AUTO_ID",
         )
 
         schema = GraphSchema(
@@ -102,6 +103,7 @@ class TestSchemaCreation:
             node_class=Company,
             extra_classes=[Address],
             name_from="name",
+            key_from="AUTO_ID",
         )
 
         schema = GraphSchema(
@@ -148,6 +150,7 @@ class TestSchemaCreation:
             node_class=Project,
             extra_classes=[Metrics],
             name_from="name",
+            key_from="AUTO_ID",
         )
 
         schema = GraphSchema(

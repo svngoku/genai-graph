@@ -53,12 +53,14 @@ class ReviewedOpportunitySubgraph(JsonFileBackedSubgraphFactory, BaseModel):
                 node_class=ReviewedOpportunity,
                 extra_classes=[FinancialMetrics, CompetitiveLandscape],
                 name_from=lambda data, _: "Rainbow:" + str(data.get("start_date")),
+                key_from="AUTO_ID",  # Use auto-generated SERIAL id
                 description="Root node containing the complete reviewed opportunity",
             ),
             # Regular nodes - field paths auto-deduced
             GraphNode(
                 node_class=RiskAnalysis,
                 name_from=lambda data, _: data.get("risk_category") or data.get("p_risk_description_") or "other_risk",
+                key_from="AUTO_ID",  # Use auto-generated SERIAL id
                 description="Risk assessment and mitigation details",
                 index_fields=["risk_description"],
             ),
@@ -67,6 +69,7 @@ class ReviewedOpportunitySubgraph(JsonFileBackedSubgraphFactory, BaseModel):
                 name_from=lambda data, base: data.get("technical_stack")
                 or data.get("architecture")
                 or f"{base}_default",
+                key_from="AUTO_ID",  # Use auto-generated SERIAL id
                 description="Technical implementation approach and stack",
                 index_fields=["architecture", "technical_stack"],
             ),
@@ -78,12 +81,14 @@ class ReviewedOpportunitySubgraph(JsonFileBackedSubgraphFactory, BaseModel):
             GraphNode(
                 node_class=Competitor,
                 name_from=lambda data, base: data.get("known_as") or data.get("name") or f"{base}_competitor",
+                key_from="AUTO_ID",  # Use auto-generated SERIAL id
                 # name_from="known_as",
                 description="Competitor",
             ),
             GraphNode(
                 node_class=Partner,
                 name_from="name",
+                key_from="AUTO_ID",  # Use auto-generated SERIAL id
                 # deduplication_key="name",
                 description="Atos partner organization information",
             ),
@@ -109,17 +114,18 @@ class ReviewedOpportunitySubgraph(JsonFileBackedSubgraphFactory, BaseModel):
                 to_node=Customer,
                 name="HAS_CUSTOMER",
                 description="Opportunity belongs to customer",
-                field_paths=[("opportunity", "opportunity.customer")],
             ),
             GraphRelation(
-                from_node=Customer, to_node=Person, name="HAS_CONTACT", description="Customer contact persons"
+                from_node=Customer,
+                to_node=Person,
+                name="HAS_CONTACT",
+                description="Customer contact persons",
             ),
             GraphRelation(
                 from_node=ReviewedOpportunity,
                 to_node=Person,
                 name="HAS_TEAM_MEMBER",
                 description="Internal team members",
-                field_paths=[("", "team")],
             ),
             GraphRelation(
                 from_node=ReviewedOpportunity,

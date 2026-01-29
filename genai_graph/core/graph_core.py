@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import Any, Dict, NamedTuple, Union
+from typing import Any, Callable, Dict, NamedTuple, Union
 
 from loguru import logger
 from pydantic import BaseModel
@@ -353,27 +353,37 @@ def create_schema(
         if table_name in created_tables:
             continue
 
-        key_field = node.key
+        # Determine the primary key field
+        key_from = node.key_from
+        if key_from == "AUTO_ID":
+            key_field = "id"
+        elif isinstance(key_from, str):
+            key_field = key_from  # Use the specified field
+        else:
+            # Callable - store computed key in 'id' field
+            key_field = "id"
+
         fields: list[str] = []
         model_fields = node.node_class.model_fields
 
-        # Add metadata fields first
-        fields.append("id STRING")  # UUID primary key
+        # Add primary key field first if needed
+        if key_from == "AUTO_ID":
+            fields.append("id SERIAL")  # Auto-increment primary key
+        elif isinstance(key_from, Callable):
+            fields.append("id STRING")  # Computed key stored as string
+        # If key_from is a field name, that field will be added from model_fields
+
+        # Add other metadata fields
         fields.append("name STRING")  # Node name from name_from (user-chosen)
         fields.append("_original_name STRING")  # Original Pydantic 'name' field if it existed
         fields.append("_created_at STRING")  # ISO timestamp
         fields.append("_updated_at STRING")  # ISO timestamp
-        # Unified deduplication key used for MERGE semantics
-        fields.append("_dedup_key STRING")
-        # Optional list of alternate names captured when merging nodes that
-        # share the same dedup key but have different human-readable names
-        fields.append("alternate_names STRING[]")
 
         # Resolve embedded struct field types for this table, if any
         embedded_struct_fields = dict(embedded_struct_fields_by_parent.get(table_name, []))
 
         # Metadata field names that are handled separately and should not be added from model_fields
-        metadata_field_names = {"id", "name", "created_at", "updated_at", "dedup_key", "alternate_names"}
+        metadata_field_names = {"id", "name", "created_at", "updated_at"}
 
         # Add regular fields (excluding any specified excluded_fields).
         # If a field is declared as embedded, we override its scalar type with
@@ -394,6 +404,7 @@ def create_schema(
 
         fields_str = ", ".join(fields)
         create_sql = f"CREATE NODE TABLE IF NOT EXISTS {table_name}({fields_str}, PRIMARY KEY({key_field}))"
+
         logger.debug(f"Creating node table: {create_sql}")
         backend.execute(create_sql)
         created_tables.add(table_name)
@@ -514,16 +525,30 @@ def extract_graph_data(
                 else:
                     continue
 
-                # Generate metadata fields FIRST, before removing excluded fields
-                # Generate UUID for id
-                item_data["id"] = str(uuid.uuid4())
-
                 # Preserve original 'name' field if it exists
                 if "name" in item_data:
                     item_data["_original_name"] = item_data["name"]
 
                 # Set 'name' from name_from using get_name_value (user-chosen node name)
                 item_data["name"] = node_info.get_name_value(item_data, node_type)
+
+                # Determine which field to use as the primary key in the database
+                key_from = node_info.key_from
+                if key_from == "AUTO_ID":
+                    # For AUTO_ID, don't set any key field - let database auto-generate
+                    primary_key_field = "id"
+                    # Store a temporary placeholder for tracking in id_registry
+                    key_value = str(uuid.uuid4())
+                elif callable(key_from):
+                    # Use computed key, store in 'id' field
+                    primary_key_field = "id"
+                    key_value = node_info.get_key_value(item_data, node_type)
+                    item_data[primary_key_field] = key_value
+                else:
+                    # Use the specified field as primary key
+                    primary_key_field = key_from
+                    key_value = node_info.get_key_value(item_data, node_type)
+                    item_data[primary_key_field] = key_value
 
                 # Filter out excluded fields to avoid complex data issues
                 if node_info.excluded_fields:
@@ -557,25 +582,20 @@ def extract_graph_data(
                 item_data["_created_at"] = now
                 item_data["_updated_at"] = now
 
-                # Deduplication: use unified helper so that extraction, relationship
-                # wiring, and DB merges all agree on a single canonical key.
-                dedup_value = node_info.get_dedup_value(item_data, node_type)
-                dedup_str: str | None = str(dedup_value) if dedup_value is not None else None
-
-                # Always populate a _dedup_key field so downstream loaders can rely on it.
-                if dedup_str:
-                    item_data["_dedup_key"] = dedup_str
-                else:
-                    # Fallback: use name, or the generated id as a last resort
-                    fallback = item_data.get("name") or item_data["id"]
-                    dedup_str = str(fallback)
-                    item_data["_dedup_key"] = dedup_str
-
-                if dedup_str not in node_registry[node_type]:
+                # Use primary key for deduplication
+                if key_value not in node_registry[node_type]:
                     nodes_dict[node_type].append(item_data)
-                    node_registry[node_type].add(dedup_str)
-                    # Register id for relationship lookups
-                    id_registry[node_type][dedup_str] = item_data["id"]
+                    node_registry[node_type].add(key_value)
+                    # Register lookup key for relationship creation
+                    # For AUTO_ID/callable keys, use 'name' field as both lookup key AND value
+                    # since we'll match by name in the relationship MATCH query
+                    # For field-based keys, use the actual key value
+                    if key_from == "AUTO_ID" or callable(key_from):
+                        lookup_key = item_data.get("name", key_value)
+                        # Store name as the value too, since we'll match by name
+                        id_registry[node_type][lookup_key] = lookup_key
+                    else:
+                        id_registry[node_type][key_value] = key_value
 
     # Relationships
     for relation_info in relations:
@@ -615,10 +635,15 @@ def extract_graph_data(
                 # Fallback: best-effort conversion for unexpected types
                 from_dict = dict(getattr(raw_from, "__dict__", {}))
 
-            # Get dedup value for from node using the same helper as extraction
-            from_dedup_value = from_node_info.get_dedup_value(from_dict, from_type)
-            from_dedup_str = str(from_dedup_value) if from_dedup_value else None
-            from_id = id_registry[from_type].get(from_dedup_str) if from_dedup_str else None
+            # Get lookup key for from_node - use name for AUTO_ID/callable, field value otherwise
+            from_key_from = from_node_info.key_from
+            if from_key_from == "AUTO_ID" or callable(from_key_from):
+                # Use name field for lookup (must match what was stored in id_registry)
+                from_lookup_key = from_node_info.get_name_value(from_dict, from_type)
+            else:
+                # Use the primary key field value
+                from_lookup_key = from_dict.get(from_key_from)
+            from_id = id_registry[from_type].get(from_lookup_key) if from_lookup_key else None
 
             if not from_id:
                 continue  # Skip if we can't find the from node id
@@ -634,10 +659,15 @@ def extract_graph_data(
                 else:
                     to_dict = dict(getattr(raw_to, "__dict__", {}))
 
-                # Get dedup value for to node using the same helper as extraction
-                to_dedup_value = to_node_info.get_dedup_value(to_dict, to_type)
-                to_dedup_str = str(to_dedup_value) if to_dedup_value else None
-                to_id = id_registry[to_type].get(to_dedup_str) if to_dedup_str else None
+                # Get lookup key for to_node - use name for AUTO_ID/callable, field value otherwise
+                to_key_from = to_node_info.key_from
+                if to_key_from == "AUTO_ID" or callable(to_key_from):
+                    # Use name field for lookup (must match what was stored in id_registry)
+                    to_lookup_key = to_node_info.get_name_value(to_dict, to_type)
+                else:
+                    # Use the primary key field value
+                    to_lookup_key = to_dict.get(to_key_from)
+                to_id = id_registry[to_type].get(to_lookup_key) if to_lookup_key else None
 
                 if to_id:
                     # Extract p_*_ properties from to_item for edge properties
@@ -670,6 +700,7 @@ def extract_graph_data(
 
 def load_graph_data(
     backend: GraphBackend,
+    nodes: list[GraphNode],
     nodes_dict: dict[str, list[dict[str, Any]]],
     relationships: list[RelationshipRecord] | list[tuple[Any, ...]],
     context: KgManager | None = None,
@@ -681,20 +712,37 @@ def load_graph_data(
 
     Args:
         backend: GraphBackend instance
+        nodes: List of GraphNode configurations
         nodes_dict: Dictionary mapping node types to list of node data dicts
         relationships: List of relationship tuples
         context: Optional KgContext for collecting warnings
     """
 
+    # Build a mapping from node type to primary key field
+    node_type_to_key_field: dict[str, str] = {}
+    node_type_to_is_auto_id: dict[str, bool] = {}
+    for node in nodes:
+        node_type = node.node_class.__name__
+        key_from = node.key_from
+        if key_from == "AUTO_ID":
+            primary_key_field = "id"
+            is_auto_id = True
+        elif callable(key_from):
+            primary_key_field = "id"
+            is_auto_id = False
+        else:
+            primary_key_field = key_from
+            is_auto_id = False
+        node_type_to_key_field[node_type] = primary_key_field
+        node_type_to_is_auto_id[node_type] = is_auto_id
+
     # Merge nodes using MERGE statements (creates new or updates existing).
-    # We now merge on the unified _dedup_key field so that deduplication
-    # semantics are driven entirely by GraphNode.deduplication_key
-    # (or name_from when that is not set).
     logger.debug("Merging nodes into graph...")
     _merge_stats, id_mapping = merge_nodes_batch(
         conn=backend,
         nodes_dict=nodes_dict,
-        merge_on_field="_dedup_key",
+        node_type_to_key_field=node_type_to_key_field,
+        node_type_to_is_auto_id=node_type_to_is_auto_id,
         context=context,
     )
 
@@ -749,6 +797,15 @@ def load_graph_data(
         merged_from_id = id_mapping.get((rel.from_type, rel.from_id), rel.from_id)
         merged_to_id = id_mapping.get((rel.to_type, rel.to_id), rel.to_id)
 
+        # Get the primary key fields for from and to node types
+        # For AUTO_ID nodes, we match by 'name' since 'id' is SERIAL and we can't match by UUID
+        from_is_auto_id = node_type_to_is_auto_id.get(rel.from_type, False)
+        to_is_auto_id = node_type_to_is_auto_id.get(rel.to_type, False)
+        
+        # Use 'name' for matching AUTO_ID nodes, otherwise use the primary key field
+        from_match_field = "name" if from_is_auto_id else node_type_to_key_field.get(rel.from_type, "id")
+        to_match_field = "name" if to_is_auto_id else node_type_to_key_field.get(rel.to_type, "id")
+
         # Ensure we have strings before calling replace (defensive)
         merged_from_id_str = "" if merged_from_id is None else str(merged_from_id)
         merged_to_id_str = "" if merged_to_id is None else str(merged_to_id)
@@ -777,8 +834,8 @@ def load_graph_data(
 
         match_sql = f"""
         MATCH (from:{rel.from_type}), (to:{rel.to_type})
-        WHERE from.id = '{from_id_escaped}'
-          AND to.id = '{to_id_escaped}'
+        WHERE from.{from_match_field} = '{from_id_escaped}'
+          AND to.{to_match_field} = '{to_id_escaped}'
         CREATE (from)-[:{rel.name}{props_str}]->(to)
         """
         try:
@@ -877,7 +934,7 @@ def create_graph(
     logger.debug("Extracting and loading data...")
     nodes_dict, relationships = extract_graph_data(model, schema.nodes, schema.relations, source_key=source_key)
 
-    load_graph_data(backend, nodes_dict, relationships, context)
+    load_graph_data(backend, schema.nodes, nodes_dict, relationships, context)
 
     logger.debug("Graph creation complete")
     total_nodes = sum(len(node_list) for node_list in nodes_dict.values())

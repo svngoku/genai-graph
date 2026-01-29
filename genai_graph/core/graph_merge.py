@@ -99,7 +99,7 @@ def build_merge_query(
     node_type: str,
     node_data: dict[str, Any],
     key_field: str = "id",
-    merge_on_field: str = "_name",
+    is_auto_id: bool = False,
 ) -> tuple[str, str]:
     """Build queries for upserting a node using MATCH + conditional CREATE.
 
@@ -111,25 +111,32 @@ def build_merge_query(
         node_type: Label/type of the node
         node_data: Dictionary of node properties
         key_field: Primary key field name
-        merge_on_field: Field to match on for merging
+        is_auto_id: Whether this uses AUTO_ID (SERIAL) primary key
 
     Returns:
-        Tuple of (check_query, upsert_query)
+        Tuple of (check_query, props_str_for_create)
     """
-    # Get the merge value
-    merge_value = node_data.get(merge_on_field)
-    if merge_value is None:
-        raise ValueError(f"Node data missing required merge field '{merge_on_field}'")
+    # Get the merge value (primary key)
+    merge_value = node_data.get(key_field)
+    if merge_value is None and not is_auto_id:
+        raise ValueError(f"Node data missing required key field '{key_field}'")
 
     # Format merge value
-    merge_value_formatted = _format_value_for_cypher(merge_value)
+    if not is_auto_id:
+        merge_value_formatted = _format_value_for_cypher(merge_value)
 
-    # Query 1: Check if node exists and get its id plus current naming info
-    check_query = dedent_ws(f"""
-        MATCH (n:{node_type} {{{merge_on_field}: {merge_value_formatted}}})
-        RETURN n.{key_field} as id, n._created_at as created_at, n.name as name, n.alternate_names as alternate_names
-        LIMIT 1
-        """)
+        # Query 1: Check if node exists and get its id plus current naming info
+        # Note: alternate_names is optional, we'll handle missing fields in the merge logic
+        check_query = dedent_ws(f"""
+            MATCH (n:{node_type} {{{key_field}: {merge_value_formatted}}})
+            RETURN n.{key_field} as id, n._created_at as created_at
+            LIMIT 1
+            """)
+    else:
+        # For AUTO_ID, we can't match on id since it doesn't exist yet in the data
+        # We'll return an empty check (always creates new node)
+        # In practice, this is handled differently - we never call MATCH for AUTO_ID
+        check_query = ""
 
     # Query 2a: Update existing node (timestamp only)
     # Query 2b: Create new node with all properties
@@ -139,6 +146,10 @@ def build_merge_query(
     # Original 'name' is preserved as '_original_name', and 'name' is set from name_from
     # For example: "created_at" -> "_created_at", "updated_at" -> "_updated_at"
     excluded_metadata_fields = {"created_at", "updated_at", "dedup_key"}
+
+    # For AUTO_ID, also exclude the key_field (id) from CREATE props since it's auto-generated
+    if is_auto_id:
+        excluded_metadata_fields.add(key_field)
 
     # Build properties for CREATE
     create_props = []
@@ -162,7 +173,8 @@ def merge_node_in_graph(
     conn: GraphBackend,
     node_type: str,
     node_data: dict[str, Any],
-    merge_on_field: str = "name",
+    key_field: str = "id",
+    is_auto_id: bool = False,
     context: KgManager | None = None,
 ) -> tuple[bool, str]:
     """Merge a single node into the graph database.
@@ -174,7 +186,8 @@ def merge_node_in_graph(
         conn: Graph database connection (kuzu.Connection or similar)
         node_type: Node label/type
         node_data: Node properties dictionary
-        merge_on_field: Field to match nodes on
+        key_field: Primary key field name for this node type
+        is_auto_id: Whether this uses AUTO_ID (SERIAL) primary key
         context: Optional KgContext for collecting warnings
 
     Returns:
@@ -182,15 +195,36 @@ def merge_node_in_graph(
     """
     try:
         timestamp = datetime.utcnow().isoformat() + "Z"
-        # merge_value = node_data.get(merge_on_field)
-        # merge_value_formatted = _format_value_for_cypher(merge_value)
 
-        # Build queries
+        # For AUTO_ID nodes, we always create (no merge logic)
+        if is_auto_id:
+            # Build props for CREATE (without id field)
+            _, props_str = build_merge_query(
+                node_type=node_type,
+                node_data=node_data,
+                key_field=key_field,
+                is_auto_id=True,
+            )
+            create_query = f"CREATE (n:{node_type} {{{props_str}}}) RETURN n.{key_field} as id"
+            result = conn.execute(create_query)
+            df = result.get_as_df()
+
+            if df.empty:
+                warning_msg = f"CREATE returned no ID for {node_type}"
+                logger.warning(warning_msg)
+                if context:
+                    context.add_warning(warning_msg)
+                return True, ""
+
+            node_id = str(df.iloc[0]["id"])
+            return True, node_id
+
+        # Build queries for non-AUTO_ID nodes
         check_query, props_str = build_merge_query(
             node_type=node_type,
             node_data=node_data,
-            key_field="id",
-            merge_on_field=merge_on_field,
+            key_field=key_field,
+            is_auto_id=False,
         )
 
         # Step 1: Check if node exists
@@ -198,50 +232,23 @@ def merge_node_in_graph(
         df = result.get_as_df()
 
         if not df.empty:
-            # Node exists - update timestamp and optionally maintain alternate names
+            # Node exists - update timestamp and other fields
             row = df.iloc[0]
             existing_id = str(row["id"])
-            existing_name = row.get("name")
-            existing_alternates = row.get("alternate_names")
-
-            new_name = node_data.get("name")
-            updated_alternates = None
-
-            # Only track alternate names when the new name is different from the
-            # canonical one and not already present in the alternates list.
-            if new_name and new_name != existing_name:
-                current_list: list[str] = []
-                if isinstance(existing_alternates, list):
-                    current_list = [str(v) for v in existing_alternates if v is not None]
-                elif isinstance(existing_alternates, str) and existing_alternates:
-                    # If the backend already stored a single string value, normalise
-                    # it into a one-element list. Ignore non-string NaN/None values.
-                    current_list = [existing_alternates]
-
-                if new_name not in current_list:
-                    current_list.append(new_name)
-                    updated_alternates = current_list
 
             # Build SET clause dynamically. On matches, update non-empty
             # properties from the incoming node_data so later sources (e.g. DB
             # pulls) can take precedence over earlier ones.
             set_clauses = [f"n._updated_at = '{timestamp}'"]
 
-            if updated_alternates is not None:
-                alternates_formatted = _format_value_for_cypher(updated_alternates)
-                set_clauses.append(f"n.alternate_names = {alternates_formatted}")
-
             excluded_update_fields = {
-                "id",
+                key_field,  # Exclude the primary key field (e.g., "id" or "opportunity_id")
                 "name",
                 "created_at",
                 "updated_at",
-                "dedup_key",
                 "_created_at",
                 "_updated_at",
                 "_original_name",
-                "_dedup_key",
-                "alternate_names",
             }
 
             for key, value in node_data.items():
@@ -255,15 +262,15 @@ def merge_node_in_graph(
             set_sql = ", ".join(set_clauses)
             update_query = dedent_ws(f"""
                 MATCH (n:{node_type})
-                WHERE n.id = '{existing_id.replace("'", "\\'")}'
+                WHERE n.{key_field} = '{existing_id.replace("'", "\\'")}'
                 SET {set_sql}
-                RETURN n.id as id
+                RETURN n.{key_field} as id
                 """)
             conn.execute(update_query)
             return False, existing_id
         else:
             # Node doesn't exist - create it
-            create_query = f"CREATE (n:{node_type} {{{props_str}}}) RETURN n.id as id"
+            create_query = f"CREATE (n:{node_type} {{{props_str}}}) RETURN n.{key_field} as id"
             result = conn.execute(create_query)
             df = result.get_as_df()
 
@@ -281,7 +288,7 @@ def merge_node_in_graph(
         import traceback as tb
 
         logger.error(f"Error merging {node_type} node: {e}")
-        logger.error(f"Node data: {node_data.get(merge_on_field, 'unknown')}")
+        logger.error(f"Node data: {node_data.get(key_field, 'unknown')}")
         logger.error(tb.format_exc())
         raise
 
@@ -289,7 +296,8 @@ def merge_node_in_graph(
 def merge_nodes_batch(
     conn: GraphBackend,
     nodes_dict: dict[str, list[dict[str, Any]]],
-    merge_on_field: str = "_name",
+    node_type_to_key_field: dict[str, str],
+    node_type_to_is_auto_id: dict[str, bool],
     context: KgManager | None = None,
 ) -> tuple[dict[str, dict[str, int]], dict[tuple[str, str], str]]:
     """Merge multiple nodes into the graph database in batch.
@@ -300,8 +308,9 @@ def merge_nodes_batch(
     Args:
         conn: Graph database connection (kuzu.Connection or similar)
         nodes_dict: Mapping of node_type to list of node data dicts
-        schema_config: Optional schema configuration
-        merge_on_field: Field to match nodes on
+        node_type_to_key_field: Mapping of node_type to primary key field name
+        node_type_to_is_auto_id: Mapping of node_type to whether it uses AUTO_ID
+        context: Optional KgManager for collecting warnings
 
     Returns:
         Tuple of:
@@ -317,18 +326,23 @@ def merge_nodes_batch(
 
         logger.debug(f"Merging {len(node_list)} {node_type} nodes...")
 
+        # Get the primary key field for this node type
+        primary_key_field = node_type_to_key_field.get(node_type, "id")
+        is_auto_id = node_type_to_is_auto_id.get(node_type, False)
+
         type_stats = {"created": 0, "matched": 0, "total": len(node_list)}
 
         for node_data in node_list:
-            # Get original ID before merge
-            original_id = node_data.get("id", "")
+            # Get original ID before merge (use the primary key field)
+            original_id = node_data.get(primary_key_field, "")
 
             # Merge the node
             was_created, merged_id = merge_node_in_graph(
                 conn=conn,
                 node_type=node_type,
                 node_data=node_data,
-                merge_on_field=merge_on_field,
+                key_field=primary_key_field,
+                is_auto_id=is_auto_id,
                 context=context,
             )
 

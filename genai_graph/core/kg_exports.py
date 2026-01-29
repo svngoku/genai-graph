@@ -254,22 +254,20 @@ def export_info(config_name: str, backend: GraphBackend) -> UPath:
         # Node Mapping
         lines.append(f"## Node Mapping for {subgraph_title}")
         lines.append("")
-        lines.append("| Node Type | Description | Dedup Key | Alt Names Field |")
-        lines.append("|-----------|-------------|-----------|-----------------|")
+        lines.append("| Node Type | Description | Primary Key |")
+        lines.append("|-----------|-------------|-------------|")
         for node in schema.nodes:
             node_type = node.node_class.__name__
             description = node.description or ""
 
-            if node.deduplication_key is None:
-                dedup_label = "`_name` (default)"
-            elif isinstance(node.deduplication_key, str):
-                dedup_label = f"`{node.deduplication_key}`"
+            if node.key_from == "AUTO_ID":
+                key_label = "`id` (SERIAL auto-generated)"
+            elif isinstance(node.key_from, str):
+                key_label = f"`{node.key_from}`"
             else:
-                dedup_label = "callable"
+                key_label = "`id` (computed)"
 
-            alt_label = "`alternate_names`" if node.deduplication_key else ""
-
-            lines.append(f"| **{node_type}** | {description} | {dedup_label} | {alt_label} |")
+            lines.append(f"| **{node_type}** | {description} | {key_label} |")
         lines.append("")
         lines.append("---")
         lines.append("")

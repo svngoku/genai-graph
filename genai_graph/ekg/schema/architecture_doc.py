@@ -53,23 +53,24 @@ class ArchitectureDocumentSubgraph(JsonFileBackedSubgraphFactory, BaseModel):
             GraphNode(
                 node_class=SWArchitectureDocument,
                 name_from=lambda data, base: f"Architecture:{data.get('document_date', 'unknown')}",
+                key_from=lambda data, base: f"Architecture:{data.get('document_date', 'unknown')}",
                 description="Root node containing the complete architecture document with technical stack and solutions",
             ),
             # Technical Component nodes - individual technologies and tools
             GraphNode(
                 node_class=TechnicalComponent,
                 name_from="name",
+                key_from="name",  # Use name field as primary key for deduplication
                 description="Individual technology, framework, platform, tool, or infrastructure component",
                 index_fields=["name", "type"],
-                deduplication_key="name",
             ),
             # Solution nodes - managed services, products, and OSS solutions
             GraphNode(
                 node_class=Solution,
                 name_from="name",
+                key_from="name",  # Use name field as primary key for deduplication
                 description="Specific product, managed service, or OSS solution used in the architecture",
                 index_fields=["name", "vendor", "type"],
-                deduplication_key="name",
             ),
         ]
 
