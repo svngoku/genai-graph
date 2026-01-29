@@ -173,7 +173,8 @@ class GraphNode(BaseModel):
             Primary key value as string
         """
         if self.key_from == "AUTO_ID":
-            # For AUTO_ID, we'll generate a UUID
+            # AUTO_ID generates a unique UUID for each node
+            # This ensures uniqueness without relying on any data field
             return str(uuid.uuid4())
         elif isinstance(self.key_from, str):
             # Use the specified field value

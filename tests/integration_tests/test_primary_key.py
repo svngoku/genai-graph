@@ -44,7 +44,11 @@ class TestPrimaryKeyConfiguration:
         assert opportunity_id_field["primary_key"] is True, "opportunity_id should be primary key"
 
     def test_auto_id_primary_key(self) -> None:
-        """Test using AUTO_ID for SERIAL auto-generated PRIMARY KEY."""
+        """Test using AUTO_ID for UUID auto-generated PRIMARY KEY.
+
+        AUTO_ID generates a UUID stored as STRING, allowing each node instance
+        to have a unique identifier even if other fields like 'name' are duplicated.
+        """
         backend = create_in_memory_backend()
 
         class Customer(BaseModel):
@@ -54,7 +58,7 @@ class TestPrimaryKeyConfiguration:
         node = GraphNode(
             node_class=Customer,
             name_from="name",
-            key_from="AUTO_ID",  # Auto-generated SERIAL id
+            key_from="AUTO_ID",  # Auto-generated UUID stored as STRING
         )
 
         schema = GraphSchema(
@@ -71,11 +75,11 @@ class TestPrimaryKeyConfiguration:
         for row in result:
             table_info.append({"name": row[1], "type": row[2], "primary_key": row[4]})
 
-        # Verify id is the primary key and is SERIAL type
+        # Verify id is the primary key and is STRING type (for UUID storage)
         id_field = next((f for f in table_info if f["name"] == "id"), None)
         assert id_field is not None, "id field not found"
         assert id_field["primary_key"] is True, "id should be primary key"
-        assert "SERIAL" in id_field["type"], "id should be SERIAL type"
+        assert "STRING" in id_field["type"], "id should be STRING type for UUID storage"
 
     def test_field_name_as_primary_key(self) -> None:
         """Test using 'name' field itself as PRIMARY KEY."""

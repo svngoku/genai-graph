@@ -1,6 +1,5 @@
-import uuid
 from datetime import datetime
-from typing import Any, Callable, Dict, NamedTuple, Union
+from typing import Any, Dict, NamedTuple, Union
 
 from loguru import logger
 from pydantic import BaseModel
@@ -8,7 +7,11 @@ from rich.console import Console
 
 from genai_graph.core.extra_fields_utils import apply_extra_fields
 from genai_graph.core.graph_backend import GraphBackend, create_in_memory_backend
-from genai_graph.core.graph_merge import merge_nodes_batch, merge_relationships_batch
+from genai_graph.core.graph_merge import (
+    NodeTypeRegistry,
+    merge_nodes_batch,
+    merge_relationships_batch,
+)
 from genai_graph.core.graph_schema import GraphNode, GraphRelation, GraphSchema, _find_embedded_field_for_class
 from genai_graph.core.kg_manager import KgManager
 
@@ -367,10 +370,9 @@ def create_schema(
         model_fields = node.node_class.model_fields
 
         # Add primary key field first if needed
-        if key_from == "AUTO_ID":
-            fields.append("id SERIAL")  # Auto-increment primary key
-        elif isinstance(key_from, Callable):
-            fields.append("id STRING")  # Computed key stored as string
+        if key_from == "AUTO_ID" or callable(key_from):
+            # AUTO_ID generates UUID, callable computes key - both stored as STRING
+            fields.append("id STRING")
         # If key_from is a field name, that field will be added from model_fields
 
         # Add other metadata fields
@@ -534,13 +536,8 @@ def extract_graph_data(
 
                 # Determine which field to use as the primary key in the database
                 key_from = node_info.key_from
-                if key_from == "AUTO_ID":
-                    # For AUTO_ID, don't set any key field - let database auto-generate
-                    primary_key_field = "id"
-                    # Store a temporary placeholder for tracking in id_registry
-                    key_value = str(uuid.uuid4())
-                elif callable(key_from):
-                    # Use computed key, store in 'id' field
+                if key_from == "AUTO_ID" or callable(key_from):
+                    # AUTO_ID generates UUID, callable computes key - both stored in 'id' field
                     primary_key_field = "id"
                     key_value = node_info.get_key_value(item_data, node_type)
                     item_data[primary_key_field] = key_value
@@ -718,31 +715,15 @@ def load_graph_data(
         relationships: List of relationship tuples
         context: Optional KgManager for collecting warnings
     """
-    # Build mappings from node type to primary key configuration
-    node_type_to_key_field: dict[str, str] = {}
-    node_type_to_is_auto_id: dict[str, bool] = {}
-    for node in nodes:
-        node_type = node.node_class.__name__
-        key_from = node.key_from
-        if key_from == "AUTO_ID":
-            primary_key_field = "id"
-            is_auto_id = True
-        elif callable(key_from):
-            primary_key_field = "id"
-            is_auto_id = False
-        else:
-            primary_key_field = key_from
-            is_auto_id = False
-        node_type_to_key_field[node_type] = primary_key_field
-        node_type_to_is_auto_id[node_type] = is_auto_id
+    # Build node type registry from GraphNode configurations
+    registry = NodeTypeRegistry.from_graph_nodes(nodes)
 
     # Merge nodes using DataFrame-based batch operations
     logger.debug("Merging nodes into graph...")
-    _merge_stats, id_mapping = merge_nodes_batch(
+    merge_result = merge_nodes_batch(
         conn=backend,
         nodes_dict=nodes_dict,
-        node_type_to_key_field=node_type_to_key_field,
-        node_type_to_is_auto_id=node_type_to_is_auto_id,
+        registry=registry,
         context=context,
     )
 
@@ -789,9 +770,8 @@ def load_graph_data(
     relationships_created = merge_relationships_batch(
         conn=backend,
         relationships=normalised_rels,
-        node_type_to_key_field=node_type_to_key_field,
-        node_type_to_is_auto_id=node_type_to_is_auto_id,
-        id_mapping=id_mapping,
+        registry=registry,
+        id_mapping=merge_result.id_mapping,
     )
     logger.debug(f"Created {relationships_created} relationships")
 
