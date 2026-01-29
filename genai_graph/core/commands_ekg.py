@@ -32,6 +32,20 @@ class EkgCommands(CliTopCommand):
 
         @cli_app.command("create")
         def create(
+            kg: Annotated[
+                list[str] | None,
+                typer.Option(
+                    "--kg",
+                    help="KG configuration name(s) to create. Can be specified multiple times.",
+                ),
+            ] = None,
+            all_graphs: Annotated[
+                bool,
+                typer.Option(
+                    "--all-graphs",
+                    help="Create all KG configurations defined in ekg.yaml",
+                ),
+            ] = False,
             delete_first: Annotated[
                 bool,
                 typer.Option(
@@ -51,63 +65,125 @@ class EkgCommands(CliTopCommand):
 
             The flow is executed with an in-process runner and ephemeral client
             so that no long-lived Prefect server or agent is required.
+            
+            Examples:
+                cli kg create                        # Use kg_config from config
+                cli kg create --kg simple            # Create specific KG
+                cli kg create --kg simple --kg test1_with_db  # Create multiple KGs
+                cli kg create --all-graphs           # Create all defined KGs
             """
 
             # Get the configured KG config name.
             from genai_tk.extra.prefect.runtime import ephemeral_prefect_settings
+            from genai_tk.utils.config_mngr import global_config
 
             from genai_graph.core.kg_manager import get_kg_manager
             from genai_graph.orchestration.flows import create_kg_flow
 
-            cfg_name = get_kg_manager().profile
-
-            console.print(f"[bold]Creating KG using config[/bold] [cyan]{cfg_name}[/cyan]...")
-
-            # Run the Prefect flow with an ephemeral, in-process server.
-            try:
-                with ephemeral_prefect_settings():
-                    result = create_kg_flow(
-                        config_name=cfg_name,
-                        delete_first=delete_first,
-                        export_html=export_html,
+            # Determine which KG configs to process
+            kg_configs_to_process: list[str] = []
+            
+            if all_graphs:
+                # Get all KG configs from global_config
+                try:
+                    cfg = global_config()
+                    all_kg_configs = cfg.get_dict("kg_configs")
+                    kg_configs_to_process = list(all_kg_configs.keys())
+                    console.print(
+                        f"[bold]Processing all KG configurations:[/bold] "
+                        f"[cyan]{', '.join(kg_configs_to_process)}[/cyan]"
                     )
-            except Exception as exc:  # pragma: no cover - defensive
-                import traceback as tb
-
-                logger.error(f"KG creation failed: {exc}")
-                logger.error(tb.format_exc())
-                console.print(f"[red]❌ KG creation failed: {exc}[/red]")
-                raise typer.Exit(1) from exc
-
-            stats = result.stats
-            warnings = result.warnings
-
-            console.print("")
-            console.print(
-                f"[green]✓ KG creation completed.[/green] Processed: "
-                f"{stats.total_processed} ok, {stats.total_failed} failed. "
-                f"Path: {result.db_path}",
-            )
-
-            if warnings:
-                console.print(Panel.fit("[bold yellow]⚠️  Warnings[/bold yellow]", border_style="yellow"))
-                for idx, warning in enumerate(warnings, 1):
-                    console.print(f"  [yellow]{idx}.[/yellow] {warning}")
-                console.print("")
-            else:
-                console.print("[green]✓ No warnings[/green]")
-
-            if result.html_export and export_html:
-                file_url = f"file://{result.html_export.output_path}"
+                except Exception as exc:
+                    console.print(f"[red]❌ Failed to retrieve kg_configs: {exc}[/red]")
+                    raise typer.Exit(1) from exc
+            elif kg:
+                # Use specified KG config(s)
+                kg_configs_to_process = kg
                 console.print(
-                    Panel(
-                        f"[bold green]🌐 HTML export created:[/bold green]\n\n"
-                        f"[link={file_url}]{file_url}[/link]\n\n"
-                        f"[dim]Click the link above or run[/dim] [bold cyan]cli kg view[/bold cyan] [dim]to open it in your browser[/dim]",
-                        title="HTML Visualization Ready",
-                        border_style="green",
-                    )
+                    f"[bold]Processing specified KG configuration(s):[/bold] "
+                    f"[cyan]{', '.join(kg_configs_to_process)}[/cyan]"
                 )
+            else:
+                # Use default from kg_config
+                cfg_name = get_kg_manager().profile
+                kg_configs_to_process = [cfg_name]
+                console.print(
+                    f"[bold]Processing default KG configuration:[/bold] [cyan]{cfg_name}[/cyan]"
+                )
+
+            # Track results for all KG configs
+            all_results: list[tuple[str, Any]] = []
+            failed_configs: list[tuple[str, str]] = []
+
+            # Process each KG config
+            for cfg_name in kg_configs_to_process:
+                console.print("")
+                console.print(f"[bold cyan]{'=' * 60}[/bold cyan]")
+                console.print(f"[bold]Creating KG:[/bold] [cyan]{cfg_name}[/cyan]")
+                console.print(f"[bold cyan]{'=' * 60}[/bold cyan]")
+
+                # Run the Prefect flow with an ephemeral, in-process server.
+                try:
+                    with ephemeral_prefect_settings():
+                        result = create_kg_flow(
+                            config_name=cfg_name,
+                            delete_first=delete_first,
+                            export_html=export_html,
+                        )
+                    
+                    all_results.append((cfg_name, result))
+                    
+                    stats = result.stats
+                    warnings = result.warnings
+
+                    console.print("")
+                    console.print(
+                        f"[green]✓ KG creation completed for [bold]{cfg_name}[/bold].[/green] Processed: "
+                        f"{stats.total_processed} ok, {stats.total_failed} failed. "
+                        f"Path: {result.db_path}",
+                    )
+
+                    if warnings:
+                        console.print(Panel.fit("[bold yellow]⚠️  Warnings[/bold yellow]", border_style="yellow"))
+                        for idx, warning in enumerate(warnings, 1):
+                            console.print(f"  [yellow]{idx}.[/yellow] {warning}")
+                        console.print("")
+                    else:
+                        console.print("[green]✓ No warnings[/green]")
+
+                    if result.html_export and export_html:
+                        file_url = f"file://{result.html_export.output_path}"
+                        console.print(
+                            f"[green]📊 HTML export:[/green] [link={file_url}]{result.html_export.output_path}[/link]"
+                        )
+
+                except Exception as exc:  # pragma: no cover - defensive
+                    import traceback as tb
+
+                    logger.error(f"KG creation failed for {cfg_name}: {exc}")
+                    logger.error(tb.format_exc())
+                    console.print(f"[red]❌ KG creation failed for {cfg_name}: {exc}[/red]")
+                    failed_configs.append((cfg_name, str(exc)))
+                    # Continue with next config instead of exiting
+                    continue
+
+            # Summary for multiple KG configs
+            if len(kg_configs_to_process) > 1:
+                console.print("")
+                console.print(f"[bold cyan]{'=' * 60}[/bold cyan]")
+                console.print(f"[bold]Summary: Processed {len(kg_configs_to_process)} KG configuration(s)[/bold]")
+                console.print(f"[bold cyan]{'=' * 60}[/bold cyan]")
+                
+                if all_results:
+                    console.print(f"[green]✓ Successfully created: {len(all_results)}[/green]")
+                    for cfg_name, result in all_results:
+                        console.print(f"  • [cyan]{cfg_name}[/cyan]: {result.stats.total_processed} docs processed")
+                
+                if failed_configs:
+                    console.print(f"[red]✗ Failed: {len(failed_configs)}[/red]")
+                    for cfg_name, error in failed_configs:
+                        console.print(f"  • [red]{cfg_name}[/red]: {error}")
+                    raise typer.Exit(1)
 
         @cli_app.command("info")
         def info() -> None:
