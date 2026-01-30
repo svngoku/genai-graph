@@ -105,11 +105,10 @@ The merge functions now accept node-specific primary key field information:
 ```python
 def merge_nodes_batch(
     conn: GraphBackend,
-    nodes_dict: dict[str, list[dict[str, Any]]],
-    node_type_to_key_field: dict[str, str],
-    node_type_to_is_auto_id: dict[str, bool],
+    nodes: NodeDataCollection | dict[str, list[dict[str, Any]]],
+    registry: NodeTypeRegistry,
     context: KgManager | None = None,
-) -> tuple[dict[str, dict[str, int]], dict[tuple[str, str], str]]:
+) -> NodeMergeResult:
 ```
 
 **Key behaviors:**

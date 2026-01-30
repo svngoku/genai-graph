@@ -272,6 +272,63 @@ def _get_relation_properties(node_class: Any, baml_docs: dict[str, Any]) -> list
     return properties
 
 
+def _get_kuzu_type_for_field(annotation: Any) -> str:
+    """Map Python type annotation to Kuzu type string for JSON schema export.
+
+    This is similar to graph_core._get_kuzu_type but returns a consistent
+    type string for JSON schema export.
+
+    Args:
+        annotation: Python type annotation from Pydantic model
+
+    Returns:
+        Kuzu-compatible type string (e.g., "STRING", "DOUBLE", "INT64", "STRING[]")
+    """
+    import types
+    import typing
+    from typing import get_args, get_origin
+
+    if annotation is None or annotation is type(None):
+        return "STRING"
+
+    origin = get_origin(annotation)
+    actual_type = annotation
+
+    # Handle Optional[...] types by unwrapping to get the inner type
+    if origin is typing.Union or (hasattr(types, "UnionType") and origin is types.UnionType):
+        args = get_args(annotation)
+        # Optional[X] is Union[X, None], so extract X
+        non_none_args = [arg for arg in args if arg is not type(None)]
+        if non_none_args:
+            actual_type = non_none_args[0]
+            origin = get_origin(actual_type)
+
+    # Check if it's a list type (after unwrapping Optional)
+    if origin is list:
+        inner_args = get_args(actual_type)
+        if inner_args:
+            inner_type = _get_kuzu_type_for_field(inner_args[0])
+            # Remove trailing [] if present to avoid double array notation
+            inner_base = inner_type.rstrip("[]")
+            return f"{inner_base}[]"
+        return "STRING[]"
+    elif actual_type is int:
+        return "INT64"
+    elif actual_type is float:
+        return "DOUBLE"
+    elif actual_type is bool:
+        return "BOOL"
+    elif actual_type is str:
+        return "STRING"
+    elif isinstance(actual_type, type) and issubclass(actual_type, Enum):
+        return "STRING"  # Enums are stored as strings
+    else:
+        # For complex types (Pydantic models), return the class name as STRUCT indicator
+        if hasattr(actual_type, "__name__"):
+            return f"STRUCT:{actual_type.__name__}"
+        return "STRING"
+
+
 def format_schema_description(schema: GraphSchema, baml_docs: dict[str, Any], print_enums: bool = True) -> str:
     """Format schema as a compact, token-efficient description.
 

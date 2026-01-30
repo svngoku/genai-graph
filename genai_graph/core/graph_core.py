@@ -8,6 +8,7 @@ from rich.console import Console
 from genai_graph.core.extra_fields_utils import apply_extra_fields
 from genai_graph.core.graph_backend import GraphBackend, create_in_memory_backend
 from genai_graph.core.graph_merge import (
+    NodeDataCollection,
     NodeTypeRegistry,
     merge_nodes_batch,
     merge_relationships_batch,
@@ -469,19 +470,20 @@ def extract_graph_data(
     nodes: list[GraphNode],
     relations: list[GraphRelation],
     source_key: str | None = None,
-) -> tuple[dict[str, list[dict[str, Any]]], list[RelationshipRecord]]:
+) -> tuple[NodeDataCollection, list[RelationshipRecord]]:
     """Generic extraction of nodes and relationships from any Pydantic model.
 
     Args:
         model: Pydantic model instance
         nodes: List of GraphNode objects
         relations: List of GraphRelation objects
+        source_key: Optional source identifier for provenance tracking
 
     Returns:
-        nodes_dict: Mapping of node type to list of property dicts
+        nodes_data: Collection of nodes grouped by type
         relationships: List of :class:`RelationshipRecord` instances
     """
-    nodes_dict: dict[str, list[dict[str, Any]]] = {}
+    nodes_data = NodeDataCollection()
     relationships: list[RelationshipRecord] = []
     node_registry: Dict[str, set[str]] = {}  # For deduplication: node_type -> set of dedup values
     id_registry: Dict[str, Dict[str, str]] = {}  # For relationships: node_type -> {dedup_value: _id}
@@ -491,7 +493,7 @@ def extract_graph_data(
     # Init buckets
     for node_info in nodes:
         node_type = node_info.node_class.__name__
-        nodes_dict[node_type] = []
+        nodes_data.ensure_type(node_type)
         node_registry[node_type] = set()
         id_registry[node_type] = {}
 
@@ -581,7 +583,7 @@ def extract_graph_data(
 
                 # Use primary key for deduplication
                 if key_value not in node_registry[node_type]:
-                    nodes_dict[node_type].append(item_data)
+                    nodes_data.add(node_type, item_data)
                     node_registry[node_type].add(key_value)
                     # Register lookup key for relationship creation
                     # For AUTO_ID/callable keys, use 'name' field as both lookup key AND value
@@ -689,7 +691,7 @@ def extract_graph_data(
                         )
                     )
 
-    return nodes_dict, relationships
+    return nodes_data, relationships
 
 
 # Loading
@@ -698,8 +700,8 @@ def extract_graph_data(
 def load_graph_data(
     backend: GraphBackend,
     nodes: list[GraphNode],
-    nodes_dict: dict[str, list[dict[str, Any]]],
-    relationships: list[RelationshipRecord] | list[tuple[Any, ...]],
+    nodes_data: NodeDataCollection,
+    relationships: list[RelationshipRecord],
     context: KgManager | None = None,
 ) -> None:
     """Load nodes and relationships into the graph database.
@@ -711,8 +713,8 @@ def load_graph_data(
     Args:
         backend: GraphBackend instance
         nodes: List of GraphNode configurations
-        nodes_dict: Dictionary mapping node types to list of node data dicts
-        relationships: List of relationship tuples
+        nodes_data: Collection of nodes grouped by type
+        relationships: List of RelationshipRecord instances
         context: Optional KgManager for collecting warnings
     """
     # Build node type registry from GraphNode configurations
@@ -722,54 +724,20 @@ def load_graph_data(
     logger.debug("Merging nodes into graph...")
     merge_result = merge_nodes_batch(
         conn=backend,
-        nodes_dict=nodes_dict,
+        nodes=nodes_data,
         registry=registry,
         context=context,
     )
 
-    # Normalise relationships into RelationshipRecord instances so that
-    # downstream code can rely on named attributes rather than tuple
-    # indexing. This also preserves backwards compatibility with any
-    # older callers that might still pass raw tuples.
-    normalised_rels: list[RelationshipRecord] = []
-    for rel in relationships:
-        if isinstance(rel, RelationshipRecord):
-            normalised_rels.append(rel)
-            continue
-
-        # Tuple fallback – support both legacy 5-field and 6-field formats
-        if not isinstance(rel, tuple):
-            continue
-
-        if len(rel) == 6:
-            from_type, from_id, to_type, to_id, rel_name, edge_properties = rel
-        elif len(rel) == 5:
-            from_type, from_id, to_type, to_id, rel_name = rel
-            edge_properties = {}
-        else:
-            # Unsupported legacy shape
-            continue
-
-        normalised_rels.append(
-            RelationshipRecord(
-                from_type=str(from_type),
-                from_id=str(from_id),
-                to_type=str(to_type),
-                to_id=str(to_id),
-                name=str(rel_name),
-                properties=dict(edge_properties or {}),
-            )
-        )
-
     # Create relationships using DataFrame-based batch operations
-    logger.debug(f"Creating {len(normalised_rels)} relationships...")
-    edge_props_count = sum(1 for r in normalised_rels if r.properties)
+    logger.debug(f"Creating {len(relationships)} relationships...")
+    edge_props_count = sum(1 for r in relationships if r.properties)
     if edge_props_count > 0:
         logger.debug(f"  {edge_props_count} relationships have properties")
 
     relationships_created = merge_relationships_batch(
         conn=backend,
-        relationships=normalised_rels,
+        relationships=relationships,
         registry=registry,
         id_mapping=merge_result.id_mapping,
     )
@@ -786,7 +754,7 @@ def create_graph(
     schema_config: GraphSchema,
     source_key: str | None = None,
     context: KgManager | None = None,
-) -> tuple[dict[str, list[dict[str, Any]]], list[RelationshipRecord]]:
+) -> tuple[NodeDataCollection, list[RelationshipRecord]]:
     """Create a knowledge graph from a Pydantic model in the configured graph database.
 
     Args:
@@ -797,7 +765,7 @@ def create_graph(
         context: Optional KgContext for collecting warnings
 
     Returns:
-        nodes_dict and relationships that were used to populate the graph
+        Tuple of (nodes_data, relationships) that were used to populate the graph
     """
     # Check if this is the new GraphSchema format
     if not hasattr(schema_config, "nodes") or not hasattr(schema_config, "relations"):
@@ -860,13 +828,12 @@ def create_graph(
     create_schema(backend, schema.nodes, schema.relations)
 
     logger.debug("Extracting and loading data...")
-    nodes_dict, relationships = extract_graph_data(model, schema.nodes, schema.relations, source_key=source_key)
+    nodes_data, relationships = extract_graph_data(model, schema.nodes, schema.relations, source_key=source_key)
 
-    load_graph_data(backend, schema.nodes, nodes_dict, relationships, context)
+    load_graph_data(backend, schema.nodes, nodes_data, relationships, context)
 
     logger.debug("Graph creation complete")
-    total_nodes = sum(len(node_list) for node_list in nodes_dict.values())
-    logger.debug(f"Total nodes: {total_nodes}")
+    logger.debug(f"Total nodes: {nodes_data.total_count()}")
     logger.debug(f"Total relationships: {len(relationships)}")
 
-    return nodes_dict, relationships
+    return nodes_data, relationships

@@ -188,10 +188,7 @@ class KuzuImporter:
                     logger.error(error_msg)
                     stats.errors.append(error_msg)
 
-        logger.info(
-            f"Import complete: {stats.nodes_imported} nodes, "
-            f"{stats.relationships_imported} relationships"
-        )
+        logger.info(f"Import complete: {stats.nodes_imported} nodes, {stats.relationships_imported} relationships")
 
         return stats
 
@@ -250,9 +247,7 @@ class KuzuImporter:
                         stats["total_nodes"] += count
 
                 elif table_type == "REL":
-                    count_result = self.conn.execute(
-                        f"MATCH ()-[r:{table_name}]->() RETURN count(r)"
-                    )
+                    count_result = self.conn.execute(f"MATCH ()-[r:{table_name}]->() RETURN count(r)")
                     while count_result.has_next():
                         count = count_result.get_next()[0]
                         stats["rel_tables"][table_name] = count

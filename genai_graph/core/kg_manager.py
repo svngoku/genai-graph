@@ -59,9 +59,12 @@ class EkgProfileConfig(BaseModel):
 
     subgraphs: list[EkgSubgraphConfig] = Field(default_factory=list)
     agent: EkgAgentConfig | None = None
+    imports: list[str] = Field(default_factory=list, alias="import")
+    """List of KG config names to import before building this KG."""
 
     model_config = {
         "extra": "allow",
+        "populate_by_name": True,
     }
 
 

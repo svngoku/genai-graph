@@ -1,4 +1,73 @@
-I want to merge  a graph with other already created 
+# New
+
+I want to improb how different graphs (or subgraphs) are merged. 
+Today,  we have this kind of configuration in ekg.yaml: 
+
+```simple_with_db:
+    subgraphs:
+      - factory: ${schemas_root}.rainbow_review:ReviewedOpportunitySubgraph
+        data_root: ${paths.rainbow_json}
+        include: 
+          - "*_CNES_TMA_VENUS_VIP_PEPS_THEIA_MUSCATE*"
+        exclude: 
+          - "fake/*"
+        recursive: true
+
+      - factory: ${schemas_root}.crm_export:CrmExtractSubGraph
+        db_dsn: sqlite:///${paths.data_root}/ekg/crm_extract.db
+        files:
+          - ${paths.ekg_data}/crm_export/report1750429630460_SHORTEN.xlsx
+        pd_read_parameters: {}         
+        pull: 
+          merge_on: Opportunity.opportunity_id
+          db_field: "Atos Opportunity ID" ```
+
+The "pull" mode was there to avoid loading too many nodes from a database. 
+But now we have a fast merge from dataframe mechanism (LOAD FROM df MERGE), that makes such mechanism less usefull, 
+and open the dorr to simplification. 
+We could replace above configuration with this: 
+
+```  db_only:   # This already work 
+    subgraphs:
+      - factory: ${schemas_root}.crm_export:CrmExtractSubGraph
+        db_dsn: sqlite:///${paths.data_root}/ekg/crm_extract.db
+        files:
+          - ${paths.ekg_data}/crm_export/report1750429630460_SHORTEN.xlsx
+        pd_read_parameters: {} 
+
+simple_with_db_v2: 
+    import:  # new !!
+        - db_only  
+    subgraphs:
+      - factory: ${schemas_root}.rainbow_review:ReviewedOpportunitySubgraph
+        data_root: ${paths.rainbow_json}
+        include: 
+          - "*_CNES_TMA_VENUS_VIP_PEPS_THEIA_MUSCATE*"
+        exclude: 
+          - "fake/*"
+        recursive: true
+``` 
+Your task :
+1/ Implement this new "import" mechanism. 
+    To do so, and make import efficient : 
+       - you'll cache the imported KG in a Parquet file exported from the data frame after its "LOAD FROM df MERGE" 
+       - This dataframe will be stored in a directory managed through genai_graph/core/kg_exports.py, along with a manifest file (see other usage of manifest.json in the projet to increase reusability)
+       - That parquet file can be created for any KG, wether it is intended to be imported of not.  No need to complexify now. 
+       - use the hashcode of the sources of the KG (field "files") stored in the Manifest to avoid recalculation if that does not too much complexity.  Otherwise don't.
+       - When the KG is imported, the parquet file is loaded as a dataframe, and the LOAD FROM df MERGE start there.  
+       - If the parquet file does not exists,  it is created  with the equivalent of the 'create' CLI command (that call the prefect task create_kg_flow )
+2/ once the import done
+    - build the other subgraphs defined in "subgraphs" section through their factory
+    - remove any reference to the "pull" mode
+    - Keys "merge_on" and "db_field" should be removed. Information provided in JsonFileBackedSubgraphFactory should be enough. Complete if needed. 
+
+3/ test with : cli kg create --kg simple_with_db_v2  and with various situations (db_only exists or not, ...)
+
+Don't try to maintain compatibility with current implementation. Code simplicity, lisibility and maintenability is key. KISS. 
+Defer some feature (such as hash-based caching) if they increase complexity. 
+Reuse whenever possible, and possibly refactor/
+
+
 
 
 Allow user to define a PRIMARY KEY in the generated Kuzu table.

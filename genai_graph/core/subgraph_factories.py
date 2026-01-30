@@ -30,27 +30,11 @@ from genai_graph.core.graph_schema import (
 console = Console()
 
 
-class PullConfig(BaseModel):
-    """Configuration for pulling structured data from a DB-backed subgraph.
-
-    Attributes:
-        merge_on: Node type + field name (e.g. "Opportunity.opportunity_id")
-            that triggers a lookup in the DB.
-        db_field: Name of the DB column to query on. This may be the original
-            Excel header or a SQL-compliant renamed column.
-    """
-
-    merge_on: str
-    db_field: str
-
-
 class SubgraphFactory(ABC, BaseModel):
     """Abstract base class for subgraph implementations."""
 
     # Class constant - must be overridden by subclasses
     TOP_CLASS: Type[BaseModel]
-
-    pull: PullConfig | None = None
 
     @property
     def name(self) -> str:
@@ -237,7 +221,7 @@ class JsonFileBackedSubgraphFactory(SubgraphFactory):
             return None
 
     def get_struct_data_by_key(self, key: str) -> BaseModel | None:
-        """Legacy method for backward compatibility - interprets key as file path."""
+        """Load structured data by key (interprets key as file path)."""
         file_path = UPath(key)
         return self.get_struct_data_by_file_path(file_path)
 

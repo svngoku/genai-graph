@@ -14,7 +14,6 @@ Behavior:
   present.
 """
 
-from dataclasses import dataclass
 from typing import List, Type
 
 from loguru import logger
@@ -26,8 +25,9 @@ from genai_graph.core.kg_manager import KgManager
 from genai_graph.core.subgraph_factories import SubgraphFactory
 
 
-@dataclass
-class DocumentStats:
+class DocumentStats(BaseModel):
+    """Statistics from document processing."""
+
     total_processed: int = 0
     total_failed: int = 0
     nodes_created: int = 0
@@ -73,88 +73,6 @@ def _has_metadata_map(root_class: Type[BaseModel], schema: GraphSchema) -> bool:
         return False
 
 
-def _parse_pull_merge_on(merge_on: str) -> tuple[str, str] | None:
-    """Parse a pull.merge_on spec of the form "NodeType.field_name"."""
-    parts = merge_on.split(".", 1)
-    if len(parts) != 2:
-        return None
-    node_type, field_name = parts[0].strip(), parts[1].strip()
-    if not node_type or not field_name:
-        return None
-    return node_type, field_name
-
-
-def _apply_pull_subgraphs(
-    backend: GraphBackend,
-    nodes_dict: dict[str, list[dict[str, object]]],
-    pulled: set[tuple[str, str]],
-    source_key: str,
-    context: KgManager | None = None,
-) -> None:
-    """Pull DB-backed subgraphs on-demand based on configured triggers.
-
-    Args:
-        backend: GraphBackend instance
-        nodes_dict: Dictionary of nodes by type
-        pulled: Set of already pulled (subgraph_name, value) tuples
-        source_key: Source key for provenance
-        context: Optional KgContext for collecting warnings
-    """
-    from genai_graph.core.graph_core import create_graph
-    from genai_graph.core.graph_registry import GraphRegistry
-    from genai_graph.core.subgraph_factories import TableBackedSubgraphFactory
-
-    registry = GraphRegistry.get_instance()
-
-    # Map node types by case-insensitive key for tolerant matching.
-    node_type_map = {k.lower(): k for k in nodes_dict.keys()}
-
-    for subgraph in registry.subgraphs.values():
-        if not isinstance(subgraph, TableBackedSubgraphFactory):
-            continue
-        if not subgraph.pull:
-            continue
-
-        parsed = _parse_pull_merge_on(subgraph.pull.merge_on)
-        if not parsed:
-            continue
-
-        merge_node_type, merge_field = parsed
-        actual_node_type = node_type_map.get(merge_node_type.lower())
-        if not actual_node_type:
-            continue
-
-        for node_data in nodes_dict.get(actual_node_type, []):
-            raw_value = node_data.get(merge_field) if isinstance(node_data, dict) else None
-            value = str(raw_value).strip() if raw_value is not None else ""
-            if not value:
-                continue
-
-            cache_key = (subgraph.name, value)
-            if cache_key in pulled:
-                continue
-
-            try:
-                db_model = subgraph.get_struct_data_by_field(subgraph.pull.db_field, value)
-            except Exception:
-                pulled.add(cache_key)
-                continue
-
-            if not db_model:
-                pulled.add(cache_key)
-                continue
-
-            db_schema = subgraph.build_schema()
-            create_graph(
-                backend=backend,
-                model=db_model,
-                schema_config=db_schema,
-                source_key=f"pull:{subgraph.name}:{source_key}",
-                context=context,
-            )
-            pulled.add(cache_key)
-
-
 def add_documents_to_graph(
     keys: List[str],
     subgraph_impl: SubgraphFactory,
@@ -191,8 +109,6 @@ def add_documents_to_graph(
             context.add_warning(msg)
         raise ValueError(msg)
 
-    pulled: set[tuple[str, str]] = set()
-
     for key in keys:
         try:
             logger.debug(f"Loading key {key} for subgraph {subgraph_impl.name}")
@@ -222,16 +138,9 @@ def add_documents_to_graph(
                 source_key = key
 
             # create_graph will attach source_key into the extracted root nodes
-            nodes_dict, relationships = create_graph(backend, data, schema, source_key=source_key, context=context)
+            nodes_data, relationships = create_graph(backend, data, schema, source_key=source_key, context=context)
 
-            # On-demand pull: DB-backed subgraphs can enrich the graph once a
-            # matching node exists (avoids orphan nodes from bulk DB loads).
-            try:
-                _apply_pull_subgraphs(backend, nodes_dict, pulled, source_key=key, context=context)
-            except Exception:
-                pass
-
-            nodes_created = sum(len(v) for v in nodes_dict.values()) if nodes_dict else 0
+            nodes_created = nodes_data.total_count() if nodes_data else 0
             rels_created = len(relationships) if relationships is not None else 0
 
             stats.nodes_created += nodes_created

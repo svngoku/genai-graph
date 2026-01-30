@@ -400,7 +400,7 @@ def main() -> None:
 
         # Create the knowledge graph
         console.print(Panel("[bold cyan]Creating Knowledge Graph[/bold cyan]"))
-        nodes_dict, relationships = create_graph(backend, opportunity, schema)
+        nodes_data, relationships = create_graph(backend, opportunity, schema)
 
         # Display statistics
         create_statistics_table(backend, schema)
@@ -424,11 +424,10 @@ def main() -> None:
 
         # Summary
         console.print(Panel("[bold green]Test Completed Successfully![/bold green]"))
-        total_nodes = sum(len(node_list) for node_list in nodes_dict.values())
         console.print("[bold]Summary:[/bold]")
-        console.print(f"• Total nodes created: {total_nodes}")
+        console.print(f"• Total nodes created: {nodes_data.total_count()}")
         console.print(f"• Total relationships created: {len(relationships)}")
-        console.print(f"• Node types: {len([k for k, v in nodes_dict.items() if v])}")
+        console.print(f"• Node types: {len([t for t in nodes_data.types() if nodes_data.get(t)])}")
         console.print(f"• Relationship types: {len({rel[4] for rel in relationships})}")
         console.print(f"• Auto-deduced field paths: {sum(len(n.field_paths) for n in schema.nodes)}")
         console.print(f"• Auto-computed excluded fields: {sum(len(n.excluded_fields) for n in schema.nodes)}")

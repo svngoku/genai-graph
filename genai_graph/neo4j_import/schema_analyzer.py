@@ -22,8 +22,7 @@ class PropertyInfo(BaseModel):
     nullable: bool = False
     sample_values: list[Any] = Field(default_factory=list)
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = {"arbitrary_types_allowed": True}
 
     def infer_kuzu_type(self) -> str:
         """Infer the best Kuzu type for this property."""
@@ -81,8 +80,7 @@ class NodeTableInfo(BaseModel):
     properties: dict[str, PropertyInfo] = Field(default_factory=dict)
     count: int = 0
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = {"arbitrary_types_allowed": True}
 
 
 class RelTableInfo(BaseModel):
@@ -94,8 +92,7 @@ class RelTableInfo(BaseModel):
     properties: dict[str, PropertyInfo] = Field(default_factory=dict)
     count: int = 0
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = {"arbitrary_types_allowed": True}
 
 
 class SchemaInfo(BaseModel):
@@ -106,8 +103,7 @@ class SchemaInfo(BaseModel):
     total_nodes: int = 0
     total_relationships: int = 0
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = {"arbitrary_types_allowed": True}
 
 
 class SchemaAnalyzer:

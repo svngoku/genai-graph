@@ -148,9 +148,7 @@ class Neo4jToKuzuConverter:
 
             self._node_data[label].append(node_record)
 
-    def _process_relationship_for_conversion(
-        self, record: dict, stats: ConversionStats
-    ) -> None:
+    def _process_relationship_for_conversion(self, record: dict, stats: ConversionStats) -> None:
         """Process a relationship record for conversion."""
         stats.relationships_processed += 1
 

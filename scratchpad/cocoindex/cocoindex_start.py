@@ -147,46 +147,9 @@ def search_vector_store(
             return results
 
 
-def _main() -> None:
-    """
-    Main function to run indexing and then queries.
-    This is kept for backward compatibility with standalone execution.
-    """
+if __name__ == "__main__":
     load_dotenv()
 
-    # Get configuration from global config
-    database_url = global_config().get_dsn("paths.postgres")
-    etl_config = global_config().get_dict("etl_configs.default.cocoindex")
-
-    # Initialize cocoindex
-    os.environ["COCOINDEX_DATABASE_URL"] = database_url
-    cocoindex.init()
-
-    # Update vector store
-    result = update_vector_store(etl_config, database_url)
-
-    if result.get("success"):
-        # Run a test query
-        test_query = "What is machine learning?"
-        print(f"\nRunning test query: '{test_query}'")
-        try:
-            results = search_vector_store(test_query, etl_config, database_url)
-            print("\nSearch results:")
-            if not results:
-                print("No results found.")
-            for result in results:
-                print(f"[{result['score']:.3f}] {result['filename']}")
-                print(f"    {result['text'][:200]}...")  # Truncate long text
-                print("---")
-        except Exception as e:
-            print(f"Error during search: {e}")
-            import traceback
-
-            traceback.print_exc()
-
-
-if __name__ == "__main__":
-    # _main()
     database_url = global_config().get_dsn("paths.postgres")
     etl_config = global_config().get_dict("etl_configs.default.cocoindex")
 

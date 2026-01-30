@@ -200,17 +200,7 @@ def ingest_subgraphs_task(
 
         factory_path = subgraph_cfg.get("factory", "<unknown>")
 
-        # For table-backed subgraphs configured with `pull`, do not
-        # load all rows by default. They act as an on-demand source.
-        pull_cfg = getattr(subgraph_impl, "pull", None)
         keys = subgraph_cfg.get("initial_load", [])
-
-        if not keys and pull_cfg and isinstance(subgraph_impl, TableBackedSubgraphFactory):
-            logger_pf.debug(
-                "Skipping automatic ingestion for pull-only subgraph: %s",
-                getattr(subgraph_impl, "name", factory_path),
-            )
-            continue
 
         # Handle JsonFileBackedSubgraphFactory - get file paths
         if not keys and isinstance(subgraph_impl, JsonFileBackedSubgraphFactory):

@@ -15,7 +15,7 @@ from genai_tk.utils.singleton import once
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from genai_graph.core.graph_schema import GraphSchema
+from genai_graph.core.graph_schema import GraphRelation, GraphSchema
 from genai_graph.core.kg_manager import get_kg_manager
 from genai_graph.core.subgraph_factories import SubgraphFactory
 
@@ -176,7 +176,7 @@ class GraphRegistry(BaseModel):
                 merged_nodes.append(node)
 
         # Merge relations, de-duplicating by (from_node, to_node, name)
-        merged_relations: list[Any] = []
+        merged_relations: list[GraphRelation] = []
         seen_relations: set[tuple[type, type, str]] = set()
         for schema in schemas:
             for rel in schema.relations:

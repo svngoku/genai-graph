@@ -16,8 +16,25 @@ from genai_tk.utils.file_patterns import resolve_config_path
 from loguru import logger
 from prefect import flow, task
 from prefect.task_runners import ConcurrentTaskRunner  # type: ignore[attr-defined]
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from upath import UPath
+
+
+class FakeRainbowTaskResult(BaseModel):
+    """Result of a single fake Rainbow JSON generation task."""
+
+    opportunity_id: str
+    output_path: str
+
+
+class FakeRainbowFlowResult(BaseModel):
+    """Result of the CRM fake Rainbow generation flow."""
+
+    total_requested: int
+    total_generated: int
+    output_dir: str
+    output_files: list[str] = Field(default_factory=list)
+    timestamp: str
 
 
 @task
@@ -27,7 +44,7 @@ async def _generate_fake_rainbow_task(
     config_name: str,
     llm: str | None,
     force: bool,
-) -> tuple[str, str]:
+) -> FakeRainbowTaskResult:
     """Generate a single fake Rainbow JSON file from CRM row data.
 
     Args:
@@ -39,7 +56,7 @@ async def _generate_fake_rainbow_task(
         force: Overwrite existing files if True
 
     Returns:
-        Tuple of (opportunity_id, output_path)
+        FakeRainbowTaskResult with opportunity_id and output_path
     """
     opportunity_id = str(row_data.get("Atos Opportunity ID", ""))
     account_name = str(row_data.get("Account Name", ""))
@@ -54,7 +71,7 @@ async def _generate_fake_rainbow_task(
     # Check if file already exists
     if output_path.exists() and not force:
         logger.info(f"Skipping - file already exists: {output_path}")
-        return opportunity_id, str(output_path)
+        return FakeRainbowTaskResult(opportunity_id=opportunity_id, output_path=str(output_path))
 
     # Build input text from CRM data for BAML function
     input_text = (
@@ -85,7 +102,7 @@ async def _generate_fake_rainbow_task(
 
     logger.success(f"Generated fake Rainbow JSON: {output_path}")
 
-    return opportunity_id, str(output_path)
+    return FakeRainbowTaskResult(opportunity_id=opportunity_id, output_path=str(output_path))
 
 
 @flow(name="crm_fake_rainbow_generation", task_runner=ConcurrentTaskRunner())  # type: ignore[call-arg]
@@ -97,7 +114,7 @@ def crm_fake_rainbow_flow(
     config_name: str = "default",
     llm: str | None = None,
     force: bool = False,
-) -> dict[str, Any]:
+) -> FakeRainbowFlowResult:
     """Generate fake Rainbow JSON files from CRM export data.
 
     Args:
@@ -109,7 +126,7 @@ def crm_fake_rainbow_flow(
         force: Overwrite existing files if True
 
     Returns:
-        Dictionary with generation statistics
+        FakeRainbowFlowResult with generation statistics
     """
     # Resolve paths
     resolved_crm_path = resolve_config_path(crm_file_path)
@@ -171,14 +188,14 @@ def crm_fake_rainbow_flow(
 
     # Collect statistics
     success_count = len(results)
-    output_files = [path for _, path in results]
+    output_files = [r.output_path for r in results]
 
     logger.success(f"Successfully generated {success_count} fake Rainbow JSON files")
 
-    return {
-        "total_requested": num_files,
-        "total_generated": success_count,
-        "output_dir": resolved_output_dir,
-        "output_files": output_files,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
+    return FakeRainbowFlowResult(
+        total_requested=num_files,
+        total_generated=success_count,
+        output_dir=resolved_output_dir,
+        output_files=output_files,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+    )

@@ -27,6 +27,8 @@ from genai_graph.core.kg_manager import get_kg_manager
 if TYPE_CHECKING:
     from genai_graph.core.graph_backend import GraphBackend
 
+DEFAULT_VIZ_LIMIT = 1000
+
 
 def get_available_kg_configs() -> list[str]:
     """Get list of available KG configurations from ekg.yaml.
@@ -210,7 +212,7 @@ def initialize_session_state() -> None:
     if "graph_html" not in sss:
         sss.graph_html = None
     if "viz_limit" not in sss:
-        sss.viz_limit = 500
+        sss.viz_limit = DEFAULT_VIZ_LIMIT
     if "selected_node_types" not in sss:
         sss.selected_node_types = []
     if "selected_node_name" not in sss:
@@ -312,7 +314,7 @@ def main() -> None:
         if "prev_rel_types" not in sss:
             sss.prev_rel_types = []
         if "prev_viz_limit" not in sss:
-            sss.prev_viz_limit = 500
+            sss.prev_viz_limit = DEFAULT_VIZ_LIMIT
         if "prev_excluded_node_types" not in sss:
             sss.prev_excluded_node_types = []
 
@@ -379,8 +381,8 @@ def main() -> None:
         limit = st.number_input(
             "Result Limit",
             min_value=10,
-            max_value=10000,
-            value=500,
+            max_value=5000,
+            value=DEFAULT_VIZ_LIMIT,
             step=50,
             help="Maximum number of relationships to display",
         )

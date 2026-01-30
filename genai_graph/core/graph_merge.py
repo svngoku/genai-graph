@@ -10,18 +10,161 @@ Uses Kuzu's DataFrame MERGE capability for efficient batch operations:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 from loguru import logger
+from pydantic import BaseModel, Field
 
 from genai_graph.core.graph_backend import GraphBackend
 from genai_graph.core.kg_manager import KgManager
 
 if TYPE_CHECKING:
+    from genai_graph.core.graph_core import RelationshipRecord
     from genai_graph.core.graph_schema import GraphNode
+
+
+# =============================================================================
+# Type definitions for node data structures
+# =============================================================================
+
+# A single node's properties as a dictionary
+NodeProperties = dict[str, Any]
+
+# A list of nodes of the same type
+NodeList = list[NodeProperties]
+
+
+class NodeDataCollection(BaseModel):
+    """Collection of nodes grouped by their type.
+
+    This provides a typed wrapper around the common pattern of
+    `dict[str, list[dict[str, Any]]]` used throughout the graph creation code.
+
+    Each key is a node type name (e.g., "Person", "Opportunity"),
+    and each value is a list of property dictionaries for nodes of that type.
+
+    Example:
+        ```python
+        nodes = NodeDataCollection()
+        nodes.add("Person", {"name": "Alice", "age": 30})
+        nodes.add("Person", {"name": "Bob", "age": 25})
+        nodes.add("Company", {"name": "Acme", "industry": "Tech"})
+
+        # Access all persons
+        for person in nodes.get("Person"):
+            print(person["name"])
+
+        # Get total count
+        print(nodes.total_count())  # 3
+        ```
+    """
+
+    data: dict[str, NodeList] = Field(default_factory=dict)
+
+    def add(self, node_type: str, properties: NodeProperties) -> None:
+        """Add a node with the given properties to the collection."""
+        if node_type not in self.data:
+            self.data[node_type] = []
+        self.data[node_type].append(properties)
+
+    def get(self, node_type: str) -> NodeList:
+        """Get all nodes of a given type (empty list if none)."""
+        return self.data.get(node_type, [])
+
+    def ensure_type(self, node_type: str) -> None:
+        """Ensure a node type exists in the collection (creates empty list if not)."""
+        if node_type not in self.data:
+            self.data[node_type] = []
+
+    def types(self) -> list[str]:
+        """Get all node types in this collection."""
+        return list(self.data.keys())
+
+    def items(self) -> list[tuple[str, NodeList]]:
+        """Iterate over (node_type, node_list) pairs."""
+        return list(self.data.items())
+
+    def total_count(self) -> int:
+        """Get total node count across all types."""
+        return sum(len(nodes) for nodes in self.data.values())
+
+    def __contains__(self, node_type: str) -> bool:
+        return node_type in self.data
+
+    def __getitem__(self, node_type: str) -> NodeList:
+        return self.data[node_type]
+
+    def __setitem__(self, node_type: str, nodes: NodeList) -> None:
+        self.data[node_type] = nodes
+
+    def __len__(self) -> int:
+        return len(self.data)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, list[dict[str, Any]]]) -> NodeDataCollection:
+        """Create a NodeDataCollection from a raw dictionary."""
+        return cls(data=data)
+
+    def to_dict(self) -> dict[str, list[dict[str, Any]]]:
+        """Convert to a raw dictionary (for backward compatibility)."""
+        return self.data
+
+
+# =============================================================================
+# Parquet Collector for capturing DataFrames during merge
+# =============================================================================
+
+
+class ParquetCollector(BaseModel):
+    """Collects DataFrames during merge operations for parquet export.
+
+    This allows capturing the exact data being merged into the graph,
+    avoiding the need to query it back out (which can hit Kuzu bugs).
+    """
+
+    nodes: dict[str, pd.DataFrame] = Field(default_factory=dict)
+    relationships: dict[str, pd.DataFrame] = Field(default_factory=dict)
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    def add_nodes(self, node_type: str, df: pd.DataFrame) -> None:
+        """Add or append node data for a node type."""
+        if node_type in self.nodes:
+            self.nodes[node_type] = pd.concat([self.nodes[node_type], df], ignore_index=True)
+        else:
+            self.nodes[node_type] = df.copy()
+
+    def add_relationships(self, rel_type: str, df: pd.DataFrame) -> None:
+        """Add or append relationship data for a relationship type."""
+        if rel_type in self.relationships:
+            self.relationships[rel_type] = pd.concat([self.relationships[rel_type], df], ignore_index=True)
+        else:
+            self.relationships[rel_type] = df.copy()
+
+    def get_node_count(self) -> int:
+        """Get total node count across all types."""
+        return sum(len(df) for df in self.nodes.values())
+
+    def get_relationship_count(self) -> int:
+        """Get total relationship count across all types."""
+        return sum(len(df) for df in self.relationships.values())
+
+
+# Global collector instance - set by KG creation flow
+_parquet_collector: ParquetCollector | None = None
+
+
+def set_parquet_collector(collector: ParquetCollector | None) -> None:
+    """Set the global parquet collector for the current KG creation."""
+    global _parquet_collector
+    _parquet_collector = collector
+
+
+def get_parquet_collector() -> ParquetCollector | None:
+    """Get the global parquet collector."""
+    return _parquet_collector
 
 
 # =============================================================================
@@ -29,8 +172,7 @@ if TYPE_CHECKING:
 # =============================================================================
 
 
-@dataclass
-class MergeStats:
+class MergeStats(BaseModel):
     """Statistics for a single node type merge operation."""
 
     created: int = 0
@@ -41,44 +183,51 @@ class MergeStats:
         return f"created={self.created}, matched={self.matched}, total={self.total}"
 
 
-@dataclass
-class NodeIdMapping:
+class NodeIdMapping(BaseModel):
     """Mapping from original node IDs to merged database IDs.
 
     For non-AUTO_ID nodes: maps (node_type, key_value) -> key_value
     For AUTO_ID nodes: maps (node_type, name) -> name (used for relationship matching)
     """
 
-    _mapping: dict[tuple[str, str], str] = field(default_factory=dict)
+    mapping_data: dict[str, str] = Field(default_factory=dict, alias="_mapping")
+
+    def _make_key(self, node_type: str, original_id: str) -> str:
+        """Create a string key from node_type and original_id."""
+        return f"{node_type}::{original_id}"
 
     def add(self, node_type: str, original_id: str, merged_id: str) -> None:
         """Add a mapping entry."""
-        self._mapping[(node_type, original_id)] = merged_id
+        self.mapping_data[self._make_key(node_type, original_id)] = merged_id
 
     def get(self, node_type: str, original_id: str, default: str | None = None) -> str:
         """Get the merged ID for an original ID."""
-        result = self._mapping.get((node_type, str(original_id)))
+        result = self.mapping_data.get(self._make_key(node_type, str(original_id)))
         if result is not None:
             return result
         return default if default is not None else str(original_id)
 
     def __contains__(self, key: tuple[str, str]) -> bool:
-        return key in self._mapping
+        return self._make_key(key[0], key[1]) in self.mapping_data
 
     def __len__(self) -> int:
-        return len(self._mapping)
+        return len(self.mapping_data)
 
     def items(self) -> list[tuple[tuple[str, str], str]]:
         """Return all mapping items."""
-        return list(self._mapping.items())
+        result = []
+        for k, v in self.mapping_data.items():
+            parts = k.split("::", 1)
+            if len(parts) == 2:
+                result.append(((parts[0], parts[1]), v))
+        return result
 
 
-@dataclass
-class NodeMergeResult:
+class NodeMergeResult(BaseModel):
     """Result of a batch node merge operation."""
 
-    stats: dict[str, MergeStats] = field(default_factory=dict)
-    id_mapping: NodeIdMapping = field(default_factory=NodeIdMapping)
+    stats: dict[str, MergeStats] = Field(default_factory=dict)
+    id_mapping: NodeIdMapping = Field(default_factory=NodeIdMapping)
 
     def get_stats(self, node_type: str) -> MergeStats:
         """Get stats for a node type, creating if needed."""
@@ -91,49 +240,79 @@ class NodeMergeResult:
         return sum(s.total for s in self.stats.values())
 
 
-@dataclass
-class NodeTypeConfig:
+class NodeTypeConfig(BaseModel):
     """Configuration for how a node type should be merged.
 
-    Encapsulates the primary key field for merge operations.
+    Encapsulates the primary key field and type hints for merge operations.
     """
 
     node_type: str
     primary_key_field: str = "id"
+    # Maps field name -> kuzu_type for top-level node fields (e.g., {"technical_stack": "STRING[]"})
+    field_types: dict[str, str] = Field(default_factory=dict)
+    # Maps struct field name -> dict of {sub_field_name: kuzu_type}
+    struct_field_types: dict[str, dict[str, str]] = Field(default_factory=dict)
 
     @classmethod
     def from_graph_node(cls, node: GraphNode) -> NodeTypeConfig:
         """Create config from a GraphNode definition."""
+        from genai_graph.core.schema_doc_generator import _get_kuzu_type_for_field
+
         node_type = node.node_class.__name__
         key_from = node.key_from
 
         if key_from == "AUTO_ID" or callable(key_from):
-            # AUTO_ID generates UUID, callable computes key - both stored in 'id' field
-            return cls(node_type=node_type, primary_key_field="id")
+            primary_key_field = "id"
         else:
-            # Use the specified field as primary key
-            return cls(node_type=node_type, primary_key_field=key_from)
+            primary_key_field = key_from
+
+        # Extract type information for top-level node fields
+        field_types: dict[str, str] = {}
+        if hasattr(node.node_class, "model_fields"):
+            for field_name, field_info in node.node_class.model_fields.items():
+                kuzu_type = _get_kuzu_type_for_field(field_info.annotation)
+                field_types[field_name] = kuzu_type
+
+        # Extract type information for embedded struct classes
+        struct_field_types: dict[str, dict[str, str]] = {}
+        for emb_class in getattr(node, "embedded_struct_classes", []) or []:
+            # Find the field name that holds this embedded class
+            from genai_graph.core.graph_schema import find_embedded_field_for_class
+
+            field_name = find_embedded_field_for_class(node.node_class, emb_class)
+            if field_name and hasattr(emb_class, "model_fields"):
+                emb_field_types: dict[str, str] = {}
+                for sub_field_name, sub_field_info in emb_class.model_fields.items():
+                    kuzu_type = _get_kuzu_type_for_field(sub_field_info.annotation)
+                    emb_field_types[sub_field_name] = kuzu_type
+                struct_field_types[field_name] = emb_field_types
+
+        return cls(
+            node_type=node_type,
+            primary_key_field=primary_key_field,
+            field_types=field_types,
+            struct_field_types=struct_field_types,
+        )
 
 
-@dataclass
-class NodeTypeRegistry:
+class NodeTypeRegistry(BaseModel):
     """Registry of node type configurations for merge operations."""
 
-    _configs: dict[str, NodeTypeConfig] = field(default_factory=dict)
+    configs: dict[str, NodeTypeConfig] = Field(default_factory=dict, alias="_configs")
 
     def register(self, config: NodeTypeConfig) -> None:
         """Register a node type configuration."""
-        self._configs[config.node_type] = config
+        self.configs[config.node_type] = config
 
     def get(self, node_type: str) -> NodeTypeConfig:
         """Get config for a node type, with sensible defaults."""
-        if node_type in self._configs:
-            return self._configs[node_type]
+        if node_type in self.configs:
+            return self.configs[node_type]
         # Return default config if not registered
         return NodeTypeConfig(node_type=node_type)
 
     def __contains__(self, node_type: str) -> bool:
-        return node_type in self._configs
+        return node_type in self.configs
 
     @classmethod
     def from_graph_nodes(cls, nodes: list[GraphNode]) -> NodeTypeRegistry:
@@ -222,20 +401,64 @@ def _format_value_for_cypher(value: Any) -> str:
 def _prepare_node_dataframe(
     node_list: list[dict[str, Any]],
     key_field: str,
+    field_types: dict[str, str] | None = None,
+    struct_field_types: dict[str, dict[str, str]] | None = None,
 ) -> pd.DataFrame:
     """Prepare a DataFrame from a list of node dictionaries for batch merge.
 
     Handles data cleaning:
     - Removes excluded metadata fields
     - Adds timestamps if not present
+    - Converts TypedNull markers to appropriate values based on expected type
+    - Uses float('nan') for numeric fields and keeps None/empty for strings
 
     Args:
         node_list: List of node data dictionaries
         key_field: Primary key field name
+        field_types: Optional mapping of top-level field names to their Kuzu types
+                    e.g., {"technical_stack": "STRING[]", "margin": "DOUBLE"}
+        struct_field_types: Optional mapping of struct field names to their sub-field types
+                           e.g., {"financials": {"tcv": "DOUBLE", "name": "STRING"}}
 
     Returns:
         DataFrame ready for LOAD FROM MERGE operation
     """
+    from genai_graph.core.graph_core import TypedNull
+
+    field_types = field_types or {}
+    struct_field_types = struct_field_types or {}
+
+    def clean_value(value: Any, field_name: str | None = None, expected_type: str | None = None) -> Any:
+        """Recursively clean values for DataFrame/Kuzu compatibility.
+
+        Uses type hints when available to determine appropriate null representation:
+        - DOUBLE/INT64: Use float('nan') for None values
+        - STRING[]: Use empty list [] for None values
+        - STRING: Keep None as-is (Kuzu handles this correctly)
+        """
+        if isinstance(value, TypedNull):
+            # Use the TypedNull's type info if available
+            type_name = getattr(value, "type_name", expected_type or "STRING")
+            if type_name in ("DOUBLE", "INT64"):
+                return float("nan")
+            elif type_name.endswith("[]"):
+                return []  # Array types should be empty list, not None
+            return None  # String/other types
+        elif value is None:
+            # Use expected_type to determine null representation
+            if expected_type in ("DOUBLE", "INT64"):
+                return float("nan")
+            elif expected_type and expected_type.endswith("[]"):
+                return []  # Array types: None → empty list
+            return None  # String/other types stay as None
+        elif isinstance(value, dict):
+            # Look up struct field types if this is a known struct field
+            sub_field_types = struct_field_types.get(field_name, {}) if field_name else {}
+            return {k: clean_value(v, field_name=k, expected_type=sub_field_types.get(k)) for k, v in value.items()}
+        elif isinstance(value, list):
+            return [clean_value(item, field_name=field_name, expected_type=expected_type) for item in value]
+        return value
+
     if not node_list:
         return pd.DataFrame()
 
@@ -251,8 +474,9 @@ def _prepare_node_dataframe(
         for key, value in node_data.items():
             if key in excluded_metadata_fields:
                 continue
-            # Keep the value as-is for DataFrame - Kuzu handles Python types directly
-            cleaned[key] = value
+            # Clean values using type hints - check top-level field_types first
+            expected_type = field_types.get(key)
+            cleaned[key] = clean_value(value, field_name=key, expected_type=expected_type)
 
         # Ensure timestamps are present
         if "_created_at" not in cleaned:
@@ -291,7 +515,7 @@ def _get_columns_for_set_clause(
 
 def merge_nodes_batch(
     conn: GraphBackend,
-    nodes_dict: dict[str, list[dict[str, Any]]],
+    nodes: NodeDataCollection,
     registry: NodeTypeRegistry,
     context: KgManager | None = None,
 ) -> NodeMergeResult:
@@ -302,7 +526,7 @@ def merge_nodes_batch(
 
     Args:
         conn: Graph database connection (kuzu.Connection or GraphBackend)
-        nodes_dict: Mapping of node_type to list of node data dicts
+        nodes: Node data collection
         registry: Node type configuration registry
         context: Optional KgManager for collecting warnings
 
@@ -311,7 +535,7 @@ def merge_nodes_batch(
     """
     result = NodeMergeResult()
 
-    for node_type, node_list in nodes_dict.items():
+    for node_type, node_list in nodes.items():
         if not node_list:
             continue
 
@@ -322,8 +546,13 @@ def merge_nodes_batch(
 
         type_stats = MergeStats(total=len(node_list))
 
-        # Prepare DataFrame
-        df = _prepare_node_dataframe(node_list, primary_key_field)
+        # Prepare DataFrame with type hints for both top-level and struct fields
+        df = _prepare_node_dataframe(
+            node_list,
+            primary_key_field,
+            field_types=config.field_types,
+            struct_field_types=config.struct_field_types,
+        )
 
         if df.empty:
             result.stats[node_type] = type_stats
@@ -355,6 +584,11 @@ def merge_nodes_batch(
             # debug(merge_query)
             # debug(df)
             kuzu_conn.execute(merge_query)
+
+            # Collect DataFrame for parquet export if collector is active
+            collector = get_parquet_collector()
+            if collector is not None:
+                collector.add_nodes(node_type, df)
 
             # Stats - we can't easily distinguish created vs matched in batch mode
             type_stats.created = len(df)  # Approximation
@@ -388,7 +622,7 @@ def merge_nodes_batch(
 
 def merge_relationships_batch(
     conn: GraphBackend,
-    relationships: list[Any],
+    relationships: list[RelationshipRecord],
     registry: NodeTypeRegistry,
     id_mapping: NodeIdMapping,
 ) -> int:
@@ -413,19 +647,12 @@ def merge_relationships_batch(
     rel_groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
 
     for rel in relationships:
-        # Handle both RelationshipRecord and tuple formats
-        if hasattr(rel, "from_type"):
-            from_type = rel.from_type
-            from_id = rel.from_id
-            to_type = rel.to_type
-            to_id = rel.to_id
-            rel_name = rel.name
-            properties = rel.properties or {}
-        elif isinstance(rel, tuple) and len(rel) >= 5:
-            from_type, from_id, to_type, to_id, rel_name = rel[:5]
-            properties = rel[5] if len(rel) > 5 else {}
-        else:
-            continue
+        from_type = rel.from_type
+        from_id = rel.from_id
+        to_type = rel.to_type
+        to_id = rel.to_id
+        rel_name = rel.name
+        properties = rel.properties or {}
 
         # Translate IDs using mapping
         merged_from_id = id_mapping.get(from_type, str(from_id))
@@ -497,6 +724,17 @@ def merge_relationships_batch(
         try:
             kuzu_conn.execute(create_rel_query)
             total_created += len(df)
+
+            # Collect DataFrame for parquet export if collector is active
+            collector = get_parquet_collector()
+            if collector is not None:
+                # Add metadata columns for relationship type info
+                export_df = df.copy()
+                export_df["_from_type"] = from_type
+                export_df["_to_type"] = to_type
+                export_df["_from_key_field"] = from_key_field
+                export_df["_to_key_field"] = to_key_field
+                collector.add_relationships(rel_name, export_df)
 
         except Exception as e:
             logger.error(f"Error in batch relationship creation for {rel_name}: {e}")
