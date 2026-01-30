@@ -22,15 +22,6 @@ kg_configs:
         recursive: true
         file_embedding:
           metadata: ["Opportunity.opportunity_id","Customer.name"]
-  # test1:
-  #   subgraphs:
-  #     - factory: genai_graph.ekg.schema.rainbow_review:ReviewedOpportunitySubgraph
-  #       initial_include:  
-  #     - factory: genai_graph.ekg.schema.architecture_doc:ArchitectureDocumentSubgraph
-  #       initial_load: [add-fake-cnes-1]
-  #   agent:
-  #     mcp_servers:
-  #       - filesystem   
 
   db_only:  
     subgraphs:
@@ -51,18 +42,6 @@ kg_configs:
         exclude: 
           - "fake/*"
         recursive: true
-
-  simple_with_db_v2: 
-    import:
-      - db_only  
-    subgraphs:
-      - factory: "${schemas_root}.rainbow_review:ReviewedOpportunitySubgraph"
-        data_root: ${paths.rainbow_json}
-        include: 
-          - "*_CNES_TMA_VENUS_VIP_PEPS_THEIA_MUSCATE*"
-        exclude: 
-          - "fake/*"
-        recursive: true 
 
   test1_with_db:
     import:
@@ -85,3 +64,9 @@ kg_configs:
         include: 
           - "*.json"
         recursive: true
+  
+  simple_neo4j:
+     subgraphs:
+      - factory: genai_graph.ekg.schema.stratnav:StratnavSubgraph 
+        #neo4j_export_file: ${paths.stratnav_db}/26-01-2018/sn-v3-q4-2026-01-28.jsonl  # full
+        neo4j_export_file: ${paths.stratnav_db}/subset/sn-subset.jsonl

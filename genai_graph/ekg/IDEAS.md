@@ -1,84 +1,22 @@
 # New
 
-I want to improb how different graphs (or subgraphs) are merged. 
-Today,  we have this kind of configuration in ekg.yaml: 
+We want to build a subgraph from a graph exported from neo4j as JSONL.
+We'll use the same fabrik pattern than for the others (from BAML files, from tables) to be able to combine several subgraphs, provide display, text2cypher, etc. 
+I've created an expected configuration for such subgraph here : /home/tcl/prj/genai-graph/config/ekg.yaml (key 'simple_neo4j')
+I've started to create a factory here: genai_graph/ekg/schema/stratnav_db.py . It's the file you need to complete (and possibly correct...), alonside with a new module for class Neo4jSubgraphFactory.
+Have a look at code of other factories and schemas. 
 
-```simple_with_db:
-    subgraphs:
-      - factory: ${schemas_root}.rainbow_review:ReviewedOpportunitySubgraph
-        data_root: ${paths.rainbow_json}
-        include: 
-          - "*_CNES_TMA_VENUS_VIP_PEPS_THEIA_MUSCATE*"
-        exclude: 
-          - "fake/*"
-        recursive: true
-
-      - factory: ${schemas_root}.crm_export:CrmExtractSubGraph
-        db_dsn: sqlite:///${paths.data_root}/ekg/crm_extract.db
-        files:
-          - ${paths.ekg_data}/crm_export/report1750429630460_SHORTEN.xlsx
-        pd_read_parameters: {}         
-        pull: 
-          merge_on: Opportunity.opportunity_id
-          db_field: "Atos Opportunity ID" ```
-
-The "pull" mode was there to avoid loading too many nodes from a database. 
-But now we have a fast merge from dataframe mechanism (LOAD FROM df MERGE), that makes such mechanism less usefull, 
-and open the dorr to simplification. 
-We could replace above configuration with this: 
-
-```  db_only:   # This already work 
-    subgraphs:
-      - factory: ${schemas_root}.crm_export:CrmExtractSubGraph
-        db_dsn: sqlite:///${paths.data_root}/ekg/crm_extract.db
-        files:
-          - ${paths.ekg_data}/crm_export/report1750429630460_SHORTEN.xlsx
-        pd_read_parameters: {} 
-
-simple_with_db_v2: 
-    import:  # new !!
-        - db_only  
-    subgraphs:
-      - factory: ${schemas_root}.rainbow_review:ReviewedOpportunitySubgraph
-        data_root: ${paths.rainbow_json}
-        include: 
-          - "*_CNES_TMA_VENUS_VIP_PEPS_THEIA_MUSCATE*"
-        exclude: 
-          - "fake/*"
-        recursive: true
-``` 
-Your task :
-1/ Implement this new "import" mechanism. 
-    To do so, and make import efficient : 
-       - you'll cache the imported KG in a Parquet file exported from the data frame after its "LOAD FROM df MERGE" 
-       - This dataframe will be stored in a directory managed through genai_graph/core/kg_exports.py, along with a manifest file (see other usage of manifest.json in the projet to increase reusability)
-       - That parquet file can be created for any KG, wether it is intended to be imported of not.  No need to complexify now. 
-       - use the hashcode of the sources of the KG (field "files") stored in the Manifest to avoid recalculation if that does not too much complexity.  Otherwise don't.
-       - When the KG is imported, the parquet file is loaded as a dataframe, and the LOAD FROM df MERGE start there.  
-       - If the parquet file does not exists,  it is created  with the equivalent of the 'create' CLI command (that call the prefect task create_kg_flow )
-2/ once the import done
-    - build the other subgraphs defined in "subgraphs" section through their factory
-    - remove any reference to the "pull" mode
-    - Keys "merge_on" and "db_field" should be removed. Information provided in JsonFileBackedSubgraphFactory should be enough. Complete if needed. 
-
-3/ test with : cli kg create --kg simple_with_db_v2  and with various situations (db_only exists or not, ...)
-
-Don't try to maintain compatibility with current implementation. Code simplicity, lisibility and maintenability is key. KISS. 
-Defer some feature (such as hash-based caching) if they increase complexity. 
-Reuse whenever possible, and possibly refactor/
+A part of the Neo4J processing has already be done in the form of CLI commands : /home/tcl/prj/genai-graph/genai_graph/neo4j_import .
+ Main difference is that the CLI command generated directly a Kuzu database with excatly the same schema, whereas we want to transform it through stratnav_db.py .  We want also to me more precise regarding the types of fields and properties, as we provide it.
+The most important piece to look at is the  analyze a Neo4j JSONL to get a full picture of the nodes and relationships. 
+These CLI commmands might drop in the future, so you don't need to share code. 
+Take into account that the JSONL file can be quite large (> 20000 lines). 
+Your tasks is to develop the missing parts.  Test first in standlone with '__main__',  then with the cli command 'cli kg create --kg simple_neo4j"
+Keep Prefect for hendling tasks. Use kg_manager to deal with generated outcome (schema, ...)
 
 
 
-
-Allow user to define a PRIMARY KEY in the generated Kuzu table.
-
-Update class GraphNode with a mandatory argument 'key'. The value can any field, such as "opportunity_id" or "name" (that can me generated). It can also be "SERIAL", so in that case Kuzu default key is used. 
-Generate "CREATE NODE" statement accordingly (ie with PRIMARY KEY ( <...> )) 
-Update files in genai_graph/ekg/schema 
-You can test with 
-export KG_CONFIG="simple"; cli kg delete -f ; cli kg create ; 
-
-
+ 
 
 
 

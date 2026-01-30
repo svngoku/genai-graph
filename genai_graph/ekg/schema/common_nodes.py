@@ -29,7 +29,7 @@ def get_common_nodes() -> list[GraphNode]:
         GraphNode(
             node_class=Customer,
             name_from="name",
-            key_from="AUTO_ID",  # Use auto-generated SERIAL id
+            key_from="name",  # DOTO : replace with iris_code when available
             description="Customer organization details",
             index_fields=["name"],
         ),

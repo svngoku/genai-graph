@@ -60,7 +60,7 @@ class ReviewedOpportunitySubgraph(JsonFileBackedSubgraphFactory, BaseModel):
             GraphNode(
                 node_class=RiskAnalysis,
                 name_from=lambda data, _: data.get("risk_category") or data.get("p_risk_description_") or "other_risk",
-                key_from="AUTO_ID",  # Use auto-generated SERIAL id
+                key_from="AUTO_ID",
                 description="Risk assessment and mitigation details",
                 index_fields=["risk_description"],
             ),

@@ -26,6 +26,7 @@ from genai_graph.core.graph_documents import DocumentStats, add_documents_to_gra
 from genai_graph.core.kg_manager import get_kg_manager
 from genai_graph.core.subgraph_factories import (
     JsonFileBackedSubgraphFactory,
+    Neo4jSubgraphFactory,
     SubgraphFactory,
     TableBackedSubgraphFactory,
 )
@@ -227,6 +228,20 @@ def ingest_subgraphs_task(
                 )
             except Exception as exc:  # pragma: no cover - defensive
                 msg = f"Failed to get keys from table for {factory_path}: {exc}"
+                logger.warning(msg)
+                manager.add_warning(msg)
+                keys = []
+
+        # Handle Neo4jSubgraphFactory - get all keys from analyzed JSONL
+        if not keys and isinstance(subgraph_impl, Neo4jSubgraphFactory):
+            try:
+                keys = subgraph_impl.get_all_keys()
+                logger_pf.debug(
+                    "Retrieved %d keys from Neo4j JSONL factory",
+                    len(keys),
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                msg = f"Failed to get keys from Neo4j factory {factory_path}: {exc}"
                 logger.warning(msg)
                 manager.add_warning(msg)
                 keys = []

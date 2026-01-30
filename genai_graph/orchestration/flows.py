@@ -159,11 +159,13 @@ def create_kg_flow(
     # Clear subgraph factory caches to ensure fresh file/data discovery
     from genai_graph.core.subgraph_factories import (
         JsonFileBackedSubgraphFactory,
+        Neo4jSubgraphFactory,
         TableBackedSubgraphFactory,
     )
 
     JsonFileBackedSubgraphFactory.clear_cache()
     TableBackedSubgraphFactory.clear_cache()
+    Neo4jSubgraphFactory.clear_cache()
     logger.info("Cleared subgraph factory caches for fresh discovery")
 
     if delete_first:
@@ -201,6 +203,7 @@ def create_kg_flow(
             # triggered factory initialization that pollutes the cache for main subgraphs
             JsonFileBackedSubgraphFactory.clear_cache()
             TableBackedSubgraphFactory.clear_cache()
+            Neo4jSubgraphFactory.clear_cache()
             logger.info("Re-cleared subgraph factory caches after import processing")
 
         bundles = load_factories_task.submit(kg_cfg).result()
