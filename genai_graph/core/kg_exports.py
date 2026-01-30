@@ -38,11 +38,10 @@ def export_html(
     from genai_graph.core.graph_html import generate_html
 
     if output_dir is None:
-        # Use KgManager for organized output
+        # Use KgManager for organized output with the specified config
         manager = get_kg_manager()
-        manager.activate()
-        destination = manager.html_path
-        manager.ensure_directories()
+        destination = manager.get_html_path_for(config_name)
+        manager.ensure_directories_for(config_name)
     else:
         # Custom output directory
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -67,8 +66,7 @@ def export_schema(config_name: str) -> UPath:
     from genai_graph.core.schema_doc_generator import generate_schema_description
 
     manager = get_kg_manager()
-    manager.activate()
-    manager.ensure_directories()
+    manager.ensure_directories_for(config_name)
 
     # Get all registered subgraphs and generate schema description
     registry = GraphRegistry.get_instance()
@@ -76,8 +74,8 @@ def export_schema(config_name: str) -> UPath:
 
     schema_content = generate_schema_description(selected_subgraphs, print_enums=True)
 
-    # Write schema to file
-    destination = manager.schema_path
+    # Write schema to file using the specified config
+    destination = manager.get_schema_path_for(config_name)
     destination.write_text(schema_content, encoding="utf-8")
 
     logger.debug("Exported KG schema to '%s'", destination)
@@ -100,8 +98,7 @@ def export_info(config_name: str, backend: GraphBackend) -> UPath:
     from genai_graph.core.graph_schema import find_embedded_field_for_class
 
     manager = get_kg_manager()
-    manager.activate()
-    manager.ensure_directories()
+    manager.ensure_directories_for(config_name)
 
     # Build registry and get all subgraphs
     registry = GraphRegistry.get_instance()
@@ -318,8 +315,8 @@ def export_info(config_name: str, backend: GraphBackend) -> UPath:
             lines.append("*No embedded fields configured*")
         lines.append("")
 
-    # Write info to file
-    destination = manager.info_path
+    # Write info to file using the specified config
+    destination = manager.get_info_path_for(config_name)
     destination.write_text("\n".join(lines), encoding="utf-8")
 
     logger.debug("Exported KG info to '%s'", destination)

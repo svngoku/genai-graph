@@ -63,7 +63,7 @@ def create_kg_flow(
 
     if delete_first:
         logger.info("Deleting existing backend before KG creation")
-        delete_backend_task.submit("default", config_name)
+        delete_backend_task.submit("default", config_name).result()
 
     cfg_name, kg_cfg = resolve_config_task.submit(config_name).result()
 

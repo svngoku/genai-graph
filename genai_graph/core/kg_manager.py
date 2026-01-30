@@ -170,7 +170,52 @@ class KgManager(BaseModel):
         return self.get_profile_config().model_dump()
 
     # ------------------------------------------------------------------
-    # Filesystem layout helpers
+    # Filesystem layout helpers - for any profile
+    # ------------------------------------------------------------------
+
+    def get_base_path_for(self, profile: str) -> UPath:
+        """Return the base path for any given KG profile.
+
+        Args:
+            profile: KG configuration profile name
+
+        Returns:
+            Root directory for the specified KG profile
+        """
+        cfg = global_config()
+        data_root = cfg.get_dir_path("paths.ekg_data")
+        return data_root / "kg_outputs" / profile
+
+    def get_db_path_for(self, profile: str) -> UPath:
+        """Return the database path for any given KG profile."""
+        return self.get_base_path_for(profile) / f"{profile}-{self.tag}.db"
+
+    def get_html_path_for(self, profile: str) -> UPath:
+        """Return the HTML export path for any given KG profile."""
+        return self.get_base_path_for(profile) / f"{profile}-{self.tag}.html"
+
+    def get_schema_path_for(self, profile: str) -> UPath:
+        """Return the schema file path for any given KG profile."""
+        return self.get_base_path_for(profile) / f"{profile}-{self.tag}-schema.txt"
+
+    def get_info_path_for(self, profile: str) -> UPath:
+        """Return the info file path for any given KG profile."""
+        return self.get_base_path_for(profile) / f"{profile}-{self.tag}-info.md"
+
+    def get_outcomes_file_for(self, profile: str) -> UPath:
+        """Return the outcomes log file path for any given KG profile."""
+        return self.get_base_path_for(profile) / f"{profile}-{self.tag}-outcomes.jsonl"
+
+    def get_warnings_file_for(self, profile: str) -> UPath:
+        """Return the warnings log file path for any given KG profile."""
+        return self.get_base_path_for(profile) / f"{profile}-{self.tag}-warnings.log"
+
+    def ensure_directories_for(self, profile: str) -> None:
+        """Create base directory for any given profile if it doesn't exist."""
+        self.get_base_path_for(profile).mkdir(parents=True, exist_ok=True)
+
+    # ------------------------------------------------------------------
+    # Filesystem layout helpers - for current profile (backward compatible)
     # ------------------------------------------------------------------
 
     @property

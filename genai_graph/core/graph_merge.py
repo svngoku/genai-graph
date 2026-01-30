@@ -352,6 +352,8 @@ def merge_nodes_batch(
                 ON MATCH SET {on_match_set}
             """
 
+            # debug(merge_query)
+            # debug(df)
             kuzu_conn.execute(merge_query)
 
             # Stats - we can't easily distinguish created vs matched in batch mode

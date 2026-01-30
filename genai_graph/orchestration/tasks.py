@@ -48,15 +48,32 @@ def _get_prefect_logger_or_default() -> Any:
 
 @task
 def resolve_config_task(config_name: str | None) -> tuple[str, dict[str, Any]]:
-    """Resolve KG profile and return its configuration dictionary via KgManager."""
+    """Resolve KG profile and return its configuration dictionary via KgManager.
+
+    Args:
+        config_name: Optional KG configuration name. If None, uses manager's default profile.
+
+    Returns:
+        Tuple of (effective_config_name, config_dict)
+    """
 
     logger_pf = _get_prefect_logger_or_default()
 
     from genai_graph.core.kg_manager import get_kg_manager
 
     manager = get_kg_manager()
-    effective, _ = manager.activate()
-    kg_cfg = manager.get_profile_dict()
+
+    # Use the explicitly passed config_name if provided, otherwise fall back to manager's default
+    effective = config_name if config_name else manager.profile
+
+    # Validate that the config exists
+    if effective not in manager.ekg_config.kg_configs:
+        raise ValueError(
+            f"KG config '{effective}' not found. Available: {sorted(manager.ekg_config.kg_configs.keys())}"
+        )
+
+    # Get the config dict for the specified profile
+    kg_cfg = manager.ekg_config.kg_configs[effective].model_dump()
 
     logger_pf.debug(
         "Loaded KG config '%s', subgraphs=%d.",

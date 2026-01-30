@@ -521,7 +521,7 @@ def get_backend_storage_path_from_config(config_key: str = "default", kg_config_
 
     This helper reads the same configuration used by create_backend_from_config
     and returns the resolved ``path`` as a Path instance. If kg_config_name is provided,
-    uses the KG outcome manager to determine the path.
+    constructs the path using the same logic as create_backend_from_config.
 
     Args:
         config_key: Key in the ``graph_db`` config section.
@@ -532,13 +532,6 @@ def get_backend_storage_path_from_config(config_key: str = "default", kg_config_
     """
     from genai_tk.utils.config_mngr import global_config
 
-    # Use KgManager if kg_config_name is provided
-    if kg_config_name:
-        from genai_graph.core.kg_manager import get_kg_manager
-
-        manager = get_kg_manager()
-        return manager.db_path
-
     config = global_config()
     graph_db_config = config.get("graph_db", {})
 
@@ -546,6 +539,19 @@ def get_backend_storage_path_from_config(config_key: str = "default", kg_config_
         raise ValueError(f"Graph database config '{config_key}' not found. Available: {list(graph_db_config.keys())}")
 
     db_config = graph_db_config[config_key]
+    backend_type = db_config.get("type", "")
+
+    # Use KgManager-derived path if kg_config_name is provided for Kuzu backend
+    if kg_config_name and backend_type.lower() == "kuzu":
+        from genai_graph.core.kg_manager import get_kg_manager
+
+        manager = get_kg_manager()
+        # Construct the path for the specified kg_config without relying on manager.db_path
+        # (which may be tied to a different profile)
+        data_root = config.get_dir_path("paths.ekg_data")
+        kg_base_path = UPath(str(data_root)) / "kg_outputs" / kg_config_name
+        return kg_base_path / f"{kg_config_name}-{manager.tag}.db"
+
     connection_path = db_config.get("path")
     if not connection_path:
         raise ValueError(f"Missing 'path' in graph_db config for '{config_key}'")
@@ -560,6 +566,8 @@ def delete_backend_storage_from_config(config_key: str = "default", kg_config_na
     entire knowledge graph database in a backend-agnostic way. If kg_config_name is
     provided, uses the KG outcome manager to determine the path.
 
+    For Kuzu databases, also removes associated WAL (write-ahead log) files.
+
     Args:
         config_key: Key in the ``graph_db`` config section.
         kg_config_name: Optional KG configuration name for organized output folders
@@ -569,9 +577,17 @@ def delete_backend_storage_from_config(config_key: str = "default", kg_config_na
     db_path = get_backend_storage_path_from_config(config_key, kg_config_name)
 
     if not db_path.exists():
+        # Also check for orphaned WAL files even if main db doesn't exist
+        wal_path = UPath(str(db_path) + ".wal")
+        if wal_path.exists():
+            wal_path.unlink()
         return
 
     if db_path.is_file():
         db_path.unlink()
+        # Also remove WAL file if it exists (Kuzu write-ahead log)
+        wal_path = UPath(str(db_path) + ".wal")
+        if wal_path.exists():
+            wal_path.unlink()
     else:
         shutil.rmtree(str(db_path))

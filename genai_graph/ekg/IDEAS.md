@@ -1,3 +1,5 @@
+I want to merge  a graph with other already created 
+
 
 Allow user to define a PRIMARY KEY in the generated Kuzu table.
 
