@@ -14,15 +14,14 @@ from upath import UPath
 from genai_graph.core.graph_documents import DocumentStats
 from genai_graph.core.graph_schema import GraphSchema
 from genai_graph.core.kg_exports import HtmlExportResult
-from genai_graph.core.subgraph_factories import SubgraphFactory
+from genai_graph.core.subgraph_factories import GraphFactory
 
 
-class SubgraphBundle(BaseModel):
-    """In-memory representation of a configured subgraph during KG creation."""
+class GraphBundle(BaseModel):
+    """In-memory representation of a configured graph during KG creation."""
 
     config: dict[str, Any]
-    factory: SubgraphFactory
-    # Schema type is kept as Any to avoid circular imports in type checkers
+    factory: GraphFactory
     schema_obj: GraphSchema | None = None
 
 

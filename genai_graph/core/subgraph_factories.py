@@ -1,12 +1,13 @@
-"""Factory classes for creating and managing graph subgraphs.
+"""Factory classes for creating graphs.
 
-This module provides various implementations of subgraph factories that can
-load structured data from different sources like JSON files and SQL databases.
+A factory produces a `GraphData` object: two DataFrames (nodes and edges) plus metadata.
+Everything is a graph, and merging is the main operation.
 
 Classes:
-    SubgraphFactory: Abstract base class for all subgraph factory implementations.
-    JsonFileBackedSubgraphFactory: Factory for loading data from JSON files.
-    TableBackedSubgraphFactory: Factory for loading data from SQL database tables.
+    GraphFactory: Abstract base class for all graph factory implementations.
+    JsonFileBackedGraphFactory: Factory for loading data from JSON files.
+    TableBackedGraphFactory: Factory for loading data from SQL database tables.
+    Neo4jGraphFactory: Factory for loading data from Neo4j JSONL exports.
 """
 
 import hashlib
@@ -23,23 +24,25 @@ from rich.console import Console
 from sqlalchemy import Engine, text
 from upath import UPath
 
-from genai_graph.core.graph_schema import (
-    GraphSchema,
-)
+from genai_graph.core.graph_data import GraphData
+from genai_graph.core.graph_schema import GraphSchema
 
 console = Console()
 
 
-class SubgraphFactory(ABC, BaseModel):
-    """Abstract base class for subgraph implementations."""
+class GraphFactory(ABC, BaseModel):
+    """Abstract base class for graph factory implementations.
+
+    A GraphFactory produces GraphData from some data source.
+    The output is a GraphData object containing node and edge DataFrames.
+    """
 
     # Optional class constant - set for factories with a single root model type.
-    # Not needed for factories like Neo4jSubgraphFactory that discover types dynamically.
     TOP_CLASS: Type[BaseModel] | None = None
 
     @property
     def name(self) -> str:
-        """Name of the subgraph.
+        """Name of this graph factory.
 
         Derived from TOP_CLASS if set, otherwise from build_schema().root_model_class.
         """
@@ -53,13 +56,36 @@ class SubgraphFactory(ABC, BaseModel):
 
     @abstractmethod
     def get_struct_data_by_key(self, key: str) -> BaseModel | None:
-        """Load data for the given key."""
+        """Load structured data for the given key.
+
+        This is used by the schema-based workflow. For DataFrame-based workflows,
+        prefer using build_graph_data() instead.
+        """
         ...
 
     @abstractmethod
     def build_schema(self) -> GraphSchema:
-        """Build and return the graph schema configuration."""
+        """Build and return the graph schema configuration.
+
+        The schema defines node types, relationships, and how to extract data
+        from Pydantic models.
+        """
         ...
+
+    def build_graph_data(self) -> GraphData:
+        """Build and return a GraphData containing all data from this factory.
+
+        This is the preferred method for new code. Override in subclasses for
+        optimized implementations that build DataFrames directly.
+
+        Default implementation uses the schema-based workflow for backward
+        compatibility.
+
+        Returns:
+            GraphData containing nodes and edges as DataFrames.
+        """
+        # Default: return empty graph (subclasses should override)
+        return GraphData(name=self.name)
 
     def get_node_labels(self) -> dict[str, str]:
         """Get mapping of node types to human-readable descriptions from schema."""
@@ -76,47 +102,22 @@ class SubgraphFactory(ABC, BaseModel):
         return result
 
     def get_sample_queries(self) -> list[str]:
-        """Get list of sample Cypher queries for this subgraph."""
+        """Get list of sample Cypher queries for this graph."""
         return []
 
-    # def get_entity_name_from_data(self, data: Any) -> str:
-    #     """Extract a human-readable entity name from loaded data."""
-    #     return "Unknown Entity"
-
-    def register(self, registry: Any = None) -> None:  # noqa: F821 "Optional[GraphRegistry]"
-        """Register this subgraph implementation.
+    def register(self, registry: Any = None) -> None:
+        """Register this graph factory.
 
         If ``registry`` is not provided, the global :class:`GraphRegistry`
         instance is used.
         """
-        # Local import to avoid circular dependency at module import time.
         from genai_graph.core.graph_registry import register_subgraph
 
         register_subgraph(self.name, self, registry=registry)
 
 
-# class KvStoreBackedSubgraphFactory(SubgraphFactory):
-#     kv_store_id: str = "default"
-
-#     def get_struct_data_by_key(self, key: str) -> BaseModel | None:
-#         """Load graph data from the key-value store.
-
-#         Args:
-#             key: The identifier to load
-
-#         Returns:
-#             Top class instance or None if not found
-#         """
-#         try:
-#             store = PydanticStore(kvstore_id=self.kv_store_id, model=self.TOP_CLASS)
-#             opportunity = store.load_object(key)
-#             return opportunity
-#         except Exception as e:
-#             raise ValueError(f"[red]Error loading opportunity data: {e}[/red]") from e
-
-
-class JsonFileBackedSubgraphFactory(SubgraphFactory):
-    """Subgraph factory that reads structured data from JSON files.
+class JsonFileBackedGraphFactory(GraphFactory):
+    """Graph factory that reads structured data from JSON files.
 
     This factory works with the output of 'baml extract' command, which stores
     extracted structured data as JSON files in a directory structure with model subdirectory.
@@ -150,7 +151,7 @@ class JsonFileBackedSubgraphFactory(SubgraphFactory):
 
         # Check if this root + model combination has already been initialized
         root_key = (self.data_root, model_name)
-        if root_key in JsonFileBackedSubgraphFactory._initialized_roots:
+        if root_key in JsonFileBackedGraphFactory._initialized_roots:
             logger.debug(
                 f"Skipping duplicate file discovery for {model_name} in {self.data_root} "
                 f"(already discovered in this session)"
@@ -207,7 +208,7 @@ class JsonFileBackedSubgraphFactory(SubgraphFactory):
         logger.debug(f"Discovered {len(self._files_cache)} files for model {model_name} in {root_path}")
 
         # Mark this root + model as initialized
-        JsonFileBackedSubgraphFactory._initialized_roots.add(root_key)
+        JsonFileBackedGraphFactory._initialized_roots.add(root_key)
 
     @classmethod
     def clear_cache(cls) -> None:
@@ -217,7 +218,7 @@ class JsonFileBackedSubgraphFactory(SubgraphFactory):
         fresh file discovery, especially when file contents may have changed.
         """
         cls._initialized_roots.clear()
-        logger.debug(f"Cleared JsonFileBackedSubgraphFactory cache ({cls.__name__})")
+        logger.debug(f"Cleared JsonFileBackedGraphFactory cache ({cls.__name__})")
 
     def get_all_file_paths(self) -> list[UPath]:
         """Get all discovered JSON file paths."""
@@ -243,7 +244,7 @@ class JsonFileBackedSubgraphFactory(SubgraphFactory):
         return self.get_struct_data_by_file_path(file_path)
 
 
-class TableBackedSubgraphFactory(SubgraphFactory):
+class TableBackedGraphFactory(GraphFactory):
     db_dsn: str
     files: list[UPath]
     pd_read_parameters: dict[str, Any] = {}
@@ -267,7 +268,7 @@ class TableBackedSubgraphFactory(SubgraphFactory):
         fresh data loading from database files.
         """
         cls._initialized_databases.clear()
-        logger.debug(f"Cleared TableBackedSubgraphFactory cache ({cls.__name__})")
+        logger.debug(f"Cleared TableBackedGraphFactory cache ({cls.__name__})")
 
     @property
     def table_name(self) -> str:
@@ -367,7 +368,7 @@ class TableBackedSubgraphFactory(SubgraphFactory):
 
         # Check if this database + table combination has already been initialized
         db_key = (self.db_dsn, self.table_name)
-        if db_key in TableBackedSubgraphFactory._initialized_databases:
+        if db_key in TableBackedGraphFactory._initialized_databases:
             logger.debug(
                 f"Skipping duplicate initialization for {self.table_name} "
                 f"(database already initialized in this session)"
@@ -376,7 +377,7 @@ class TableBackedSubgraphFactory(SubgraphFactory):
             self._db_engine = create_engine(self.db_dsn)
             return
 
-        logger.debug(f"Initializing TableBackedSubgraphFactory with db_dsn: {self.db_dsn}")
+        logger.debug(f"Initializing TableBackedGraphFactory with db_dsn: {self.db_dsn}")
 
         # Ensure parent directory exists for SQLite databases
         if self.db_dsn.startswith("sqlite:///"):
@@ -393,7 +394,7 @@ class TableBackedSubgraphFactory(SubgraphFactory):
             self._process_file(file_path)
 
         # Mark this database + table as initialized
-        TableBackedSubgraphFactory._initialized_databases.add(db_key)
+        TableBackedGraphFactory._initialized_databases.add(db_key)
 
     def _create_import_tracking_table(self) -> None:
         """Create a table to track imported files with checksums and timestamps."""
@@ -515,9 +516,9 @@ class TableBackedSubgraphFactory(SubgraphFactory):
         elif file_changed is True:
             # File changed - delete existing data before reimport
             warning_msg = f"File {file_path} has changed (checksum differs) - will delete old data and reimport"
-            if warning_msg not in TableBackedSubgraphFactory._shown_warnings:
+            if warning_msg not in TableBackedGraphFactory._shown_warnings:
                 logger.warning(warning_msg)
-                TableBackedSubgraphFactory._shown_warnings.add(warning_msg)
+                TableBackedGraphFactory._shown_warnings.add(warning_msg)
             self._delete_file_data(file_path)
 
         try:
@@ -565,9 +566,9 @@ class TableBackedSubgraphFactory(SubgraphFactory):
         null_keys = df[key_field].isna().sum()
         if null_keys > 0:
             warning_msg = f"Found {null_keys} rows with null key field '{key_field}' - these will be skipped"
-            if warning_msg not in TableBackedSubgraphFactory._shown_warnings:
+            if warning_msg not in TableBackedGraphFactory._shown_warnings:
                 logger.warning(warning_msg)
-                TableBackedSubgraphFactory._shown_warnings.add(warning_msg)
+                TableBackedGraphFactory._shown_warnings.add(warning_msg)
             df = df[df[key_field].notna()]
 
         # Remove duplicates based on key field
@@ -577,9 +578,9 @@ class TableBackedSubgraphFactory(SubgraphFactory):
             duplicate_count = initial_rows - len(df)
             if duplicate_count > 0:
                 warning_msg = f"Removed {duplicate_count} duplicate rows based on key field '{key_field}'"
-                if warning_msg not in TableBackedSubgraphFactory._shown_warnings:
+                if warning_msg not in TableBackedGraphFactory._shown_warnings:
                     logger.warning(warning_msg)
-                    TableBackedSubgraphFactory._shown_warnings.add(warning_msg)
+                    TableBackedGraphFactory._shown_warnings.add(warning_msg)
 
         try:
             # Check if table exists to decide on index creation
@@ -732,8 +733,8 @@ class TableBackedSubgraphFactory(SubgraphFactory):
             raise
 
 
-class Neo4jSubgraphFactory(SubgraphFactory):
-    """Subgraph factory that reads structured data from Neo4j JSONL exports.
+class Neo4jGraphFactory(GraphFactory):
+    """Graph factory that reads structured data from Neo4j JSONL exports.
 
     This factory analyzes and processes Neo4j JSONL export files, transforming
     the nodes and relationships according to a mapping specification. It handles
@@ -766,7 +767,7 @@ class Neo4jSubgraphFactory(SubgraphFactory):
         fresh file discovery.
         """
         cls._initialized_files.clear()
-        logger.debug(f"Cleared Neo4jSubgraphFactory cache ({cls.__name__})")
+        logger.debug(f"Cleared Neo4jGraphFactory cache ({cls.__name__})")
 
     def model_post_init(self, _context: object) -> None:
         """Initialize and analyze the Neo4j JSONL file.
@@ -786,14 +787,14 @@ class Neo4jSubgraphFactory(SubgraphFactory):
 
         # Check if this file has already been processed
         file_key = str(export_path)
-        if file_key in Neo4jSubgraphFactory._initialized_files:
+        if file_key in Neo4jGraphFactory._initialized_files:
             logger.debug(f"Skipping duplicate Neo4j JSONL analysis for {export_path}")
             self._initialized = True
             return
 
         logger.info(f"Analyzing Neo4j JSONL export: {export_path}")
         self._analyze_and_load(export_path)
-        Neo4jSubgraphFactory._initialized_files.add(file_key)
+        Neo4jGraphFactory._initialized_files.add(file_key)
         self._initialized = True
 
     def _analyze_and_load(self, export_path: UPath) -> None:

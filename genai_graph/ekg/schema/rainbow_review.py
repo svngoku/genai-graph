@@ -1,4 +1,4 @@
-"""Opportunity subgraph for EKG system.
+"""Opportunity graph for EKG system.
 
 Contains all opportunity-specific data model logic and BAML client integration.
 This is the only module that imports BAML client types.
@@ -11,12 +11,12 @@ from typing import Type
 from pydantic import BaseModel
 
 from genai_graph.core.graph_schema import GraphSchema
-from genai_graph.core.subgraph_factories import JsonFileBackedSubgraphFactory
+from genai_graph.core.subgraph_factories import JsonFileBackedGraphFactory
 from genai_graph.ekg.baml_client.types import ReviewedOpportunity
 
 
-class ReviewedOpportunitySubgraph(JsonFileBackedSubgraphFactory, BaseModel):
-    """Opportunity data subgraph implementation using JSON files from BAML extract."""
+class ReviewedOpportunityGraph(JsonFileBackedGraphFactory, BaseModel):
+    """Opportunity data graph using JSON files from BAML extract."""
 
     TOP_CLASS: Type[BaseModel] = ReviewedOpportunity
 

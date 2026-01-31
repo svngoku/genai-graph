@@ -1,5 +1,4 @@
 
-
 schemas_root: genai_graph.ekg.schema
 
 paths:
@@ -12,8 +11,8 @@ paths:
 
 kg_configs:
   simple:
-    subgraphs:
-      - factory: genai_graph.ekg.schema.rainbow_review:ReviewedOpportunitySubgraph
+    graphs:
+      - factory: genai_graph.ekg.schema.rainbow_review:ReviewedOpportunityGraph
         data_root: ${paths.rainbow_json}
         include: 
           - "*_CNES_TMA_VENUS_VIP_PEPS_THEIA_MUSCATE*"
@@ -24,8 +23,8 @@ kg_configs:
           metadata: ["Opportunity.opportunity_id","Customer.name"]
 
   db_only:  
-    subgraphs:
-      - factory: "${schemas_root}.crm_export:CrmExtractSubGraph"
+    graphs:
+      - factory: "${schemas_root}.crm_export:CrmExtractGraph"
         db_dsn: sqlite:///${paths.data_root}/ekg/crm_extract.db
         files:
           - ${paths.ekg_data}/crm_export/report1750429630460_SHORTEN.xlsx
@@ -34,8 +33,8 @@ kg_configs:
   simple_with_db:
     import:
       - db_only
-    subgraphs:
-      - factory: "${schemas_root}.rainbow_review:ReviewedOpportunitySubgraph"
+    graphs:
+      - factory: "${schemas_root}.rainbow_review:ReviewedOpportunityGraph"
         data_root: ${paths.rainbow_json}
         include: 
           - "*_CNES_TMA_VENUS_VIP_PEPS_THEIA_MUSCATE*"
@@ -46,27 +45,27 @@ kg_configs:
   test1_with_db:
     import:
       - db_only
-    subgraphs:
-      - factory: genai_graph.ekg.schema.rainbow_review:ReviewedOpportunitySubgraph
+    graphs:
+      - factory: genai_graph.ekg.schema.rainbow_review:ReviewedOpportunityGraph
         data_root: ${paths.rainbow_json}
         include: 
           - "*_CNES_*"
         recursive: true
-      - factory: genai_graph.ekg.schema.architecture_doc:ArchitectureDocumentSubgraph
+      - factory: genai_graph.ekg.schema.architecture_doc:ArchitectureDocumentGraph
         data_root: ${paths.add_json}
         include: 
           - "*_CNES_*"
         recursive: true 
+
   test1_with_real:
-    subgraphs:
-      - factory: genai_graph.ekg.schema.rainbow_review:ReviewedOpportunitySubgraph
+    graphs:
+      - factory: genai_graph.ekg.schema.rainbow_review:ReviewedOpportunityGraph
         data_root: ${paths.rainbow_json}
         include: 
           - "*.json"
         recursive: true
   
   simple_neo4j:
-     subgraphs:
-      - factory: genai_graph.ekg.schema.stratnav:StratnavSubgraph 
-        #neo4j_export_file: ${paths.stratnav_db}/26-01-2018/sn-v3-q4-2026-01-28.jsonl  # full
+    graphs:
+      - factory: genai_graph.ekg.schema.stratnav:StratnavGraph 
         neo4j_export_file: ${paths.stratnav_db}/subset/sn-subset.jsonl

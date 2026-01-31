@@ -25,12 +25,12 @@ from genai_graph.core.graph_core import create_schema as core_create_schema
 from genai_graph.core.graph_documents import DocumentStats, add_documents_to_graph
 from genai_graph.core.kg_manager import get_kg_manager
 from genai_graph.core.subgraph_factories import (
-    JsonFileBackedSubgraphFactory,
-    Neo4jSubgraphFactory,
-    SubgraphFactory,
-    TableBackedSubgraphFactory,
+    JsonFileBackedGraphFactory,
+    Neo4jGraphFactory,
+    GraphFactory,
+    TableBackedGraphFactory,
 )
-from genai_graph.orchestration.models import SubgraphBundle
+from genai_graph.orchestration.models import GraphBundle
 
 
 def _get_prefect_logger_or_default() -> Any:
@@ -79,7 +79,7 @@ def resolve_config_task(config_name: str | None) -> tuple[str, dict[str, Any]]:
     logger_pf.debug(
         "Loaded KG config '%s', subgraphs=%d.",
         effective,
-        len(kg_cfg.get("subgraphs", [])),
+        len(kg_cfg.get("graphs", [])),
     )
 
     return effective, kg_cfg
@@ -108,39 +108,39 @@ def initialize_backend_task(config_key: str = "default", kg_config_name: str | N
 
 
 @task
-def load_factories_task(kg_cfg: dict[str, Any]) -> list[SubgraphBundle]:
+def load_factories_task(kg_cfg: dict[str, Any]) -> list[GraphBundle]:
     """Load and instantiate subgraph factories from KG configuration."""
 
     logger_pf = _get_prefect_logger_or_default()
     manager = get_kg_manager()
-    subgraphs_cfg = kg_cfg.get("subgraphs", [])
+    graphs_cfg = kg_cfg.get("graphs", [])
 
-    bundles: list[SubgraphBundle] = []
-    for subgraph_cfg in subgraphs_cfg:
-        if not isinstance(subgraph_cfg, dict):
+    bundles: list[GraphBundle] = []
+    for graph_cfg in graphs_cfg:
+        if not isinstance(graph_cfg, dict):
             continue
 
-        factory_path = subgraph_cfg.get("factory")
+        factory_path = graph_cfg.get("factory")
         if not factory_path:
             continue
 
         try:
             imported = import_from_qualified(factory_path)
-            if isinstance(imported, SubgraphFactory):
-                subgraph_impl = imported
-            elif isinstance(imported, type) and issubclass(imported, SubgraphFactory):
+            if isinstance(imported, GraphFactory):
+                graph_impl = imported
+            elif isinstance(imported, type) and issubclass(imported, GraphFactory):
                 constructor_kwargs = {
-                    k: v for k, v in subgraph_cfg.items() if k not in {"factory", "initial_load", "trigger"}
+                    k: v for k, v in graph_cfg.items() if k not in {"factory", "initial_load", "trigger"}
                 }
-                subgraph_impl = imported(**constructor_kwargs)  # type: ignore[misc]
+                graph_impl = imported(**constructor_kwargs)  # type: ignore[misc]
             else:
-                msg = f"Factory {factory_path} is not a SubgraphFactory"
+                msg = f"Factory {factory_path} is not a GraphFactory"
                 logger.warning(msg)
                 manager.add_warning(msg)
                 continue
 
-            logger_pf.debug("Loaded subgraph factory: %s", subgraph_impl.name)
-            bundles.append(SubgraphBundle(config=subgraph_cfg, factory=subgraph_impl))
+            logger_pf.debug("Loaded subgraph factory: %s", graph_impl.name)
+            bundles.append(GraphBundle(config=graph_cfg, factory=graph_impl))
         except Exception as exc:  # pragma: no cover - defensive logging
             import traceback
 
@@ -153,26 +153,26 @@ def load_factories_task(kg_cfg: dict[str, Any]) -> list[SubgraphBundle]:
 
 
 def create_schema(
-    bundles: list[SubgraphBundle],
+    bundles: list[GraphBundle],
     backend: GraphBackend,
-) -> list[SubgraphBundle]:
+) -> list[GraphBundle]:
     """Create graph schema for all loaded subgraphs (Pass 1)."""
 
     manager = get_kg_manager()
 
     for bundle in bundles:
-        subgraph_impl = bundle.factory
-        subgraph_impl.register()
+        graph_impl = bundle.factory
+        graph_impl.register()
 
-        schema = subgraph_impl.build_schema()
+        schema = graph_impl.build_schema()
         try:
             core_create_schema(backend, schema.nodes, schema.relations, manager)
             schema.validate_with_context(manager)
-            logger.info(f"Created schema for subgraph {getattr(subgraph_impl, 'name', '<unknown>')}")
+            logger.info(f"Created schema for subgraph {getattr(graph_impl, 'name', '<unknown>')}")
         except Exception as exc:  # pragma: no cover - defensive
             import traceback
 
-            msg = f"Schema creation failed for subgraph {getattr(subgraph_impl, 'name', '<unknown>')}: {exc}"
+            msg = f"Schema creation failed for subgraph {getattr(graph_impl, 'name', '<unknown>')}: {exc}"
             logger.error(msg)
             logger.error(traceback.format_exc())
             manager.add_warning(msg)
@@ -184,7 +184,7 @@ def create_schema(
 
 @task(cache_policy=NO_CACHE)
 def ingest_subgraphs_task(
-    bundles: list[SubgraphBundle],
+    bundles: list[GraphBundle],
     backend: GraphBackend,
 ) -> DocumentStats:
     """Ingest documents for all configured subgraphs (Pass 2)."""
@@ -195,18 +195,18 @@ def ingest_subgraphs_task(
     total_stats = DocumentStats()
 
     for bundle in bundles:
-        subgraph_cfg = bundle.config
-        subgraph_impl = bundle.factory
+        graph_cfg = bundle.config
+        graph_impl = bundle.factory
         schema = bundle.schema_obj
 
-        factory_path = subgraph_cfg.get("factory", "<unknown>")
+        factory_path = graph_cfg.get("factory", "<unknown>")
 
-        keys = subgraph_cfg.get("initial_load", [])
+        keys = graph_cfg.get("initial_load", [])
 
-        # Handle JsonFileBackedSubgraphFactory - get file paths
-        if not keys and isinstance(subgraph_impl, JsonFileBackedSubgraphFactory):
+        # Handle JsonFileBackedGraphFactory - get file paths
+        if not keys and isinstance(graph_impl, JsonFileBackedGraphFactory):
             try:
-                file_paths = subgraph_impl.get_all_file_paths()
+                file_paths = graph_impl.get_all_file_paths()
                 keys = [str(fp) for fp in file_paths]
                 logger_pf.debug(
                     "Retrieved %d file paths from JSON-backed factory",
@@ -218,10 +218,10 @@ def ingest_subgraphs_task(
                 manager.add_warning(msg)
                 keys = []
 
-        # Handle TableBackedSubgraphFactory - get all keys from DB
-        if not keys and isinstance(subgraph_impl, TableBackedSubgraphFactory):
+        # Handle TableBackedGraphFactory - get all keys from DB
+        if not keys and isinstance(graph_impl, TableBackedGraphFactory):
             try:
-                keys = subgraph_impl.get_all_keys()
+                keys = graph_impl.get_all_keys()
                 logger_pf.debug(
                     "Retrieved %d keys from table-backed factory",
                     len(keys),
@@ -232,10 +232,10 @@ def ingest_subgraphs_task(
                 manager.add_warning(msg)
                 keys = []
 
-        # Handle Neo4jSubgraphFactory - get all keys from analyzed JSONL
-        if not keys and isinstance(subgraph_impl, Neo4jSubgraphFactory):
+        # Handle Neo4jGraphFactory - get all keys from analyzed JSONL
+        if not keys and isinstance(graph_impl, Neo4jGraphFactory):
             try:
-                keys = subgraph_impl.get_all_keys()
+                keys = graph_impl.get_all_keys()
                 logger_pf.debug(
                     "Retrieved %d keys from Neo4j JSONL factory",
                     len(keys),
@@ -251,7 +251,7 @@ def ingest_subgraphs_task(
 
         try:
             assert schema is not None, "Schema must be created before ingestion"
-            stats = add_documents_to_graph(keys, subgraph_impl, backend, schema, manager)
+            stats = add_documents_to_graph(keys, graph_impl, backend, schema, manager)
             logger_pf.debug(
                 "Ingest stats for %s: processed=%d failed=%d nodes=%d rels=%d",
                 factory_path,

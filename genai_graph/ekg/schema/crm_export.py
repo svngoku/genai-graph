@@ -3,13 +3,13 @@ from typing import Any, Type
 from pydantic import BaseModel
 
 from genai_graph.core.graph_schema import GraphNode, GraphRelation, GraphSchema
-from genai_graph.core.subgraph_factories import TableBackedSubgraphFactory
+from genai_graph.core.subgraph_factories import TableBackedGraphFactory
 from genai_graph.ekg.baml_client.types import Person
 from genai_graph.ekg.schema.common_nodes import Customer, Opportunity, WinLoss
 
 
-class CrmExtractSubGraph(TableBackedSubgraphFactory, BaseModel):
-    """CRM data subgraph implementation.
+class CrmExtractGraph(TableBackedGraphFactory, BaseModel):
+    """CRM data graph.
 
     Imports CRM export data and creates Opportunity-centric graphs
     with related Customer, Person, and WinLoss nodes.
@@ -19,7 +19,7 @@ class CrmExtractSubGraph(TableBackedSubgraphFactory, BaseModel):
 
     @property
     def table_name(self) -> str:
-        """Keep the original table name for backward compatibility."""
+        """Keep the original table name."""
         return "crm_extract"
 
     def get_key_field(self) -> str:

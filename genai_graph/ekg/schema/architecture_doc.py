@@ -1,4 +1,4 @@
-"""Architecture document subgraph for EKG system.
+"""Architecture document graph for EKG system.
 
 Contains all architecture-specific data model logic and BAML client integration.
 Builds a knowledge graph for Software Architecture documents with technical components
@@ -12,18 +12,18 @@ from typing import Type
 from pydantic import BaseModel
 
 from genai_graph.core.graph_schema import GraphSchema
-from genai_graph.core.subgraph_factories import JsonFileBackedSubgraphFactory
+from genai_graph.core.subgraph_factories import JsonFileBackedGraphFactory
 from genai_graph.ekg.baml_client.types import SWArchitectureDocument
 
 
-class ArchitectureDocumentSubgraph(JsonFileBackedSubgraphFactory, BaseModel):
-    """Architecture document data subgraph implementation using JSON files from BAML extract."""
+class ArchitectureDocumentGraph(JsonFileBackedGraphFactory, BaseModel):
+    """Architecture document data graph using JSON files from BAML extract."""
 
     TOP_CLASS: Type[BaseModel] = SWArchitectureDocument
 
     @property
     def name(self) -> str:
-        """Name of the subgraph in the registry."""
+        """Name of the graph in the registry."""
         return "ArchitectureDocument"
 
     def build_schema(self) -> GraphSchema:

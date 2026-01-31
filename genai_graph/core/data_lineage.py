@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from upath import UPath
 
 from genai_graph.core.kg_manager import KgManager
-from genai_graph.core.subgraph_factories import JsonFileBackedSubgraphFactory
+from genai_graph.core.subgraph_factories import JsonFileBackedGraphFactory
 
 
 class JsonArtifact(BaseModel):
@@ -58,20 +58,20 @@ def build_lineage_for_manager(manager: KgManager) -> list[MarkdownLineage]:
         List of MarkdownLineage entries, one per Markdown file.
     """
 
-    # Ensure JSON file discovery is fresh even if JsonFileBackedSubgraphFactory
+    # Ensure JSON file discovery is fresh even if JsonFileBackedGraphFactory
     # instances were created earlier in the process (for example by
     # GraphRegistry or other components).
-    JsonFileBackedSubgraphFactory.clear_cache()
+    JsonFileBackedGraphFactory.clear_cache()
 
     profile_cfg = manager.get_profile_dict()
-    subgraphs_cfg = profile_cfg.get("subgraphs", []) or []
+    graphs_cfg = profile_cfg.get("graphs", []) or []
 
     # Aggregate lineage by markdown file so that multiple JSON files that
     # originate from the same document are grouped together.
     by_markdown: dict[UPath, MarkdownLineage] = {}
 
-    for subgraph_cfg in subgraphs_cfg:
-        factory_path = subgraph_cfg.get("factory") if isinstance(subgraph_cfg, dict) else None
+    for graph_cfg in graphs_cfg:
+        factory_path = graph_cfg.get("factory") if isinstance(graph_cfg, dict) else None
         if not factory_path:
             continue
 
@@ -81,11 +81,11 @@ def build_lineage_for_manager(manager: KgManager) -> list[MarkdownLineage]:
             logger.warning("Cannot import subgraph factory %s: %s", factory_path, exc)
             continue
 
-        if not isinstance(imported, type) or not issubclass(imported, JsonFileBackedSubgraphFactory):
+        if not isinstance(imported, type) or not issubclass(imported, JsonFileBackedGraphFactory):
             # Not a JSON-file-backed subgraph; nothing to do for lineage.
             continue
 
-        constructor_kwargs = {k: v for k, v in subgraph_cfg.items() if k not in {"factory", "initial_load", "trigger"}}
+        constructor_kwargs = {k: v for k, v in graph_cfg.items() if k not in {"factory", "initial_load", "trigger"}}
 
         try:
             subgraph = imported(**constructor_kwargs)  # type: ignore[call-arg]

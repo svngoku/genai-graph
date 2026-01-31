@@ -1,18 +1,5 @@
 # New
 
-We want to build a subgraph from a graph exported from neo4j as JSONL.
-We'll use the same fabrik pattern than for the others (from BAML files, from tables) to be able to combine several subgraphs, provide display, text2cypher, etc. 
-I've created an expected configuration for such subgraph here : /home/tcl/prj/genai-graph/config/ekg.yaml (key 'simple_neo4j')
-I've started to create a factory here: genai_graph/ekg/schema/stratnav_db.py . It's the file you need to complete (and possibly correct...), alonside with a new module for class Neo4jSubgraphFactory.
-Have a look at code of other factories and schemas. 
-
-A part of the Neo4J processing has already be done in the form of CLI commands : /home/tcl/prj/genai-graph/genai_graph/neo4j_import .
- Main difference is that the CLI command generated directly a Kuzu database with excatly the same schema, whereas we want to transform it through stratnav_db.py .  We want also to me more precise regarding the types of fields and properties, as we provide it.
-The most important piece to look at is the  analyze a Neo4j JSONL to get a full picture of the nodes and relationships. 
-These CLI commmands might drop in the future, so you don't need to share code. 
-Take into account that the JSONL file can be quite large (> 20000 lines). 
-Your tasks is to develop the missing parts.  Test first in standlone with '__main__',  then with the cli command 'cli kg create --kg simple_neo4j"
-Keep Prefect for hendling tasks. Use kg_manager to deal with generated outcome (schema, ...)
 
 
 

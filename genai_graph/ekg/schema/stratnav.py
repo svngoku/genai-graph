@@ -1,6 +1,6 @@
-"""Stratnav subgraph factory for Neo4j JSONL exports.
+"""Stratnav graph factory for Neo4j JSONL exports.
 
-This module provides the StratnavSubgraph factory that processes Neo4j exports
+This module provides the StratnavGraph factory that processes Neo4j exports
 from the Stratnav system and maps them to the EKG schema.
 """
 
@@ -12,7 +12,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from genai_graph.core.graph_schema import GraphNode, GraphSchema
-from genai_graph.core.subgraph_factories import Neo4jSubgraphFactory
+from genai_graph.core.subgraph_factories import Neo4jGraphFactory
 from genai_graph.ekg.schema.common_nodes import Customer, GeoLocation, L3Service
 
 # -----------------------------------------------------------------------------
@@ -42,14 +42,14 @@ class Neo4jRelMapping(BaseModel):
 
 
 # -----------------------------------------------------------------------------
-# StratnavSubgraph factory
+# StratnavGraph factory
 # -----------------------------------------------------------------------------
 
 
-class StratnavSubgraph(Neo4jSubgraphFactory, BaseModel):
-    """Subgraph factory for Neo4j JSONL exports.
+class StratnavGraph(Neo4jGraphFactory, BaseModel):
+    """Graph factory for Neo4j JSONL exports.
 
-    This factory processes Neo4j exports and maps Account nodes to Customer
+    Processes Neo4j exports and maps Account nodes to Customer
     with embedded location and services.
     """
 

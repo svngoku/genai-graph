@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from genai_graph.core.graph_backend import GraphBackend
 from genai_graph.core.graph_schema import GraphSchema
 from genai_graph.core.kg_manager import KgManager
-from genai_graph.core.subgraph_factories import SubgraphFactory
+from genai_graph.core.subgraph_factories import GraphFactory
 
 
 class DocumentStats(BaseModel):
@@ -75,7 +75,7 @@ def _has_metadata_map(root_class: Type[BaseModel], schema: GraphSchema) -> bool:
 
 def add_documents_to_graph(
     keys: List[str],
-    subgraph_impl: SubgraphFactory,
+    graph_impl: GraphFactory,
     backend: GraphBackend,
     schema: GraphSchema,
     context: KgManager | None = None,
@@ -84,9 +84,9 @@ def add_documents_to_graph(
 
     Args:
         keys: List of keys/file paths to load via the subgraph implementation.
-              For JsonFileBackedSubgraphFactory, these are file paths.
+              For JsonFileBackedGraphFactory, these are file paths.
               For other factories, these are abstract keys.
-        subgraph_impl: Subgraph factory providing data loading methods
+        graph_impl: Subgraph factory providing data loading methods
         backend: GraphBackend instance
         schema: GraphSchema instance
         context: Optional KgManager for collecting warnings
@@ -101,7 +101,7 @@ def add_documents_to_graph(
     root_class = getattr(schema, "root_model_class", None)
     if root_class is None:
         raise ValueError(
-            f"Schema for subgraph '{subgraph_impl.name}' does not have root_model_class set. "
+            f"Schema for subgraph '{graph_impl.name}' does not have root_model_class set. "
             "Document processing requires a root model class to validate metadata."
         )
 
@@ -114,24 +114,24 @@ def add_documents_to_graph(
 
     for key in keys:
         try:
-            logger.debug(f"Loading key {key} for subgraph {subgraph_impl.name}")
-            data = subgraph_impl.get_struct_data_by_key(key)
+            logger.debug(f"Loading key {key} for subgraph {graph_impl.name}")
+            data = graph_impl.get_struct_data_by_key(key)
             logger.debug(f"Loaded? {bool(data)}")
             if not data:
                 stats.total_failed += 1
                 continue
 
             # For file-based sources, use relative path as source_key for cleaner provenance
-            from genai_graph.core.subgraph_factories import JsonFileBackedSubgraphFactory
+            from genai_graph.core.subgraph_factories import JsonFileBackedGraphFactory
 
-            if isinstance(subgraph_impl, JsonFileBackedSubgraphFactory):
+            if isinstance(graph_impl, JsonFileBackedGraphFactory):
                 # Extract relative path from full file path for cleaner source tracking
                 from genai_tk.utils.file_patterns import resolve_config_path
                 from upath import UPath
 
                 file_path = UPath(key)
                 try:
-                    data_root = resolve_config_path(subgraph_impl.data_root)
+                    data_root = resolve_config_path(graph_impl.data_root)
                     root_path = UPath(data_root)
                     source_key = str(file_path.relative_to(root_path))
                 except (ValueError, AttributeError):

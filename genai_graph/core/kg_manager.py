@@ -32,8 +32,8 @@ class KgOutcome(BaseModel):
     details: dict[str, Any] | None = None
 
 
-class EkgSubgraphConfig(BaseModel):
-    """Configuration for a single EKG subgraph entry."""
+class EkgGraphConfig(BaseModel):
+    """Configuration for a single graph entry."""
 
     factory: str
     initial_load: list[str] = Field(default_factory=list)
@@ -57,7 +57,7 @@ class EkgAgentConfig(BaseModel):
 class EkgProfileConfig(BaseModel):
     """Configuration for a single KG profile (entry in ``kg_configs``)."""
 
-    subgraphs: list[EkgSubgraphConfig] = Field(default_factory=list)
+    graphs: list[EkgGraphConfig] = Field(default_factory=list)
     agent: EkgAgentConfig | None = None
     imports: list[str] = Field(default_factory=list, alias="import")
     """List of KG config names to import before building this KG."""

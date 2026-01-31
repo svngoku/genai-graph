@@ -2,7 +2,7 @@
 
 This page lets users:
 - Select a KG configuration/profile.
-- View tables loaded from Excel/CSV files via TableBackedSubgraphFactory.
+- View tables loaded from Excel/CSV files via TableBackedGraphFactory.
 - Inspect table contents with filtering and search capabilities.
 """
 
@@ -21,7 +21,7 @@ from streamlit import session_state as sss
 from upath import UPath
 
 from genai_graph.core.kg_manager import get_kg_manager
-from genai_graph.core.subgraph_factories import TableBackedSubgraphFactory
+from genai_graph.core.subgraph_factories import TableBackedGraphFactory
 
 
 class TableInfo(BaseModel):
@@ -108,29 +108,29 @@ def _select_configuration() -> None:
 
 
 def _discover_table_subgraphs() -> list[TableInfo]:
-    """Discover all TableBackedSubgraphFactory instances in the current configuration."""
+    """Discover all TableBackedGraphFactory instances in the current configuration."""
     tables: list[TableInfo] = []
 
     try:
         manager = get_kg_manager()
         profile_cfg = manager.get_profile_dict()
-        subgraphs_cfg = profile_cfg.get("subgraphs", []) or []
+        graphs_cfg = profile_cfg.get("graphs", []) or []
 
-        for subgraph_cfg in subgraphs_cfg:
-            if not isinstance(subgraph_cfg, dict):
+        for graph_cfg in graphs_cfg:
+            if not isinstance(graph_cfg, dict):
                 continue
 
-            factory_path = subgraph_cfg.get("factory")
-            db_dsn = subgraph_cfg.get("db_dsn")
-            files = subgraph_cfg.get("files", [])
+            factory_path = graph_cfg.get("factory")
+            db_dsn = graph_cfg.get("db_dsn")
+            files = graph_cfg.get("files", [])
 
             if not factory_path or not db_dsn:
                 continue
 
-            # Try to import and check if it's a TableBackedSubgraphFactory
+            # Try to import and check if it's a TableBackedGraphFactory
             try:
                 imported = import_from_qualified(factory_path)
-                if not isinstance(imported, type) or not issubclass(imported, TableBackedSubgraphFactory):
+                if not isinstance(imported, type) or not issubclass(imported, TableBackedGraphFactory):
                     continue
 
                 # Resolve file paths
@@ -142,7 +142,7 @@ def _discover_table_subgraphs() -> list[TableInfo]:
                 # Get table name from the factory
                 # Instantiate temporarily to get the table name
                 constructor_kwargs = {
-                    k: v for k, v in subgraph_cfg.items() if k not in {"factory", "initial_load", "trigger", "pull"}
+                    k: v for k, v in graph_cfg.items() if k not in {"factory", "initial_load", "trigger", "pull"}
                 }
                 # Resolve the db_dsn path
                 if "db_dsn" in constructor_kwargs:
@@ -362,7 +362,7 @@ def main() -> None:
     if not tables:
         st.info(
             "No database tables found for this configuration. "
-            "Ensure you have TableBackedSubgraphFactory subgraphs configured "
+            "Ensure you have TableBackedGraphFactory subgraphs configured "
             "with `db_dsn` and `files` parameters."
         )
         return
