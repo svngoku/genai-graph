@@ -1,7 +1,7 @@
 """Factory classes for creating graphs.
 
-A factory produces a `GraphData` object: two DataFrames (nodes and edges) plus metadata.
-Everything is a graph, and merging is the main operation.
+A GraphFactory loads data and provides a GraphSchema for extraction.
+The actual graph is built via extract_graph_data() → merge_nodes_batch().
 
 Classes:
     GraphFactory: Abstract base class for all graph factory implementations.
@@ -24,7 +24,6 @@ from rich.console import Console
 from sqlalchemy import Engine, text
 from upath import UPath
 
-from genai_graph.core.graph_data import GraphData
 from genai_graph.core.graph_schema import GraphSchema
 
 console = Console()
@@ -33,8 +32,9 @@ console = Console()
 class GraphFactory(ABC, BaseModel):
     """Abstract base class for graph factory implementations.
 
-    A GraphFactory produces GraphData from some data source.
-    The output is a GraphData object containing node and edge DataFrames.
+    A GraphFactory provides:
+    - A GraphSchema defining node types and relationships
+    - A method to load structured data by key for graph extraction
     """
 
     # Optional class constant - set for factories with a single root model type.
@@ -58,8 +58,8 @@ class GraphFactory(ABC, BaseModel):
     def get_struct_data_by_key(self, key: str) -> BaseModel | None:
         """Load structured data for the given key.
 
-        This is used by the schema-based workflow. For DataFrame-based workflows,
-        prefer using build_graph_data() instead.
+        The returned Pydantic model is then processed by extract_graph_data()
+        according to the schema from build_schema().
         """
         ...
 
@@ -71,21 +71,6 @@ class GraphFactory(ABC, BaseModel):
         from Pydantic models.
         """
         ...
-
-    def build_graph_data(self) -> GraphData:
-        """Build and return a GraphData containing all data from this factory.
-
-        This is the preferred method for new code. Override in subclasses for
-        optimized implementations that build DataFrames directly.
-
-        Default implementation uses the schema-based workflow for backward
-        compatibility.
-
-        Returns:
-            GraphData containing nodes and edges as DataFrames.
-        """
-        # Default: return empty graph (subclasses should override)
-        return GraphData(name=self.name)
 
     def get_node_labels(self) -> dict[str, str]:
         """Get mapping of node types to human-readable descriptions from schema."""
