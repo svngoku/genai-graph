@@ -15,6 +15,7 @@ ekg_local:
   paths:
     data_root : ${oc.env:ONEDRIVE, null}/prj/atos-kg/data
     ekg_data : ${oc.env:ONEDRIVE, null}/prj/atos-kg/data
+    kg_outputs :  ${oc.env:HOME}/kg_outputs
 
 
   kg_config: ${oc.env:KG_CONFIG,test1_with_db}
@@ -70,7 +71,7 @@ ekg_local:
   graph_db: 
     default:
       type: kuzu
-      path: ${paths.data_root}/kg_outputs/default/default/kuzu/ekg_database.db
+      path: ${paths.kg_outputs}/default/kuzu/ekg_database.db
     neo4j_local:
       type: neo4j
       path: neo4j://localhost

@@ -13,7 +13,6 @@ from pydantic import BaseModel
 from genai_graph.core.graph_schema import GraphSchema
 from genai_graph.core.subgraph_factories import JsonFileBackedSubgraphFactory
 from genai_graph.ekg.baml_client.types import ReviewedOpportunity
-from genai_graph.ekg.schema.common_nodes import get_common_nodes
 
 
 class ReviewedOpportunitySubgraph(JsonFileBackedSubgraphFactory, BaseModel):
@@ -27,8 +26,6 @@ class ReviewedOpportunitySubgraph(JsonFileBackedSubgraphFactory, BaseModel):
         Returns:
             GraphSchema with all node and relationship configurations
         """
-        # Define entity type nodes (for IS_A relationships)
-
         from genai_graph.core.graph_schema import (
             GraphNode,
             GraphRelation,
@@ -46,8 +43,32 @@ class ReviewedOpportunitySubgraph(JsonFileBackedSubgraphFactory, BaseModel):
             TechnicalApproach,
         )
 
+        # Note: We use BAML types directly here (not extended types from common_nodes)
+        # because ReviewedOpportunity's fields reference these BAML types.
+
         # Define nodes with descriptions
-        nodes = get_common_nodes() + [
+        nodes = [
+            # BAML types that ReviewedOpportunity references
+            GraphNode(
+                node_class=Opportunity,
+                name_from="name",
+                key_from="opportunity_id",
+                description="Core opportunity information",
+                index_fields=["name", "status"],
+            ),
+            GraphNode(
+                node_class=Customer,
+                name_from="name",
+                key_from="name",
+                description="Customer organization details",
+                index_fields=["name"],
+            ),
+            GraphNode(
+                node_class=Person,
+                name_from="name",
+                key_from="name",
+                description="Individual contacts and team members",
+            ),
             # Root node
             GraphNode(
                 node_class=ReviewedOpportunity,

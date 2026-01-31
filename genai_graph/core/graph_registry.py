@@ -162,7 +162,8 @@ class GraphRegistry(BaseModel):
         root_model_class = schemas[0].root_model_class
 
         # Track all root model classes from all schemas for validation
-        merged_root_classes = [schema.root_model_class for schema in schemas]
+        # Filter out None values from schemas without root_model_class
+        merged_root_classes = [schema.root_model_class for schema in schemas if schema.root_model_class is not None]
 
         # Merge nodes, de-duplicating by underlying Pydantic class
         merged_nodes: list[Any] = []

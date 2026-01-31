@@ -13,8 +13,7 @@ from pydantic import BaseModel
 
 from genai_graph.core.graph_schema import GraphSchema
 from genai_graph.core.subgraph_factories import JsonFileBackedSubgraphFactory
-from genai_graph.ekg.baml_client.types import Customer, SWArchitectureDocument
-from genai_graph.ekg.schema.common_nodes import get_common_nodes
+from genai_graph.ekg.baml_client.types import SWArchitectureDocument
 
 
 class ArchitectureDocumentSubgraph(JsonFileBackedSubgraphFactory, BaseModel):
@@ -38,6 +37,7 @@ class ArchitectureDocumentSubgraph(JsonFileBackedSubgraphFactory, BaseModel):
             GraphRelation,
         )
         from genai_graph.ekg.baml_client.types import (
+            Customer,
             Opportunity,
             Person,
             Solution,
@@ -45,10 +45,32 @@ class ArchitectureDocumentSubgraph(JsonFileBackedSubgraphFactory, BaseModel):
             TechnicalComponent,
         )
 
-        # BAML-generated types imported above
+        # Note: We use BAML types directly here (not extended types from common_nodes)
+        # because SWArchitectureDocument's fields reference these BAML types.
 
         # Define nodes with descriptions
-        nodes = get_common_nodes() + [
+        nodes = [
+            # BAML types that SWArchitectureDocument references
+            GraphNode(
+                node_class=Opportunity,
+                name_from="name",
+                key_from="opportunity_id",
+                description="Core opportunity information",
+                index_fields=["name", "status"],
+            ),
+            GraphNode(
+                node_class=Customer,
+                name_from="name",
+                key_from="name",
+                description="Customer organization details",
+                index_fields=["name"],
+            ),
+            GraphNode(
+                node_class=Person,
+                name_from="name",
+                key_from="name",
+                description="Individual contacts and team members",
+            ),
             # Root node - the architecture document itself
             GraphNode(
                 node_class=SWArchitectureDocument,

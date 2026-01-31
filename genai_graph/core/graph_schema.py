@@ -7,6 +7,7 @@ to derive field paths and relationships, reducing boilerplate and errors.
 
 from __future__ import annotations
 
+import types
 import uuid
 import warnings
 from enum import Enum
@@ -251,9 +252,14 @@ class GraphRelation(BaseModel):
 
 
 class GraphSchema(BaseModel):
-    """Complete graph schema with validation and auto-deduction capabilities."""
+    """Complete graph schema with validation and auto-deduction capabilities.
 
-    root_model_class: type[BaseModel]
+    The root_model_class is optional for schemas that don't have a single root
+    (e.g., Neo4j imports with multiple independent node types). When not set,
+    schema auto-deduction features that rely on it will be skipped.
+    """
+
+    root_model_class: type[BaseModel] | None = None
     nodes: list[GraphNode]
     relations: list[GraphRelation]
     # Track all root model classes from merged schemas (for combined schemas)
@@ -339,8 +345,8 @@ class GraphSchema(BaseModel):
                             "is_list": True,
                             "annotation": annotation,
                         }
-                # Handle Optional[Model] and Union[Model, None]
-                elif get_origin(annotation) is Union:
+                # Handle Optional[Model] and Union[Model, None] - including types.UnionType from Python 3.10+
+                elif get_origin(annotation) is Union or get_origin(annotation) is types.UnionType:
                     args = get_args(annotation)
                     non_none_args = [arg for arg in args if arg is not type(None)]
                     # Unwrap Optional[List[T]] or Union[List[T], None]
@@ -446,7 +452,7 @@ class GraphSchema(BaseModel):
                     }
 
         # For combined schemas, explore ALL root model classes
-        root_classes_to_explore = [self.root_model_class] + self.merged_root_classes
+        root_classes_to_explore = ([self.root_model_class] if self.root_model_class else []) + self.merged_root_classes
         for root_class in root_classes_to_explore:
             explore_model(root_class)
 
@@ -456,8 +462,8 @@ class GraphSchema(BaseModel):
             node_config.field_paths = []
             node_config.is_list_at_paths = {}
 
-            # Special case: root model
-            if node_config.node_class == self.root_model_class:
+            # Special case: root model (only if root_model_class is set)
+            if self.root_model_class is not None and node_config.node_class == self.root_model_class:
                 node_config.field_paths = [""]  # Empty path = root
                 node_config.is_list_at_paths[""] = False
                 continue
@@ -693,7 +699,7 @@ class GraphSchema(BaseModel):
         # Warn when we have node classes that never appear in the reachable
         # model structure (likely orphan configurations).
         # For combined schemas, also check if node is a root in any merged schema
-        all_root_classes = {self.root_model_class} | set(self.merged_root_classes)
+        all_root_classes = ({self.root_model_class} if self.root_model_class else set()) | set(self.merged_root_classes)
 
         for node in self.nodes:
             # Robustly skip the root node (by class or by field_paths)
@@ -881,7 +887,8 @@ class GraphSchema(BaseModel):
 
     def print_schema_summary(self) -> None:
         """Print a summary of the deduced schema configuration."""
-        logger.debug(f"Graph Schema Summary for {self.root_model_class.__name__}")
+        root_name = self.root_model_class.__name__ if self.root_model_class else "(no root)"
+        logger.debug(f"Graph Schema Summary for {root_name}")
 
         # Nodes
         logger.debug("Node Configurations:")

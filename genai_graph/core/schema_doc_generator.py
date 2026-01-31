@@ -39,6 +39,8 @@ def generate_schema_description(subgraphs: str | list[str], print_enums: bool = 
         description = generate_schema_description("ReviewedOpportunity", print_enums=False)
         ```
     """
+    import warnings
+
     baml_docs = _parse_baml_descriptions()
 
     # Single subgraph name provided
@@ -49,8 +51,12 @@ def generate_schema_description(subgraphs: str | list[str], print_enums: bool = 
         return format_schema_description(schema=schema, baml_docs=baml_docs, print_enums=print_enums)
 
     # Otherwise, treat as list of subgraph names (possibly empty => all)
+    # Suppress validation warnings for combined schemas (type mismatches between
+    # extended and base types are expected when merging different subgraphs)
     registry = GraphRegistry.get_instance()
-    schema = registry.build_combined_schema(subgraphs)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=UserWarning, message="Graph schema validation:")
+        schema = registry.build_combined_schema(subgraphs)
     return format_schema_description(schema=schema, baml_docs=baml_docs, print_enums=print_enums)
 
 
@@ -463,7 +469,7 @@ def format_schema_description(schema: GraphSchema, baml_docs: dict[str, Any], pr
         lines.append("")
 
     # High-level linkage between the logical root entity and its relationships.
-    root_name = schema.root_model_class.__name__
+    root_name = schema.root_model_class.__name__ if schema.root_model_class else "(no root)"
     lines.append(f"{root_name} → [relation] → [Target] // Relationships originating from the root entity")
 
     # Add enumerations section

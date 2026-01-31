@@ -132,6 +132,7 @@ def export_schema_json(config_name: str) -> UPath:
         Path to the exported JSON schema file
     """
     import json
+    import warnings
 
     from genai_graph.core.graph_registry import GraphRegistry
     from genai_graph.core.schema_doc_generator import _get_kuzu_type_for_field
@@ -140,8 +141,12 @@ def export_schema_json(config_name: str) -> UPath:
     manager.ensure_directories_for(config_name)
 
     # Build the combined schema from all registered subgraphs
+    # Suppress validation warnings for combined schemas (type mismatches between
+    # extended and base types are expected when merging different subgraphs)
     registry = GraphRegistry.get_instance()
-    schema = registry.build_combined_schema([])
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=UserWarning, message="Graph schema validation:")
+        schema = registry.build_combined_schema([])
 
     schema_dict: dict[str, Any] = {
         "nodes": {},
@@ -216,6 +221,8 @@ def export_info(config_name: str, backend: GraphBackend) -> UPath:
     Returns:
         Path to the exported info file
     """
+    import warnings
+
     from genai_graph.core.graph_backend import get_backend_storage_path_from_config
     from genai_graph.core.graph_registry import GraphRegistry, get_subgraph
     from genai_graph.core.graph_schema import find_embedded_field_for_class
@@ -227,8 +234,12 @@ def export_info(config_name: str, backend: GraphBackend) -> UPath:
     registry = GraphRegistry.get_instance()
     selected_subgraphs = registry.listsubgraphs()
 
+    # Suppress validation warnings for combined schemas (type mismatches between
+    # extended and base types are expected when merging different subgraphs)
     try:
-        schema = registry.build_combined_schema(selected_subgraphs)
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=UserWarning, message="Graph schema validation:")
+            schema = registry.build_combined_schema(selected_subgraphs)
     except ValueError as exc:
         logger.error(f"Failed to build schema: {exc}")
         schema = None

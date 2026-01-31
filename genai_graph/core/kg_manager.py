@@ -185,9 +185,7 @@ class KgManager(BaseModel):
         Returns:
             Root directory for the specified KG profile
         """
-        cfg = global_config()
-        data_root = cfg.get_dir_path("paths.ekg_data")
-        return data_root / "kg_outputs" / profile
+        return global_config().get_dir_path("paths.kg_outputs") / profile
 
     def get_db_path_for(self, profile: str) -> UPath:
         """Return the database path for any given KG profile."""
@@ -223,16 +221,10 @@ class KgManager(BaseModel):
 
     @property
     def base_path(self) -> UPath:
-        """Root directory for this KG profile.
-
-        Layout:
-            <paths.data_root>/kg_outputs/<profile>/
-        """
+        """Root directory for this KG profile."""
 
         if self._base_path is None:
-            cfg = global_config()
-            data_root = cfg.get_dir_path("paths.ekg_data")
-            self._base_path = data_root / "kg_outputs" / self.profile
+            self._base_path = global_config().get_dir_path("paths.kg_outputs") / self.profile
         return self._base_path
 
     @property

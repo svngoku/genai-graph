@@ -485,11 +485,8 @@ def create_backend_from_config(config_key: str = "default", kg_config_name: str 
 
         # Construct the path for the specified kg_config without mutating the singleton
         # Use the same path construction logic as KgManager
-        data_root = config.get_dir_path("paths.ekg_data")
-        kg_base_path = Path(str(data_root)) / "kg_outputs" / kg_config_name
-        connection_path = str(kg_base_path / f"{kg_config_name}-{manager.tag}.db")
-
-        # Ensure directory exists
+        kg_base_path = config.get_dir_path("paths.kg_outputs") / kg_config_name
+        connection_path = kg_base_path / f"{kg_config_name}-{manager.tag}.db"
         kg_base_path.mkdir(parents=True, exist_ok=True)
     elif not connection_path:
         raise ValueError(f"Missing 'path' in graph_db config for '{config_key}'")
@@ -548,8 +545,7 @@ def get_backend_storage_path_from_config(config_key: str = "default", kg_config_
         manager = get_kg_manager()
         # Construct the path for the specified kg_config without relying on manager.db_path
         # (which may be tied to a different profile)
-        data_root = config.get_dir_path("paths.ekg_data")
-        kg_base_path = UPath(str(data_root)) / "kg_outputs" / kg_config_name
+        kg_base_path = config.get_dir_path("paths.kg_outputs") / kg_config_name
         return kg_base_path / f"{kg_config_name}-{manager.tag}.db"
 
     connection_path = db_config.get("path")

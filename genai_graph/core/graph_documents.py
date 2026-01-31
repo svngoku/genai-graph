@@ -100,7 +100,10 @@ def add_documents_to_graph(
 
     root_class = getattr(schema, "root_model_class", None)
     if root_class is None:
-        raise ValueError("schema does not expose root_model_class")
+        raise ValueError(
+            f"Schema for subgraph '{subgraph_impl.name}' does not have root_model_class set. "
+            "Document processing requires a root model class to validate metadata."
+        )
 
     # Validate presence of metadata map field (allow Optional[dict])
     if not _has_metadata_map(root_class, schema):

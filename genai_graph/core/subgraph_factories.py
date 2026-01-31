@@ -33,13 +33,23 @@ console = Console()
 class SubgraphFactory(ABC, BaseModel):
     """Abstract base class for subgraph implementations."""
 
-    # Class constant - must be overridden by subclasses
-    TOP_CLASS: Type[BaseModel]
+    # Optional class constant - set for factories with a single root model type.
+    # Not needed for factories like Neo4jSubgraphFactory that discover types dynamically.
+    TOP_CLASS: Type[BaseModel] | None = None
 
     @property
     def name(self) -> str:
-        """Name of the subgraph."""
-        return self.TOP_CLASS.__name__
+        """Name of the subgraph.
+
+        Derived from TOP_CLASS if set, otherwise from build_schema().root_model_class.
+        """
+        if self.TOP_CLASS is not None:
+            return self.TOP_CLASS.__name__
+        # Fallback to root_model_class from schema
+        schema = self.build_schema()
+        if schema.root_model_class is not None:
+            return schema.root_model_class.__name__
+        return self.__class__.__name__
 
     @abstractmethod
     def get_struct_data_by_key(self, key: str) -> BaseModel | None:
@@ -110,6 +120,8 @@ class JsonFileBackedSubgraphFactory(SubgraphFactory):
 
     This factory works with the output of 'baml extract' command, which stores
     extracted structured data as JSON files in a directory structure with model subdirectory.
+
+    Note: TOP_CLASS must be set for this factory type.
     """
 
     data_root: str
@@ -130,6 +142,9 @@ class JsonFileBackedSubgraphFactory(SubgraphFactory):
         factory is instantiated multiple times.
         """
         from genai_tk.utils.file_patterns import resolve_config_path, resolve_files
+
+        if self.TOP_CLASS is None:
+            raise ValueError(f"{self.__class__.__name__} requires TOP_CLASS to be set")
 
         model_name = self.TOP_CLASS.__name__
 
@@ -212,6 +227,8 @@ class JsonFileBackedSubgraphFactory(SubgraphFactory):
 
     def get_struct_data_by_file_path(self, file_path: UPath) -> BaseModel | None:
         """Load structured data from a JSON file."""
+        if self.TOP_CLASS is None:
+            raise ValueError(f"{self.__class__.__name__} requires TOP_CLASS to be set")
         try:
             json_text = file_path.read_text(encoding="utf-8")
             data = json.loads(json_text)
@@ -254,7 +271,14 @@ class TableBackedSubgraphFactory(SubgraphFactory):
 
     @property
     def table_name(self) -> str:
-        """Derive table name from TOP_CLASS name in snake_case."""
+        """Derive table name from TOP_CLASS name in snake_case.
+
+        Subclasses should override this if TOP_CLASS is not set.
+        """
+        if self.TOP_CLASS is None:
+            raise ValueError(
+                f"{self.__class__.__name__} requires TOP_CLASS to be set, or override the table_name property"
+            )
         # Convert PascalCase to snake_case
         name = self.TOP_CLASS.__name__
         snake = re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()

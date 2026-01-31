@@ -4,38 +4,36 @@ from pydantic import BaseModel
 
 from genai_graph.core.graph_schema import GraphNode, GraphRelation, GraphSchema
 from genai_graph.core.subgraph_factories import TableBackedSubgraphFactory
-from genai_graph.ekg.baml_client.types import Customer, Opportunity, Person
-from genai_graph.ekg.schema.common_nodes import WinLoss, get_common_nodes
-
-
-class CrmExtract(BaseModel):
-    opportunity: Opportunity
-    lead: Person
-    win_loss: WinLoss
-    metadata: dict | None = None
+from genai_graph.ekg.baml_client.types import Person
+from genai_graph.ekg.schema.common_nodes import Customer, Opportunity, WinLoss
 
 
 class CrmExtractSubGraph(TableBackedSubgraphFactory, BaseModel):
-    """Architecture document data subgraph implementation."""
+    """CRM data subgraph implementation.
 
-    TOP_CLASS: Type[BaseModel] = CrmExtract
+    Imports CRM export data and creates Opportunity-centric graphs
+    with related Customer, Person, and WinLoss nodes.
+    """
+
+    TOP_CLASS: Type[BaseModel] = Opportunity
+
+    @property
+    def table_name(self) -> str:
+        """Keep the original table name for backward compatibility."""
+        return "crm_extract"
 
     def get_key_field(self) -> str:
         """Return the field name used as the unique key for data retrieval."""
         return "Atos Opportunity ID"
 
-    def mapper_function(self, row: dict[str, Any]) -> CrmExtract | None:
-        """Map database row to CrmExtract model."""
-        from devtools import debug  # noqa: F401
-
-        return CrmExtract(
-            opportunity=Opportunity(
-                opportunity_id=str(row.get("Atos Opportunity ID", "")),
-                name=row.get("Opportunity Name", ""),
-                customer=Customer(
-                    name=row.get("Account Name", ""),
-                    segment=row.get("Sub-Industry", ""),
-                ),
+    def mapper_function(self, row: dict[str, Any]) -> Opportunity | None:
+        """Map database row to Opportunity model."""
+        return Opportunity(
+            opportunity_id=str(row.get("Atos Opportunity ID", "")),
+            name=row.get("Opportunity Name", ""),
+            customer=Customer(
+                name=row.get("Account Name", ""),
+                segment=row.get("Sub-Industry", ""),
             ),
             lead=Person(name=row.get("Client Leader", ""), p_role_="Client Leader", organization="Atos"),
             win_loss=WinLoss(
@@ -47,42 +45,43 @@ class CrmExtractSubGraph(TableBackedSubgraphFactory, BaseModel):
     def build_schema(self) -> GraphSchema:
         """Build the graph schema for CRM extract data.
 
-        Creates schema with Opportunity, Person, and WinLoss nodes  their relationships.
+        Creates schema with Opportunity, Person, and WinLoss nodes and their relationships.
         """
-        from genai_graph.ekg.baml_client.types import Opportunity, Person
-
-        # Common business nodes (Opportunity, Customer, Person)
-        nodes = get_common_nodes() + [
-            # Root node for the CRM extract row
+        nodes = [
             GraphNode(
-                node_class=CrmExtract,
-                name_from=lambda data, base: f"{base}",
-                key_from="AUTO_ID",  # Use auto-generated SERIAL id
-                description="CRM extract root containing opportunity, lead, and win/loss data",
+                node_class=Opportunity,
+                name_from="name",
+                key_from="opportunity_id",
+                description="Sales opportunity with win/loss tracking",
+                index_fields=["name", "status"],
             ),
-            # Win/loss outcome as a regular node
+            GraphNode(
+                node_class=Customer,
+                name_from="name",
+                key_from="name",
+                description="Customer organization details",
+                index_fields=["name"],
+            ),
+            GraphNode(
+                node_class=Person,
+                name_from="name",
+                key_from="name",
+                description="Individual contacts and team members",
+            ),
             GraphNode(
                 node_class=WinLoss,
                 name_from=lambda data, _base: data.get("reason") or data.get("result") or "other/unset",
-                key_from="AUTO_ID",  # Use auto-generated SERIAL id
+                key_from="AUTO_ID",
                 description="Win/Loss outcome for the opportunity",
             ),
         ]
 
         relations = [
-            # GraphRelation(
-            #     from_node=CrmExtract,
-            #     to_node=Opportunity,
-            #     name="CRM_INFO",
-            #     description="CRM extracted Information",
-            # ),and
-            # Link CRM extract root to its win/loss record
             GraphRelation(
                 from_node=Opportunity,
                 to_node=WinLoss,
                 name="WIN_LOSS_INFO",
-                description="Win/loss outcome for this CRM extract row",
-                # field_paths=[("", "win_loss")],
+                description="Win/loss outcome for this opportunity",
             ),
             GraphRelation(
                 from_node=Opportunity,
@@ -103,7 +102,7 @@ class CrmExtractSubGraph(TableBackedSubgraphFactory, BaseModel):
                 description="Customer contact persons",
             ),
         ]
-        return GraphSchema(root_model_class=CrmExtract, nodes=nodes, relations=relations)
+        return GraphSchema(root_model_class=Opportunity, nodes=nodes, relations=relations)
 
 
 # Atos Opportunity ID	Fiscal Period	Order entry (converted) Currency	Order entry (converted)	IRIS Account Name	Opportunity Name	Closing Date	Leading Profit Center: Profit Center Name	Status	Reason	Item Order Entry (converted) Currency	Item Order Entry (converted)	Industry	Item Number	Client Leader	Close Month	Account Name	Product Business Line Code	Leading Profit Center: Country	Portfolio	Sub-Industry	Bid Budget (converted) Currency	Bid Budget (converted)	Item Business Line Name
@@ -139,16 +138,16 @@ if __name__ == "__main__":
         console.print(f"[green]✓[/green] Found data for key {test_key}")
 
         # Type narrow for IDE support
-        assert isinstance(result, CrmExtract)
+        assert isinstance(result, Opportunity)
 
         table = Table(show_header=True, header_style="bold magenta", show_lines=True)
         table.add_column("Field", style="cyan")
         table.add_column("Value", style="white")
 
-        table.add_row("Opportunity", result.opportunity.name)
-        table.add_row("Customer", result.opportunity.customer.name)
-        table.add_row("Lead", result.lead.name)
-        table.add_row("Win/Loss", result.win_loss.result or "(empty)")
+        table.add_row("Opportunity", result.name)
+        table.add_row("Customer", result.customer.name)
+        table.add_row("Lead", result.lead.name if result.lead else "(none)")
+        table.add_row("Win/Loss", result.win_loss.result if result.win_loss else "(empty)")
 
         console.print(table)
     else:

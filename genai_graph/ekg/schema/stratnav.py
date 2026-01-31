@@ -11,43 +11,9 @@ from typing import Any, Type
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from genai_graph.core.graph_schema import GraphNode, GraphRelation, GraphSchema
+from genai_graph.core.graph_schema import GraphNode, GraphSchema
 from genai_graph.core.subgraph_factories import Neo4jSubgraphFactory
-from genai_graph.ekg.baml_client.types import Customer
-
-# -----------------------------------------------------------------------------
-# Stratnav-specific Pydantic models
-# -----------------------------------------------------------------------------
-
-
-class L3Service(BaseModel):
-    """Level 3 service offering."""
-
-    code: str = Field(..., description="Service code identifier (L3Code)")
-    name: str = Field(default="", description="Service name")
-    description: str = Field(default="", description="Description of the service")
-    service_type: str = Field(default="", description="Type of service")
-
-
-class GeoLocation(BaseModel):
-    """Geographic location."""
-
-    name: str = Field(..., description="Location name")
-    country: str = Field(default="", description="Country code or name")
-
-
-class StratnavAccount(BaseModel):
-    """Account from Stratnav with location.
-
-    This is the root model that aggregates account information with
-    related geographic location and services.
-    """
-
-    account: Customer
-    location: GeoLocation | None = None
-    services: list[L3Service] = Field(default_factory=list)
-    metadata: dict[str, str] | None = Field(default=None, description="Additional metadata")
-
+from genai_graph.ekg.schema.common_nodes import Customer, GeoLocation, L3Service
 
 # -----------------------------------------------------------------------------
 # Node-to-Model mapping configuration
@@ -81,13 +47,11 @@ class Neo4jRelMapping(BaseModel):
 
 
 class StratnavSubgraph(Neo4jSubgraphFactory, BaseModel):
-    """Stratnav-specific subgraph factory for Neo4j JSONL exports.
+    """Subgraph factory for Neo4j JSONL exports.
 
-    This factory processes Stratnav Neo4j exports and maps them to a custom
-    graph schema with Account, Location, and L3Service nodes.
+    This factory processes Neo4j exports and maps Account nodes to Customer
+    with embedded location and services.
     """
-
-    TOP_CLASS: Type[BaseModel] = StratnavAccount
 
     # Node mappings from Neo4j labels to Pydantic models
     _node_mappings: list[Neo4jNodeMapping] = [
@@ -121,37 +85,26 @@ class StratnavSubgraph(Neo4jSubgraphFactory, BaseModel):
     ]
 
     def build_schema(self) -> GraphSchema:
-        """Build the graph schema for Stratnav data.
+        """Build the graph schema for imported data.
 
         Returns:
-            GraphSchema with node and relationship configurations
+            GraphSchema with Customer as the root node.
+            Location and services are embedded in Customer.
         """
         nodes = [
-            GraphNode(
-                node_class=StratnavAccount,
-                name_from=lambda data, _: data.get("account", {}).get("name", "Unknown"),
-                key_from="AUTO_ID",
-                description="Root node for Stratnav account data",
-            ),
             GraphNode(
                 node_class=Customer,
                 name_from="name",
                 key_from=lambda data, _: data.get("iris_code") or data.get("name", "unknown"),
-                description="Customer account from Stratnav",
+                description="Customer account with location and services",
                 index_fields=["name"],
             ),
         ]
 
-        relations = [
-            GraphRelation(
-                from_node=StratnavAccount,
-                to_node=Customer,
-                name="HAS_ACCOUNT",
-                description="Links root to account",
-            ),
-        ]
+        # No relationships needed - location and services are embedded in Customer
+        relations: list = []
 
-        return GraphSchema(root_model_class=StratnavAccount, nodes=nodes, relations=relations)
+        return GraphSchema(root_model_class=Customer, nodes=nodes, relations=relations)
 
     def get_all_keys(self) -> list[str]:
         """Get all Account node IDs as keys for document ingestion.
@@ -163,16 +116,16 @@ class StratnavSubgraph(Neo4jSubgraphFactory, BaseModel):
         return [node.get("_neo4j_id", "") for node in account_nodes if node.get("_neo4j_id")]
 
     def get_struct_data_by_key(self, key: str) -> BaseModel | None:
-        """Map a Neo4j Account node to StratnavAccount model.
+        """Map a Neo4j Account node to Customer model.
 
         This method finds the Account node by neo4j ID and constructs
-        a StratnavAccount instance with related Location.
+        a Customer instance with embedded location and services.
 
         Args:
             key: The neo4j node ID for an Account
 
         Returns:
-            StratnavAccount instance or None if not found
+            Customer instance or None if not found
         """
         # Find the Account node
         account_nodes = self.get_nodes_by_label("Account")
@@ -186,10 +139,12 @@ class StratnavSubgraph(Neo4jSubgraphFactory, BaseModel):
             logger.warning(f"Account node not found for key: {key}")
             return None
 
-        # Map Account to Customer
-        customer = self._map_node_to_customer(account_data)
-        if customer is None:
+        # Map Account directly to Customer
+        mapping = self._get_node_mapping("Account")
+        if mapping is None:
             return None
+
+        mapped_data = self._apply_field_mapping(account_data, mapping.field_mapping)
 
         # Find related Location
         location = self._find_related_location(key)
@@ -197,32 +152,12 @@ class StratnavSubgraph(Neo4jSubgraphFactory, BaseModel):
         # Find related L3 Services (through any relationship path)
         services = self._find_related_services(key)
 
-        return StratnavAccount(
-            account=customer,
-            location=location,
-            services=services,
-        )
-
-    def _map_node_to_customer(self, node_data: dict[str, Any]) -> Customer | None:
-        """Map Neo4j Account node data to Customer model.
-
-        Args:
-            node_data: Raw node data from Neo4j JSONL
-
-        Returns:
-            Customer instance
-        """
-        mapping = self._get_node_mapping("Account")
-        if mapping is None:
-            return None
-
-        mapped_data = self._apply_field_mapping(node_data, mapping.field_mapping)
-
-        # Ensure required fields have defaults
         return Customer(
             name=mapped_data.get("name", "Unknown"),
             iris_code=mapped_data.get("iris_code"),
             segment=mapped_data.get("segment"),
+            location=location,
+            services=services,
         )
 
     def _find_related_location(self, account_id: str) -> GeoLocation | None:
@@ -321,15 +256,14 @@ class StratnavSubgraph(Neo4jSubgraphFactory, BaseModel):
         return result
 
     def get_sample_queries(self) -> list[str]:
-        """Get sample Cypher queries for Stratnav data.
+        """Get sample Cypher queries for customer data.
 
         Returns:
             List of sample query strings
         """
         return [
             "MATCH (n) RETURN labels(n)[0] as NodeType, count(n) as Count",
-            "MATCH (c:Customer) RETURN c.name, c.segment LIMIT 5",
-            "MATCH (sa:StratnavAccount)-[:HAS_ACCOUNT]->(c:Customer) RETURN sa.name, c.name, c.iris_code LIMIT 5",
+            "MATCH (c:Customer) RETURN c.name, c.segment, c.iris_code LIMIT 5",
         ]
 
 
@@ -395,15 +329,18 @@ if __name__ == "__main__":
 
         data = sg.get_struct_data_by_key(test_key)
         if data:
-            console.print("[green]✓[/green] Loaded StratnavAccount data")
+            console.print("[green]✓[/green] Loaded Customer data")
 
             table = Table(show_header=True, header_style="bold magenta", show_lines=True)
             table.add_column("Field", style="cyan")
             table.add_column("Value", style="white")
 
-            table.add_row("Account Name", data.account.name)
-            table.add_row("IRIS Code", data.account.iris_code or "(none)")
-            table.add_row("Segment", data.account.segment or "(none)")
+            # Data is now Customer directly (not wrapped)
+            assert isinstance(data, Customer)
+            table.add_row("Customer Name", data.name)
+            table.add_row("IRIS Code", data.iris_code or "(none)")
+            table.add_row("Segment", data.segment or "(none)")
+            table.add_row("Location", data.location.name if data.location else "(none)")
 
             console.print(table)
         else:
