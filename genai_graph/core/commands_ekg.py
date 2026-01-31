@@ -7,7 +7,7 @@ using an in-process runner so no long-lived Prefect server is required.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 from genai_tk.main.cli import CliTopCommand
@@ -629,8 +629,8 @@ class EkgCommands(CliTopCommand):
 
                 # Display results
                 console.print("")
-                console.print(f"[green]✓ Generation completed.[/green] Generated: {result['total_generated']} files")
-                console.print(f"[cyan]Output directory:[/cyan] {result['output_dir']}/fake/")
+                console.print(f"[green]✓ Generation completed.[/green] Generated: {result.total_generated} files")
+                console.print(f"[cyan]Output directory:[/cyan] {result.output_dir}/fake/")
 
             except FileNotFoundError as exc:
                 logger.error(f"CRM file not found: {exc}")

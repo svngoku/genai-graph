@@ -116,7 +116,7 @@ def build_lineage_for_manager(manager: KgManager) -> list[MarkdownLineage]:
                 if lineage.source_path and not existing.source_path:
                     existing.source_path = lineage.source_path
 
-    return sorted(by_markdown.values(), key=lambda l: str(l.markdown_path))
+    return sorted(by_markdown.values(), key=lambda lineage: str(lineage.markdown_path))
 
 
 def _build_lineage_for_json(
@@ -167,6 +167,10 @@ def _build_lineage_for_json(
                 ".ppt",
             ),
         )
+
+    # Ensure markdown_path is not None before creating MarkdownLineage
+    if markdown_path is None:
+        return None
 
     return MarkdownLineage(
         profile=profile,
@@ -287,7 +291,6 @@ def _guess_lineage_from_paths(
     except Exception:  # pragma: no cover - defensive
         return None, None
 
-    json_root = None
     base_key = None
 
     json_path_str = str(json_path)
@@ -299,12 +302,10 @@ def _guess_lineage_from_paths(
         root_str = str(value).rstrip("/")
 
         if data_root and str(data_root).rstrip("/") == root_str:
-            json_root = root_str
             base_key = key[: -len("_json")]
             break
 
         if json_path_str.startswith(root_str + "/"):
-            json_root = root_str
             base_key = key[: -len("_json")]
             break
 

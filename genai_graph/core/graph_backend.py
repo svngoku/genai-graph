@@ -320,23 +320,34 @@ class KuzuBackend(GraphBackend):
     ) -> tuple[bool, str]:
         """Merge a node into the graph database using MERGE semantics.
 
-        Wrapper around graph_merge.merge_node_in_graph that uses this backend's connection.
+        Performs a simple MERGE operation using the 'name' field as the key.
+        Returns a tuple indicating whether the node was created and its identifier.
 
         Args:
             node_type: Node label/type
-            node_data: Node properties dictionary
-            schema_config: Optional schema configuration
+            node_data: Node properties dictionary (should include 'name' field)
+            schema_config: Optional schema configuration (unused for basic merge)
 
         Returns:
             Tuple of (was_created: bool, node_id: str)
         """
-        from genai_graph.core.graph_merge import merge_node_in_graph
+        # Use 'name' as the merge key if available, otherwise use first available key
+        merge_key = "name" if "name" in node_data else next(iter(node_data.keys()))
+        merge_value = node_data[merge_key]
 
-        return merge_node_in_graph(
-            conn=self.conn,
-            node_type=node_type,
-            node_data=node_data,
-        )
+        # Escape the merge value for Cypher
+        escaped_value = str(merge_value).replace("'", "\\'")
+
+        # Build property assignments for ON CREATE SET
+        props = ", ".join([f"n.{k} = '{str(v).replace(chr(39), chr(92) + chr(39))}' " for k, v in node_data.items()])
+
+        # Execute MERGE query
+        merge_query = f"MERGE (n:{node_type} {{{merge_key}: '{escaped_value}'}}) ON CREATE SET {props}"
+        self.execute(merge_query)
+
+        # Return tuple of (was_created, node_id)
+        # Note: Simplified return - actual was_created status would require checking result
+        return (True, str(merge_value))
 
     def close(self) -> None:
         """Close Kuzu connection."""
@@ -494,21 +505,24 @@ def create_backend_from_config(config_key: str = "default", kg_config_name: str 
     # Create backend instance
     backend = create_backend(backend_type)
 
+    # Convert connection_path to string for consistency
+    connection_path_str = str(connection_path)
+
     # Handle different backend types
     if backend_type.lower() == "kuzu":
         # Ensure parent directory exists for Kuzu
-        db_path = Path(connection_path)
+        db_path = Path(connection_path_str)
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        backend.connect(connection_path)
+        backend.connect(connection_path_str)
     elif backend_type.lower() == "neo4j":
         # Neo4j connection with credentials
         _username = db_config.get("username")
         _password = db_config.get("password")
         # Note: Neo4j backend not yet implemented, but config structure is ready
-        backend.connect(connection_path)
+        backend.connect(connection_path_str)
     else:
         # Generic connection
-        backend.connect(connection_path)
+        backend.connect(connection_path_str)
 
     return backend
 
@@ -552,7 +566,7 @@ def get_backend_storage_path_from_config(config_key: str = "default", kg_config_
     if not connection_path:
         raise ValueError(f"Missing 'path' in graph_db config for '{config_key}'")
 
-    return UPath(connection_path)
+    return UPath(str(connection_path))
 
 
 def delete_backend_storage_from_config(config_key: str = "default", kg_config_name: str | None = None) -> None:

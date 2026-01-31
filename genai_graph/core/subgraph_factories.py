@@ -167,7 +167,7 @@ class JsonFileBackedGraphFactory(GraphFactory):
                 include_patterns.append(f"{model_name}/{pattern}")
 
         # Always exclude manifest.json files (metadata files from baml extract)
-        exclude_patterns = self.exclude or []
+        exclude_patterns: list[str] = self.exclude or []  # type: ignore[assignment]
         if not isinstance(exclude_patterns, list):
             exclude_patterns = [exclude_patterns]
         else:
@@ -242,8 +242,6 @@ class TableBackedGraphFactory(GraphFactory):
 
     # Track warnings to avoid repetition
     _shown_warnings: ClassVar[set[str]] = set()
-    db_dsn: str
-    files: list[UPath]
 
     @classmethod
     def clear_cache(cls) -> None:
@@ -885,9 +883,13 @@ class Neo4jGraphFactory(GraphFactory):
         """Return the analyzed schema information."""
         return self._schema_info
 
-    def get_node_labels(self) -> list[str]:
-        """Return all discovered node labels."""
-        return list(self._node_data.keys())
+    def get_node_labels(self) -> dict[str, str]:  # type: ignore[override]
+        """Return all discovered node labels.
+
+        Note: This implementation returns a simplified dict[str, str] mapping
+        instead of the base class's dict[str, str] with descriptions.
+        """
+        return {label: label for label in self._node_data.keys()}
 
     def get_relationship_types(self) -> list[str]:
         """Return all discovered relationship types."""
