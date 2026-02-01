@@ -1,11 +1,23 @@
 # New
 
+1/
+Fix  and complete (or refactor completly) genai_graph/ekg/schema/stratnav.py and related code  (it never worked as expected ,and its based on old design choices).
+
+The goal is to create a Kuzu graph from a ne4oj database, imported through a JSONL file. The Kuzu graph need to be merges with other graphs, and so chare same creation logic.
+
+We'll test fiest on a subset of the neo4j graph (it normally have > 150K lines).
+From this version of stratnav.py, we expect to have at least nodes of type 'Customers', 'L3' and 'Ambiion'.  there will be more later. 
+
+to test : cli kg create --kg simple_neo4j  
 
 
 
- 
+2/ By default disply graph nodes connected to the following types : OpportunityReview, Add.... 
+ (maybe node Document added automatically, and/or Metadata? )
 
+3/ Financial my be a node too ...  (with expected / real, ..)
 
+5/ 
 
 Refactor totaly  /home/tcl/prj/genai-tk/genai_tk/tools/langchain/rag_tool_factory.py .  
 The created LangChain tool should behave like the 'query' command in /home/tcl/prj/genai-tk/genai_tk/extra/rag/commands_rag.py, ie accept a query string and an optional metadata filter in JSON. 

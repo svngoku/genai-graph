@@ -304,6 +304,24 @@ class NodeTypeRegistry(BaseModel):
         """Register a node type configuration."""
         self.configs[config.node_type] = config
 
+    def add_type(self, node_type: str, key_field: str = "id", name_field: str = "name") -> None:
+        """Add a node type with default configuration.
+
+        This is a convenience method for dynamic schema creation where
+        we don't have GraphNode definitions.
+
+        Args:
+            node_type: The node type name (table name)
+            key_field: The primary key field name (default: "id")
+            name_field: The name/display field name (default: "name")
+        """
+        config = NodeTypeConfig(
+            node_type=node_type,
+            key_field=key_field,
+            name_field=name_field,
+        )
+        self.register(config)
+
     def get(self, node_type: str) -> NodeTypeConfig:
         """Get config for a node type, with sensible defaults."""
         if node_type in self.configs:
@@ -707,6 +725,22 @@ def merge_relationships_batch(
             df_data.append(row)
 
         df = pd.DataFrame(df_data)
+
+        # Fix DataFrame column types to handle None values properly
+        # Kuzu doesn't handle object dtype well - convert to proper types
+        for col in property_cols:
+            if col in df.columns:
+                # Check column content to infer proper type
+                non_null_vals = df[col].dropna()
+                if len(non_null_vals) > 0:
+                    first_val = non_null_vals.iloc[0]
+                    if isinstance(first_val, bool):
+                        # Convert None to False for boolean columns, then cast to bool
+                        df[col] = df[col].fillna(False)
+                        df[col] = df[col].astype(bool)
+                    elif isinstance(first_val, (int, float)):
+                        # Keep numeric types as-is (NaN is handled)
+                        pass
 
         # Build property assignment for CREATE
         if property_cols:

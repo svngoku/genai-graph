@@ -735,6 +735,9 @@ class Neo4jGraphFactory(GraphFactory):
     _rel_data: dict[str, list[dict[str, Any]]] = {}
     _initialized: bool = False
 
+    # Neo4j ID to node type mapping for relationship resolution
+    _neo4j_id_to_label: dict[str, str] = {}
+
     # Class-level cache to track which export files have been initialized
     _initialized_files: ClassVar[set[str]] = set()
 
@@ -835,6 +838,10 @@ class Neo4jGraphFactory(GraphFactory):
         node_id = str(record.get("id", ""))
         labels = record.get("labels", [])
         properties = record.get("properties", {})
+
+        # Track the primary label for this neo4j ID (used for relationship resolution)
+        if labels:
+            self._neo4j_id_to_label[node_id] = labels[0]
 
         for label in labels:
             if label not in self._node_data:
@@ -959,3 +966,212 @@ class Neo4jGraphFactory(GraphFactory):
         """
         # Default: return None - subclasses must override
         return None
+
+
+class Neo4jImportFactory(Neo4jGraphFactory):
+    """Extended Neo4j factory for direct graph import with mappings.
+
+    This factory provides a complete solution for importing Neo4j data with:
+    - Node type renaming (e.g., "Account" -> "Customer")
+    - Property renaming (e.g., "irisCode" -> "iris_code")
+    - Property filtering (include only specified properties)
+    - Relationship type renaming
+    - Node type filtering (only import specified types)
+
+    Subclasses should define:
+    - node_mappings: Dict mapping Neo4j labels to (target_type, property_mappings)
+    - relationship_mappings: Dict mapping Neo4j rel types to target rel names
+    - included_node_types: Optional set of Neo4j labels to include (all if None)
+    - included_rel_types: Optional set of Neo4j rel types to include (all if None)
+
+    The factory bypasses the hierarchical model extraction and directly builds
+    NodeDataCollection and RelationshipRecord lists for import.
+    """
+
+    @property
+    def name(self) -> str:
+        """Factory name for registration."""
+        return self.__class__.__name__
+
+    def get_node_mappings(self) -> dict[str, tuple[str, dict[str, str]]]:
+        """Get node type and property mappings.
+
+        Override this to define your mappings.
+
+        Returns:
+            Dict mapping Neo4j label to (target_type, {neo4j_prop: target_prop})
+
+        Example:
+            {
+                "Account": ("Customer", {"irisCode": "iris_code", "name": "name"}),
+                "L3": ("L3Service", {"L3Code": "code", "name": "name"}),
+            }
+        """
+        return {}
+
+    def get_relationship_mappings(self) -> dict[str, str]:
+        """Get relationship type mappings.
+
+        Override this to define your relationship mappings.
+
+        Returns:
+            Dict mapping Neo4j rel type to target rel name
+
+        Example:
+            {
+                "HAS_AMBITION": "HAS_AMBITION",
+                "USES": "USES_SERVICE",
+            }
+        """
+        return {}
+
+    def get_included_node_types(self) -> set[str] | None:
+        """Get the set of Neo4j labels to include.
+
+        Override to filter node types. Return None to include all.
+
+        Returns:
+            Set of Neo4j labels to include, or None for all
+        """
+        return None
+
+    def get_included_rel_types(self) -> set[str] | None:
+        """Get the set of Neo4j relationship types to include.
+
+        Override to filter relationship types. Return None to include all.
+
+        Returns:
+            Set of Neo4j rel types to include, or None for all
+        """
+        return None
+
+    def build_schema(self) -> GraphSchema:
+        """Build a minimal schema (not used for direct import)."""
+        return GraphSchema(root_model_class=None, nodes=[], relations=[])
+
+    def build_nodes_and_relationships(
+        self,
+    ) -> tuple["NodeDataCollection", list["RelationshipRecord"]]:
+        """Build NodeDataCollection and relationships from Neo4j data.
+
+        This method applies the configured mappings to transform Neo4j data
+        into the target format for direct import.
+
+        Returns:
+            Tuple of (NodeDataCollection, list[RelationshipRecord])
+        """
+        from datetime import datetime
+
+        from genai_graph.core.graph_core import RelationshipRecord
+        from genai_graph.core.graph_merge import NodeDataCollection
+
+        nodes_data = NodeDataCollection()
+        relationships: list[RelationshipRecord] = []
+
+        node_mappings = self.get_node_mappings()
+        rel_mappings = self.get_relationship_mappings()
+        included_nodes = self.get_included_node_types()
+        included_rels = self.get_included_rel_types()
+
+        # Track neo4j_id -> (target_type, target_id) for relationship resolution
+        id_mapping: dict[str, tuple[str, str]] = {}
+        now = datetime.utcnow().isoformat() + "Z"
+
+        # Process nodes
+        for neo4j_label, node_list in self._node_data.items():
+            # Filter by included types
+            if included_nodes is not None and neo4j_label not in included_nodes:
+                logger.debug(f"Skipping node type {neo4j_label} (not in included types)")
+                continue
+
+            # Get mapping config (or use defaults)
+            if neo4j_label in node_mappings:
+                target_type, prop_mapping = node_mappings[neo4j_label]
+            else:
+                # No mapping defined - use original label and all properties
+                target_type = neo4j_label
+                prop_mapping = {}
+
+            for node in node_list:
+                neo4j_id = node.get("_neo4j_id", "")
+
+                # Apply property mapping
+                if prop_mapping:
+                    # Only include mapped properties
+                    mapped_props = {}
+                    for neo4j_prop, target_prop in prop_mapping.items():
+                        if neo4j_prop in node:
+                            mapped_props[target_prop] = node[neo4j_prop]
+                else:
+                    # No mapping - copy all properties except internal ones
+                    mapped_props = {k: v for k, v in node.items() if not k.startswith("_")}
+
+                # Ensure 'id' and 'name' fields exist
+                if "id" not in mapped_props:
+                    # Use neo4j_id or first available unique identifier
+                    mapped_props["id"] = neo4j_id
+
+                if "name" not in mapped_props:
+                    # Try common name fields
+                    for name_field in ["name", "title", "label", "id"]:
+                        if name_field in mapped_props:
+                            mapped_props["name"] = str(mapped_props[name_field])
+                            break
+                    else:
+                        mapped_props["name"] = neo4j_id
+
+                # Add metadata timestamps
+                mapped_props["_created_at"] = now
+                mapped_props["_updated_at"] = now
+
+                # Track for relationship resolution
+                id_mapping[neo4j_id] = (target_type, mapped_props["id"])
+
+                nodes_data.add(target_type, mapped_props)
+
+        # Process relationships
+        for rel_key, rel_list in self._rel_data.items():
+            # Parse rel_key format: TYPE__FromLabel__ToLabel
+            parts = rel_key.split("__")
+            neo4j_rel_type = parts[0] if parts else rel_key
+
+            # Filter by included types
+            if included_rels is not None and neo4j_rel_type not in included_rels:
+                logger.debug(f"Skipping relationship type {neo4j_rel_type} (not in included types)")
+                continue
+
+            # Get mapped relationship name
+            target_rel_type = rel_mappings.get(neo4j_rel_type, neo4j_rel_type)
+
+            for rel in rel_list:
+                from_neo4j_id = rel.get("_from_id", "")
+                to_neo4j_id = rel.get("_to_id", "")
+
+                # Resolve to target types/ids
+                if from_neo4j_id not in id_mapping or to_neo4j_id not in id_mapping:
+                    # One or both nodes were filtered out
+                    continue
+
+                from_type, from_id = id_mapping[from_neo4j_id]
+                to_type, to_id = id_mapping[to_neo4j_id]
+
+                # Extract relationship properties (excluding internal fields)
+                rel_props = {k: v for k, v in rel.items() if not k.startswith("_")}
+
+                relationships.append(
+                    RelationshipRecord(
+                        from_type=from_type,
+                        from_id=from_id,
+                        to_type=to_type,
+                        to_id=to_id,
+                        name=target_rel_type,
+                        properties=rel_props,
+                    )
+                )
+
+        logger.info(
+            f"Built {nodes_data.total_count()} nodes ({', '.join(f'{t}:{len(n)}' for t, n in nodes_data.items())}) "
+            f"and {len(relationships)} relationships"
+        )
+
+        return nodes_data, relationships

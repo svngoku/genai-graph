@@ -748,6 +748,252 @@ def load_graph_data(
 # Orchestration
 
 
+def import_neo4j_data(
+    backend: GraphBackend,
+    nodes_data: NodeDataCollection,
+    relationships: list[RelationshipRecord],
+    context: KgManager | None = None,
+) -> tuple[NodeDataCollection, list[RelationshipRecord]]:
+    """Import pre-built nodes and relationships directly into the graph database.
+
+    This function is designed for Neo4j imports and other scenarios where data
+    is already in the right format and doesn't need hierarchical extraction.
+    It creates the necessary schema tables dynamically based on the data provided.
+
+    Args:
+        backend: Graph database backend
+        nodes_data: Pre-built NodeDataCollection with nodes grouped by type
+        relationships: Pre-built list of RelationshipRecord instances
+        context: Optional KgManager for collecting warnings
+
+    Returns:
+        Tuple of (nodes_data, relationships) that were loaded into the graph
+    """
+    from genai_graph.core.graph_merge import (
+        NodeTypeRegistry,
+        merge_nodes_batch,
+        merge_relationships_batch,
+    )
+
+    logger.info(f"Importing {nodes_data.total_count()} nodes and {len(relationships)} relationships")
+
+    # Create dynamic schema for all node types in the data
+    _create_dynamic_schema_for_nodes(backend, nodes_data, relationships)
+
+    # Build a minimal registry from the node data (no GraphNode configs needed)
+    registry = NodeTypeRegistry()
+    for node_type in nodes_data.types():
+        # Default: use 'id' as primary key field
+        registry.add_type(node_type, key_field="id", name_field="name")
+
+    # Merge nodes using DataFrame-based batch operations
+    logger.debug("Merging nodes into graph...")
+    merge_result = merge_nodes_batch(
+        conn=backend,
+        nodes=nodes_data,
+        registry=registry,
+        context=context,
+    )
+
+    # Create relationships
+    logger.debug(f"Creating {len(relationships)} relationships...")
+    relationships_created = merge_relationships_batch(
+        conn=backend,
+        relationships=relationships,
+        registry=registry,
+        id_mapping=merge_result.id_mapping,
+    )
+    logger.info(f"Import complete: {nodes_data.total_count()} nodes, {relationships_created} relationships")
+
+    return nodes_data, relationships
+
+
+def _create_dynamic_schema_for_nodes(
+    backend: GraphBackend,
+    nodes_data: NodeDataCollection,
+    relationships: list[RelationshipRecord],
+) -> None:
+    """Create Kuzu schema tables dynamically based on node data structure.
+
+    This inspects the actual data to determine field types and creates appropriate
+    node and relationship tables.
+
+    Args:
+        backend: Graph database backend
+        nodes_data: Collection of nodes grouped by type
+        relationships: List of relationships (used to determine rel table schema)
+    """
+
+    def _infer_kuzu_type(value: Any) -> str:
+        """Infer Kuzu type from a Python value."""
+        if value is None:
+            return "STRING"
+        if isinstance(value, bool):
+            return "BOOL"
+        if isinstance(value, int):
+            return "INT64"
+        if isinstance(value, float):
+            return "DOUBLE"
+        if isinstance(value, list):
+            return "STRING[]"
+        # Check for string boolean values from Neo4j exports
+        if isinstance(value, str):
+            lower_val = value.lower()
+            if lower_val in ("true", "false"):
+                return "BOOL"
+        return "STRING"
+
+    def _coerce_value(value: Any, kuzu_type: str) -> Any:
+        """Coerce a value to match the expected Kuzu type."""
+        if value is None:
+            return None
+        if kuzu_type == "BOOL":
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                return value.lower() == "true"
+            return bool(value)
+        if kuzu_type == "INT64":
+            if isinstance(value, int):
+                return value
+            try:
+                return int(float(value))
+            except (ValueError, TypeError):
+                return None
+        if kuzu_type == "DOUBLE":
+            if isinstance(value, float):
+                return value
+            try:
+                return float(value)
+            except (ValueError, TypeError):
+                return None
+        return value
+
+    def _get_field_types_from_data(data_list: list[dict[str, Any]]) -> dict[str, str]:
+        """Analyze data to determine field types."""
+        field_types: dict[str, str] = {}
+
+        for item in data_list:
+            for field_name, value in item.items():
+                if field_name not in field_types:
+                    field_types[field_name] = _infer_kuzu_type(value)
+                elif value is not None and field_types[field_name] == "STRING":
+                    # Upgrade type if we see a more specific type
+                    inferred = _infer_kuzu_type(value)
+                    if inferred != "STRING":
+                        field_types[field_name] = inferred
+
+        return field_types
+
+    # Create node tables
+    for node_type, node_list in nodes_data.items():
+        if not node_list:
+            continue
+
+        # Infer field types from data
+        field_types = _get_field_types_from_data(node_list)
+
+        # Coerce node data to match inferred types
+        for node in node_list:
+            for field_name, kuzu_type in field_types.items():
+                if field_name in node:
+                    node[field_name] = _coerce_value(node[field_name], kuzu_type)
+
+        # Build field definitions
+        fields: list[str] = []
+
+        # Ensure 'id' and 'name' are always present
+        if "id" not in field_types:
+            field_types["id"] = "STRING"
+        if "name" not in field_types:
+            field_types["name"] = "STRING"
+
+        # Add standard metadata fields
+        metadata_fields = {
+            "_created_at": "STRING",
+            "_updated_at": "STRING",
+        }
+
+        for field_name, kuzu_type in field_types.items():
+            fields.append(f"{field_name} {kuzu_type}")
+
+        for field_name, kuzu_type in metadata_fields.items():
+            if field_name not in field_types:
+                fields.append(f"{field_name} {kuzu_type}")
+
+        fields_str = ", ".join(fields)
+        create_sql = f"CREATE NODE TABLE IF NOT EXISTS {node_type}({fields_str}, PRIMARY KEY(id))"
+
+        logger.debug(f"Creating dynamic node table: {node_type}")
+        try:
+            backend.execute(create_sql)
+        except Exception as e:
+            logger.warning(f"Failed to create node table {node_type}: {e}")
+
+    # Create relationship tables
+    # Group relationships by (from_type, to_type, name) to create unique rel tables
+    rel_schemas: dict[tuple[str, str, str], dict[str, str]] = {}
+
+    for rel in relationships:
+        key = (rel.from_type, rel.to_type, rel.name)
+        if key not in rel_schemas:
+            rel_schemas[key] = {}
+
+        # Collect property types
+        for prop_name, prop_value in rel.properties.items():
+            if prop_name not in rel_schemas[key]:
+                rel_schemas[key][prop_name] = _infer_kuzu_type(prop_value)
+            elif prop_value is not None and rel_schemas[key][prop_name] == "STRING":
+                # Upgrade type if we see a more specific type
+                inferred = _infer_kuzu_type(prop_value)
+                if inferred != "STRING":
+                    rel_schemas[key][prop_name] = inferred
+
+    # Coerce relationship properties to match inferred types
+    # RelationshipRecord is a NamedTuple, so we need to create new records with coerced props
+    coerced_relationships: list[RelationshipRecord] = []
+    for rel in relationships:
+        key = (rel.from_type, rel.to_type, rel.name)
+        if key in rel_schemas:
+            prop_types = rel_schemas[key]
+            coerced_props = {}
+            for prop_name, prop_value in rel.properties.items():
+                if prop_name in prop_types:
+                    coerced_props[prop_name] = _coerce_value(prop_value, prop_types[prop_name])
+                else:
+                    coerced_props[prop_name] = prop_value
+            # Create new relationship record with coerced properties
+            coerced_relationships.append(
+                RelationshipRecord(
+                    from_type=rel.from_type,
+                    from_id=rel.from_id,
+                    to_type=rel.to_type,
+                    to_id=rel.to_id,
+                    name=rel.name,
+                    properties=coerced_props,
+                )
+            )
+        else:
+            coerced_relationships.append(rel)
+
+    # Replace original relationships with coerced ones
+    relationships.clear()
+    relationships.extend(coerced_relationships)
+
+    for (from_type, to_type, rel_name), prop_types in rel_schemas.items():
+        if prop_types:
+            props_str = ", ".join(f"{name} {kuzu_type}" for name, kuzu_type in prop_types.items())
+            create_rel_sql = f"CREATE REL TABLE IF NOT EXISTS {rel_name}(FROM {from_type} TO {to_type}, {props_str})"
+        else:
+            create_rel_sql = f"CREATE REL TABLE IF NOT EXISTS {rel_name}(FROM {from_type} TO {to_type})"
+
+        logger.debug(f"Creating dynamic rel table: {rel_name}")
+        try:
+            backend.execute(create_rel_sql)
+        except Exception as e:
+            logger.warning(f"Failed to create rel table {rel_name}: {e}")
+
+
 def create_graph(
     backend: GraphBackend,
     model: BaseModel,

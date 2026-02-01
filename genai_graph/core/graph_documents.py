@@ -12,9 +12,13 @@ Behavior:
   implementation and call ``create_graph(..., source_key=key)`` which will
   set the created root node(s) ``metadata["source"]`` when not already
   present.
+
+For Neo4j imports:
+- Use add_neo4j_data_to_graph() with a Neo4jImportFactory
+- This bypasses hierarchical extraction and directly loads pre-built nodes/relationships
 """
 
-from typing import List, Type
+from typing import TYPE_CHECKING, List, Type
 
 from loguru import logger
 from pydantic import BaseModel
@@ -23,6 +27,9 @@ from genai_graph.core.graph_backend import GraphBackend
 from genai_graph.core.graph_schema import GraphSchema
 from genai_graph.core.kg_manager import KgManager
 from genai_graph.core.subgraph_factories import GraphFactory
+
+if TYPE_CHECKING:
+    from genai_graph.core.subgraph_factories import Neo4jImportFactory
 
 
 class DocumentStats(BaseModel):
@@ -71,6 +78,63 @@ def _has_metadata_map(root_class: Type[BaseModel], schema: GraphSchema) -> bool:
         return False
     except Exception:
         return False
+
+
+def add_neo4j_data_to_graph(
+    graph_impl: "Neo4jImportFactory",
+    backend: GraphBackend,
+    context: KgManager | None = None,
+) -> DocumentStats:
+    """Add Neo4j data directly to the knowledge graph.
+
+    This is a specialized path for Neo4j imports that bypasses the hierarchical
+    model extraction. The factory provides pre-built nodes and relationships
+    which are loaded directly.
+
+    Args:
+        graph_impl: Neo4jImportFactory instance with build_nodes_and_relationships()
+        backend: GraphBackend instance
+        context: Optional KgManager for collecting warnings
+
+    Returns:
+        DocumentStats instance summarising processing results
+    """
+    from genai_graph.core.graph_core import import_neo4j_data
+
+    stats = DocumentStats()
+
+    try:
+        logger.info(f"Building nodes and relationships from {graph_impl.name}")
+
+        # Get pre-built nodes and relationships from the factory
+        nodes_data, relationships = graph_impl.build_nodes_and_relationships()
+
+        logger.info(f"Loaded {nodes_data.total_count()} nodes and {len(relationships)} relationships")
+
+        if nodes_data.total_count() == 0:
+            logger.warning("No nodes to import")
+            return stats
+
+        # Use the direct import function
+        nodes_data, relationships = import_neo4j_data(
+            backend=backend,
+            nodes_data=nodes_data,
+            relationships=relationships,
+            context=context,
+        )
+
+        stats.nodes_created = nodes_data.total_count()
+        stats.relationships_created = len(relationships)
+        stats.total_processed = 1
+
+    except Exception as e:
+        logger.error(f"Failed to import Neo4j data: {e}")
+        import traceback
+
+        logger.debug(traceback.format_exc())
+        stats.total_failed += 1
+
+    return stats
 
 
 def add_documents_to_graph(

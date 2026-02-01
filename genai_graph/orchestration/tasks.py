@@ -22,12 +22,13 @@ from genai_graph.core.graph_backend import (
     get_backend_storage_path_from_config,
 )
 from genai_graph.core.graph_core import create_schema as core_create_schema
-from genai_graph.core.graph_documents import DocumentStats, add_documents_to_graph
+from genai_graph.core.graph_documents import DocumentStats, add_documents_to_graph, add_neo4j_data_to_graph
 from genai_graph.core.kg_manager import get_kg_manager
 from genai_graph.core.subgraph_factories import (
+    GraphFactory,
     JsonFileBackedGraphFactory,
     Neo4jGraphFactory,
-    GraphFactory,
+    Neo4jImportFactory,
     TableBackedGraphFactory,
 )
 from genai_graph.orchestration.models import GraphBundle
@@ -231,6 +232,37 @@ def ingest_subgraphs_task(
                 logger.warning(msg)
                 manager.add_warning(msg)
                 keys = []
+
+        # Handle Neo4jImportFactory - use direct import path
+        if isinstance(graph_impl, Neo4jImportFactory):
+            try:
+                logger_pf.info(
+                    "Using direct Neo4j import for %s",
+                    factory_path,
+                )
+                stats = add_neo4j_data_to_graph(graph_impl, backend, manager)
+                logger_pf.debug(
+                    "Neo4j import stats for %s: processed=%d failed=%d nodes=%d rels=%d",
+                    factory_path,
+                    stats.total_processed,
+                    stats.total_failed,
+                    stats.nodes_created,
+                    stats.relationships_created,
+                )
+                total_stats.total_processed += stats.total_processed
+                total_stats.total_failed += stats.total_failed
+                total_stats.nodes_created += stats.nodes_created
+                total_stats.relationships_created += stats.relationships_created
+            except Exception as exc:  # pragma: no cover - defensive
+                import traceback
+
+                msg = f"Neo4j import error for {factory_path}: {exc}"
+                logger.error(msg)
+                logger.error(traceback.format_exc())
+                manager.add_warning(msg)
+                total_stats.total_failed += 1
+            # Skip the standard document processing path for Neo4jImportFactory
+            continue
 
         # Handle Neo4jGraphFactory - get all keys from analyzed JSONL
         if not keys and isinstance(graph_impl, Neo4jGraphFactory):
