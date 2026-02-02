@@ -32,8 +32,8 @@ from langgraph.checkpoint.memory import MemorySaver
 from loguru import logger
 from streamlit import session_state as sss
 
-from genai_graph.core.ekg_agent import build_ekg_agent_system_prompt, create_ekg_cypher_tool
-from genai_graph.core.kg_manager import get_kg_manager
+from genai_graph.kg.query import build_ekg_agent_system_prompt, create_ekg_cypher_tool
+from genai_graph.kg.manager import get_kg_manager
 from genai_graph.webapp.ui_components.trace_middleware import StreamingTraceRenderer, TraceMiddleware
 
 # Example queries

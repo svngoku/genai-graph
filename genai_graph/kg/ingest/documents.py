@@ -23,13 +23,13 @@ from typing import TYPE_CHECKING, List, Type
 from loguru import logger
 from pydantic import BaseModel
 
-from genai_graph.core.graph_backend import GraphBackend
-from genai_graph.core.graph_schema import GraphSchema
-from genai_graph.core.kg_manager import KgManager
-from genai_graph.core.subgraph_factories import GraphFactory
+from genai_graph.kg.backend import KgBackend
+from genai_graph.kg.factories.base import KgFactory
+from genai_graph.kg.manager import KgManager
+from genai_graph.kg.schema.core import GraphSchema
 
 if TYPE_CHECKING:
-    from genai_graph.core.subgraph_factories import Neo4jImportFactory
+    from genai_graph.kg.factories.neo4j_factory import Neo4jImportFactory
 
 
 class DocumentStats(BaseModel):
@@ -82,7 +82,7 @@ def _has_metadata_map(root_class: Type[BaseModel], schema: GraphSchema) -> bool:
 
 def add_neo4j_data_to_graph(
     graph_impl: "Neo4jImportFactory",
-    backend: GraphBackend,
+    backend: KgBackend,
     context: KgManager | None = None,
 ) -> DocumentStats:
     """Add Neo4j data directly to the knowledge graph.
@@ -93,13 +93,13 @@ def add_neo4j_data_to_graph(
 
     Args:
         graph_impl: Neo4jImportFactory instance with build_nodes_and_relationships()
-        backend: GraphBackend instance
+        backend: KgBackend instance
         context: Optional KgManager for collecting warnings
 
     Returns:
         DocumentStats instance summarising processing results
     """
-    from genai_graph.core.graph_core import import_neo4j_data
+    from genai_graph.kg.ingest.extract import import_neo4j_data
 
     stats = DocumentStats()
 
@@ -139,8 +139,8 @@ def add_neo4j_data_to_graph(
 
 def add_documents_to_graph(
     keys: List[str],
-    graph_impl: GraphFactory,
-    backend: GraphBackend,
+    graph_impl: KgFactory,
+    backend: KgBackend,
     schema: GraphSchema,
     context: KgManager | None = None,
 ) -> DocumentStats:
@@ -148,17 +148,17 @@ def add_documents_to_graph(
 
     Args:
         keys: List of keys/file paths to load via the subgraph implementation.
-              For JsonFileBackedGraphFactory, these are file paths.
+              For JsonFileBackedFactory, these are file paths.
               For other factories, these are abstract keys.
         graph_impl: Subgraph factory providing data loading methods
-        backend: GraphBackend instance
+        backend: KgBackend instance
         schema: GraphSchema instance
         context: Optional KgManager for collecting warnings
 
     Returns:
         DocumentStats instance summarising processing results
     """
-    from genai_graph.core.graph_core import create_graph
+    from genai_graph.kg.ingest.extract import create_graph
 
     stats = DocumentStats()
 
@@ -186,9 +186,9 @@ def add_documents_to_graph(
                 continue
 
             # For file-based sources, use relative path as source_key for cleaner provenance
-            from genai_graph.core.subgraph_factories import JsonFileBackedGraphFactory
+            from genai_graph.kg.factories import JsonFileBackedFactory
 
-            if isinstance(graph_impl, JsonFileBackedGraphFactory):
+            if isinstance(graph_impl, JsonFileBackedFactory):
                 # Extract relative path from full file path for cleaner source tracking
                 from genai_tk.utils.file_patterns import resolve_config_path
                 from upath import UPath

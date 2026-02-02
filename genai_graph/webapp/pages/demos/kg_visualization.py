@@ -20,12 +20,12 @@ from genai_tk.utils.config_mngr import global_config
 from loguru import logger
 from streamlit import session_state as sss
 
-from genai_graph.core.graph_backend import create_backend_from_config
-from genai_graph.core.graph_html import generate_html
-from genai_graph.core.kg_manager import get_kg_manager
+from genai_graph.kg.backend import create_backend_from_config
+from genai_graph.kg.export import generate_html
+from genai_graph.kg.manager import get_kg_manager
 
 if TYPE_CHECKING:
-    from genai_graph.core.graph_backend import GraphBackend
+    from genai_graph.kg.backend import KgBackend
 
 DEFAULT_VIZ_LIMIT = 1000
 
@@ -44,11 +44,11 @@ def get_available_kg_configs() -> list[str]:
         return ["default"]
 
 
-def get_node_types(backend: "GraphBackend") -> list[str]:
+def get_node_types(backend: "KgBackend") -> list[str]:
     """Get all node types (labels) in the graph.
 
     Args:
-        backend: GraphBackend instance
+        backend: KgBackend instance
 
     Returns:
         List of node type names
@@ -63,11 +63,11 @@ def get_node_types(backend: "GraphBackend") -> list[str]:
         return []
 
 
-def get_relationship_types(backend: "GraphBackend") -> list[str]:
+def get_relationship_types(backend: "KgBackend") -> list[str]:
     """Get all relationship types in the graph.
 
     Args:
-        backend: GraphBackend instance
+        backend: KgBackend instance
 
     Returns:
         List of relationship type names
@@ -82,11 +82,11 @@ def get_relationship_types(backend: "GraphBackend") -> list[str]:
         return []
 
 
-def get_nodes_of_type(backend: "GraphBackend", node_type: str, limit: int = 200) -> list[str]:
+def get_nodes_of_type(backend: "KgBackend", node_type: str, limit: int = 200) -> list[str]:
     """Get list of nodes of a specific type with their display names.
 
     Args:
-        backend: GraphBackend instance
+        backend: KgBackend instance
         node_type: Node type to query
         limit: Maximum number of nodes to return
 

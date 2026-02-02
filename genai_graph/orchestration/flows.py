@@ -6,18 +6,20 @@ from prefect import flow, get_run_logger
 from prefect.artifacts import create_markdown_artifact
 from prefect.task_runners import ThreadPoolTaskRunner
 
-from genai_graph.core.graph_backend import get_backend_storage_path_from_config
-from genai_graph.core.graph_merge import ParquetCollector, set_parquet_collector
-from genai_graph.core.kg_exports import (
+from genai_graph.kg.backend import get_backend_storage_path_from_config
+from genai_graph.kg.export import (
     export_html as export_html_file,
 )
-from genai_graph.core.kg_exports import (
+from genai_graph.kg.export import (
     export_info,
     export_schema,
+)
+from genai_graph.kg.export.artifacts import (
     import_from_parquet,
     load_parquet_manifest,
     save_parquet_from_collector,
 )
+from genai_graph.kg.ingest import ParquetCollector, set_parquet_collector
 from genai_graph.orchestration.models import KgRunResult
 from genai_graph.orchestration.tasks import (
     create_schema,
@@ -117,7 +119,7 @@ def _create_schema_for_import(import_name: str, backend: any, logger: any) -> No
         backend: Graph backend instance
         logger: Logger instance
     """
-    from genai_graph.core.kg_manager import get_kg_manager
+    from genai_graph.kg.manager import get_kg_manager
 
     manager = get_kg_manager()
 
@@ -157,15 +159,15 @@ def create_kg_flow(
     logger = get_run_logger()
 
     # Clear subgraph factory caches to ensure fresh file/data discovery
-    from genai_graph.core.subgraph_factories import (
-        JsonFileBackedGraphFactory,
-        Neo4jGraphFactory,
-        TableBackedGraphFactory,
+    from genai_graph.kg.factories import (
+        JsonFileBackedFactory,
+        Neo4jFactory,
+        TableBackedFactory,
     )
 
-    JsonFileBackedGraphFactory.clear_cache()
-    TableBackedGraphFactory.clear_cache()
-    Neo4jGraphFactory.clear_cache()
+    JsonFileBackedFactory.clear_cache()
+    TableBackedFactory.clear_cache()
+    Neo4jFactory.clear_cache()
     logger.info("Cleared subgraph factory caches for fresh discovery")
 
     if delete_first:
@@ -175,7 +177,7 @@ def create_kg_flow(
     cfg_name, kg_cfg = resolve_config_task.submit(config_name).result()
 
     # Initialize KG manager and log start
-    from genai_graph.core.kg_manager import get_kg_manager
+    from genai_graph.kg.manager import get_kg_manager
 
     manager = get_kg_manager()
     manager.activate()
@@ -201,9 +203,9 @@ def create_kg_flow(
 
             # Clear caches again after imports - the import schema creation may have
             # triggered factory initialization that pollutes the cache for main subgraphs
-            JsonFileBackedGraphFactory.clear_cache()
-            TableBackedGraphFactory.clear_cache()
-            Neo4jGraphFactory.clear_cache()
+            JsonFileBackedFactory.clear_cache()
+            TableBackedFactory.clear_cache()
+            Neo4jFactory.clear_cache()
             logger.info("Re-cleared subgraph factory caches after import processing")
 
         bundles = load_factories_task.submit(kg_cfg).result()

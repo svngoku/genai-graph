@@ -68,4 +68,9 @@ kg_configs:
   simple_neo4j:
     graphs:
       - factory: genai_graph.ekg.schema.stratnav:StratnavGraph 
-        neo4j_export_file: ${paths.stratnav_db}/subset/sn-subset.jsonl
+        neo4j_export_file: ${paths.stratnav_db}/subset/sn-subset200.jsonl
+
+  # stratnav:
+  #   graphs:
+  #     - factory: genai_graph.ekg.schema.stratnav:StratnavGraph 
+  #       neo4j_export_file: ${paths.stratnav_db}/26-01-2018/sn-v3-q4-2026-01-28.jsonl

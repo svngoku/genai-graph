@@ -20,7 +20,7 @@ Usage:
 
 from __future__ import annotations
 
-from genai_graph.core.subgraph_factories import Neo4jImportFactory
+from genai_graph.kg.factories import Neo4jImportFactory
 
 
 class StratnavGraph(Neo4jImportFactory):

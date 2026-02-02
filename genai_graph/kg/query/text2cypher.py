@@ -5,8 +5,8 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import Runnable, RunnableLambda
 from loguru import logger
 
-from genai_graph.core.graph_backend import create_backend_from_config
-from genai_graph.core.kg_manager import get_kg_manager
+from genai_graph.kg.backend import create_backend_from_config
+from genai_graph.kg.manager import get_kg_manager
 
 # taken from https://kuzudb.github.io/blog/post/improving-text2cypher-for-graphrag-via-schema-pruning/
 

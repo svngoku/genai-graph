@@ -77,7 +77,7 @@ class EkgCommands(CliTopCommand):
             from genai_tk.extra.prefect.runtime import ephemeral_prefect_settings
             from genai_tk.utils.config_mngr import global_config
 
-            from genai_graph.core.kg_manager import get_kg_manager
+            from genai_graph.kg.manager import get_kg_manager
             from genai_graph.orchestration.flows import create_kg_flow
 
             # Determine which KG configs to process
@@ -119,6 +119,20 @@ class EkgCommands(CliTopCommand):
                 console.print(f"[bold cyan]{'=' * 60}[/bold cyan]")
                 console.print(f"[bold]Creating KG:[/bold] [cyan]{cfg_name}[/cyan]")
                 console.print(f"[bold cyan]{'=' * 60}[/bold cyan]")
+
+                # Clear subgraph factory caches before each KG config to prevent
+                # cross-contamination when processing multiple configurations
+                from genai_graph.kg.factories import (
+                    JsonFileBackedFactory,
+                    Neo4jFactory,
+                    TableBackedFactory,
+                )
+
+                JsonFileBackedFactory.clear_cache()
+                TableBackedFactory.clear_cache()
+                Neo4jFactory.clear_cache()
+                if len(kg_configs_to_process) > 1:
+                    console.print(f"[dim]Cleared factory caches for {cfg_name}[/dim]")
 
                 # Run the Prefect flow with an ephemeral, in-process server.
                 try:
@@ -191,7 +205,7 @@ class EkgCommands(CliTopCommand):
             graph creation. The info includes database details, schema statistics,
             node/relationship mappings, and subgraph configurations.
             """
-            from genai_graph.core.kg_manager import get_kg_manager
+            from genai_graph.kg.manager import get_kg_manager
 
             # Get the current KG manager (auto-activates)
             manager = get_kg_manager()
@@ -231,7 +245,7 @@ class EkgCommands(CliTopCommand):
             and indexed fields.
             """
 
-            from genai_graph.core.kg_manager import get_kg_manager
+            from genai_graph.kg.manager import get_kg_manager
 
             # Get the current KG manager (auto-activates)
             manager = get_kg_manager()
@@ -346,11 +360,11 @@ class EkgCommands(CliTopCommand):
             )
             from genai_tk.extra.agents.langchain_setup import setup_langchain
 
-            from genai_graph.core.ekg_agent import (
+            from genai_graph.kg.manager import get_kg_manager
+            from genai_graph.kg.query import (
                 build_ekg_agent_system_prompt,
                 create_ekg_cypher_tool,
             )
-            from genai_graph.core.kg_manager import get_kg_manager
 
             # Get the current KG manager (auto-activates)
             manager = get_kg_manager()
@@ -405,10 +419,10 @@ class EkgCommands(CliTopCommand):
 
             from rich.panel import Panel
 
-            from genai_graph.core.graph_backend import (
+            from genai_graph.kg.backend import (
                 create_backend_from_config,
             )
-            from genai_graph.core.kg_manager import get_kg_manager
+            from genai_graph.kg.manager import get_kg_manager
 
             # Get the current KG manager (auto-activates)
             manager = get_kg_manager()
@@ -478,7 +492,7 @@ class EkgCommands(CliTopCommand):
 
             ex:  List the names of all competitors for opportunities created after January 1, 2012."""
 
-            from genai_graph.core.text2cypher import query_kg
+            from genai_graph.kg.query import query_kg
 
             try:
                 from rich.table import Table
@@ -521,7 +535,7 @@ class EkgCommands(CliTopCommand):
             """
             import webbrowser
 
-            from genai_graph.core.kg_manager import get_kg_manager
+            from genai_graph.kg.manager import get_kg_manager
 
             # Get the current KG manager (auto-activates)
             manager = get_kg_manager()

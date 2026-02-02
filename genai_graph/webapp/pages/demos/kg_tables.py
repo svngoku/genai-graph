@@ -2,7 +2,7 @@
 
 This page lets users:
 - Select a KG configuration/profile.
-- View tables loaded from Excel/CSV files via TableBackedGraphFactory.
+- View tables loaded from Excel/CSV files via TableBackedFactory.
 - Inspect table contents with filtering and search capabilities.
 """
 
@@ -20,8 +20,8 @@ from sqlalchemy import create_engine, text
 from streamlit import session_state as sss
 from upath import UPath
 
-from genai_graph.core.kg_manager import get_kg_manager
-from genai_graph.core.subgraph_factories import TableBackedGraphFactory
+from genai_graph.kg.manager import get_kg_manager
+from genai_graph.kg.factories import TableBackedFactory
 
 
 class TableInfo(BaseModel):
@@ -108,7 +108,7 @@ def _select_configuration() -> None:
 
 
 def _discover_table_subgraphs() -> list[TableInfo]:
-    """Discover all TableBackedGraphFactory instances in the current configuration."""
+    """Discover all TableBackedFactory instances in the current configuration."""
     tables: list[TableInfo] = []
 
     try:
@@ -127,10 +127,10 @@ def _discover_table_subgraphs() -> list[TableInfo]:
             if not factory_path or not db_dsn:
                 continue
 
-            # Try to import and check if it's a TableBackedGraphFactory
+            # Try to import and check if it's a TableBackedFactory
             try:
                 imported = import_from_qualified(factory_path)
-                if not isinstance(imported, type) or not issubclass(imported, TableBackedGraphFactory):
+                if not isinstance(imported, type) or not issubclass(imported, TableBackedFactory):
                     continue
 
                 # Resolve file paths
@@ -362,7 +362,7 @@ def main() -> None:
     if not tables:
         st.info(
             "No database tables found for this configuration. "
-            "Ensure you have TableBackedGraphFactory subgraphs configured "
+            "Ensure you have TableBackedFactory subgraphs configured "
             "with `db_dsn` and `files` parameters."
         )
         return

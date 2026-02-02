@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel
 
-from genai_graph.core.graph_backend import KuzuBackend
+from genai_graph.kg.backend import KuzuBackend
 
 
 @pytest.fixture

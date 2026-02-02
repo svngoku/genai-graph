@@ -1,8 +1,12 @@
-"""Simplified graph schema configuration API.
+"""Graph schema configuration API.
 
-This module provides a refactored approach to defining graph schemas with minimal
-configuration required from users. It automatically introspects Pydantic models
-to derive field paths and relationships, reducing boilerplate and errors.
+This module provides the core graph schema definitions:
+- GraphNode: Configuration for a single node type
+- GraphRelation: Configuration for relationships between nodes
+- GraphSchema: Complete schema with validation and auto-deduction
+
+The API automatically introspects Pydantic models to derive field paths
+and relationships, reducing boilerplate and errors.
 """
 
 from __future__ import annotations
@@ -12,6 +16,7 @@ import uuid
 import warnings
 from enum import Enum
 from typing import (
+    TYPE_CHECKING,
     Any,
     Callable,
     Union,
@@ -23,7 +28,8 @@ from typing import (
 from loguru import logger
 from pydantic import BaseModel, PrivateAttr, model_validator
 
-from genai_graph.core.kg_manager import KgManager
+if TYPE_CHECKING:
+    from genai_graph.kg.manager import KgManager
 
 
 def _find_embedded_field_for_class(parent_cls: type[BaseModel], embedded_cls: type[BaseModel]) -> str | None:

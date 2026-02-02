@@ -11,12 +11,12 @@ from typing import Type
 
 from pydantic import BaseModel
 
-from genai_graph.core.graph_schema import GraphSchema
-from genai_graph.core.subgraph_factories import JsonFileBackedGraphFactory
 from genai_graph.ekg.baml_client.types import SWArchitectureDocument
+from genai_graph.kg.factories import JsonFileBackedFactory
+from genai_graph.kg.schema import GraphSchema
 
 
-class ArchitectureDocumentGraph(JsonFileBackedGraphFactory, BaseModel):
+class ArchitectureDocumentGraph(JsonFileBackedFactory, BaseModel):
     """Architecture document data graph using JSON files from BAML extract."""
 
     TOP_CLASS: Type[BaseModel] = SWArchitectureDocument
@@ -32,10 +32,6 @@ class ArchitectureDocumentGraph(JsonFileBackedGraphFactory, BaseModel):
         Returns:
             GraphSchema with all node and relationship configurations
         """
-        from genai_graph.core.graph_schema import (
-            GraphNode,
-            GraphRelation,
-        )
         from genai_graph.ekg.baml_client.types import (
             Customer,
             Opportunity,
@@ -43,6 +39,10 @@ class ArchitectureDocumentGraph(JsonFileBackedGraphFactory, BaseModel):
             Solution,
             SWArchitectureDocument,
             TechnicalComponent,
+        )
+        from genai_graph.kg.schema import (
+            GraphNode,
+            GraphRelation,
         )
 
         # Note: We use BAML types directly here (not extended types from common_nodes)

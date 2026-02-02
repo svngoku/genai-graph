@@ -15,22 +15,22 @@ from prefect import get_run_logger, task
 from prefect.cache_policies import NO_CACHE
 from prefect.exceptions import MissingContextError
 
-from genai_graph.core.graph_backend import (
-    GraphBackend,
+from genai_graph.kg.backend import (
+    KgBackend,
     create_backend_from_config,
     delete_backend_storage_from_config,
     get_backend_storage_path_from_config,
 )
-from genai_graph.core.graph_core import create_schema as core_create_schema
-from genai_graph.core.graph_documents import DocumentStats, add_documents_to_graph, add_neo4j_data_to_graph
-from genai_graph.core.kg_manager import get_kg_manager
-from genai_graph.core.subgraph_factories import (
-    GraphFactory,
-    JsonFileBackedGraphFactory,
-    Neo4jGraphFactory,
+from genai_graph.kg.factories import (
+    JsonFileBackedFactory,
+    KgFactory,
+    Neo4jFactory,
     Neo4jImportFactory,
-    TableBackedGraphFactory,
+    TableBackedFactory,
 )
+from genai_graph.kg.ingest import DocumentStats, add_documents_to_graph, add_neo4j_data_to_graph
+from genai_graph.kg.ingest import create_schema as core_create_schema
+from genai_graph.kg.manager import get_kg_manager
 from genai_graph.orchestration.models import GraphBundle
 
 
@@ -61,7 +61,7 @@ def resolve_config_task(config_name: str | None) -> tuple[str, dict[str, Any]]:
 
     logger_pf = _get_prefect_logger_or_default()
 
-    from genai_graph.core.kg_manager import get_kg_manager
+    from genai_graph.kg.manager import get_kg_manager
 
     manager = get_kg_manager()
 
@@ -87,7 +87,7 @@ def resolve_config_task(config_name: str | None) -> tuple[str, dict[str, Any]]:
 
 
 @task
-def initialize_backend_task(config_key: str = "default", kg_config_name: str | None = None) -> GraphBackend:
+def initialize_backend_task(config_key: str = "default", kg_config_name: str | None = None) -> KgBackend:
     """Create and return the graph backend instance.
 
     The flow is expected to run with a single-process task runner so that the
@@ -127,15 +127,15 @@ def load_factories_task(kg_cfg: dict[str, Any]) -> list[GraphBundle]:
 
         try:
             imported = import_from_qualified(factory_path)
-            if isinstance(imported, GraphFactory):
+            if isinstance(imported, KgFactory):
                 graph_impl = imported
-            elif isinstance(imported, type) and issubclass(imported, GraphFactory):
+            elif isinstance(imported, type) and issubclass(imported, KgFactory):
                 constructor_kwargs = {
                     k: v for k, v in graph_cfg.items() if k not in {"factory", "initial_load", "trigger"}
                 }
                 graph_impl = imported(**constructor_kwargs)  # type: ignore[misc]
             else:
-                msg = f"Factory {factory_path} is not a GraphFactory"
+                msg = f"Factory {factory_path} is not a KgFactory"
                 logger.warning(msg)
                 manager.add_warning(msg)
                 continue
@@ -155,7 +155,7 @@ def load_factories_task(kg_cfg: dict[str, Any]) -> list[GraphBundle]:
 
 def create_schema(
     bundles: list[GraphBundle],
-    backend: GraphBackend,
+    backend: KgBackend,
 ) -> list[GraphBundle]:
     """Create graph schema for all loaded subgraphs (Pass 1)."""
 
@@ -186,7 +186,7 @@ def create_schema(
 @task(cache_policy=NO_CACHE)
 def ingest_subgraphs_task(
     bundles: list[GraphBundle],
-    backend: GraphBackend,
+    backend: KgBackend,
 ) -> DocumentStats:
     """Ingest documents for all configured subgraphs (Pass 2)."""
 
@@ -204,8 +204,8 @@ def ingest_subgraphs_task(
 
         keys = graph_cfg.get("initial_load", [])
 
-        # Handle JsonFileBackedGraphFactory - get file paths
-        if not keys and isinstance(graph_impl, JsonFileBackedGraphFactory):
+        # Handle JsonFileBackedFactory - get file paths
+        if not keys and isinstance(graph_impl, JsonFileBackedFactory):
             try:
                 file_paths = graph_impl.get_all_file_paths()
                 keys = [str(fp) for fp in file_paths]
@@ -219,8 +219,8 @@ def ingest_subgraphs_task(
                 manager.add_warning(msg)
                 keys = []
 
-        # Handle TableBackedGraphFactory - get all keys from DB
-        if not keys and isinstance(graph_impl, TableBackedGraphFactory):
+        # Handle TableBackedFactory - get all keys from DB
+        if not keys and isinstance(graph_impl, TableBackedFactory):
             try:
                 keys = graph_impl.get_all_keys()
                 logger_pf.debug(
@@ -264,8 +264,8 @@ def ingest_subgraphs_task(
             # Skip the standard document processing path for Neo4jImportFactory
             continue
 
-        # Handle Neo4jGraphFactory - get all keys from analyzed JSONL
-        if not keys and isinstance(graph_impl, Neo4jGraphFactory):
+        # Handle Neo4jFactory - get all keys from analyzed JSONL
+        if not keys and isinstance(graph_impl, Neo4jFactory):
             try:
                 keys = graph_impl.get_all_keys()
                 logger_pf.debug(

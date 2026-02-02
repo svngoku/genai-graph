@@ -21,12 +21,12 @@ import yaml
 from loguru import logger
 from streamlit import session_state as sss
 
-from genai_graph.core.graph_backend import create_backend_from_config
-from genai_graph.core.graph_registry import GraphRegistry
-from genai_graph.core.text2cypher import text2cypher_chain
+from genai_graph.kg.backend import create_backend_from_config
+from genai_graph.kg.schema import GraphRegistry
+from genai_graph.kg.query import text2cypher_chain
 
 if TYPE_CHECKING:
-    from genai_graph.core.graph_backend import GraphBackend
+    from genai_graph.kg.backend import KgBackend
 
 # Configuration
 CYPHER_EXAMPLES_CONFIG = "config/cypher_examples.yaml"
@@ -61,7 +61,7 @@ def get_available_kg_configs() -> list[str]:
         List of KG configuration names
     """
     try:
-        from genai_graph.core.kg_manager import get_kg_manager
+        from genai_graph.kg.manager import get_kg_manager
 
         manager = get_kg_manager()
         return sorted(manager.ekg_config.kg_configs.keys())
@@ -75,7 +75,7 @@ def initialize_session_state() -> None:
     if "kg_config_selected" not in sss:
         # Get default config
         try:
-            from genai_graph.core.kg_manager import get_kg_manager
+            from genai_graph.kg.manager import get_kg_manager
 
             manager = get_kg_manager()
             sss.kg_config_selected = manager.ekg_config.kg_config
@@ -90,12 +90,12 @@ def initialize_session_state() -> None:
         sss.generated_cypher = None
 
 
-def execute_cypher_query(cypher: str, backend: "GraphBackend") -> tuple[pd.DataFrame | None, str | None]:
+def execute_cypher_query(cypher: str, backend: "KgBackend") -> tuple[pd.DataFrame | None, str | None]:
     """Execute a Cypher query and return results.
 
     Args:
         cypher: The Cypher query to execute
-        backend: GraphBackend instance
+        backend: KgBackend instance
 
     Returns:
         Tuple of (DataFrame result, error message)

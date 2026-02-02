@@ -20,10 +20,10 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from genai_graph.core.graph_backend import GraphBackend
-from genai_graph.core.graph_core import create_graph, restart_database
-from genai_graph.core.graph_html import generate_html
-from genai_graph.core.graph_schema import GraphNode, GraphRelation, GraphSchema
+from genai_graph.kg.backend import KgBackend
+from genai_graph.kg.ingest import create_graph, restart_database
+from genai_graph.kg.export import generate_html
+from genai_graph.kg.schema import GraphNode, GraphRelation, GraphSchema
 from genai_graph.ekg.baml_client.types import (
     CompetitiveLandscape,
     Customer,
@@ -169,7 +169,7 @@ def display_schema_configuration(schema: GraphSchema):
 
 
 def create_statistics_table(
-    backend: GraphBackend, config: GraphSchema | tuple[list[GraphNode], list[GraphRelation]] | None = None
+    backend: KgBackend, config: GraphSchema | tuple[list[GraphNode], list[GraphRelation]] | None = None
 ) -> None:
     """Display comprehensive statistics about the created graph.
 
@@ -233,7 +233,7 @@ def create_statistics_table(
     console.print(rel_table)
 
 
-def run_sample_queries(backend: GraphBackend) -> None:
+def run_sample_queries(backend: KgBackend) -> None:
     """Run sample queries to demonstrate the graph functionality.
 
     Args:
@@ -324,7 +324,7 @@ def run_sample_queries(backend: GraphBackend) -> None:
         console.print("[yellow]No risks found[/yellow]")
 
 
-def run_advanced_graph_queries(backend: GraphBackend) -> None:
+def run_advanced_graph_queries(backend: KgBackend) -> None:
     """Run advanced graph queries to showcase graph capabilities.
 
     Args:

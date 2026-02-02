@@ -2,13 +2,13 @@ from typing import Any, Type
 
 from pydantic import BaseModel
 
-from genai_graph.core.graph_schema import GraphNode, GraphRelation, GraphSchema
-from genai_graph.core.subgraph_factories import TableBackedGraphFactory
 from genai_graph.ekg.baml_client.types import Person
 from genai_graph.ekg.schema.common_nodes import Customer, Opportunity, WinLoss
+from genai_graph.kg.factories import TableBackedFactory
+from genai_graph.kg.schema import GraphNode, GraphRelation, GraphSchema
 
 
-class CrmExtractGraph(TableBackedGraphFactory, BaseModel):
+class CrmExtractGraph(TableBackedFactory, BaseModel):
     """CRM data graph.
 
     Imports CRM export data and creates Opportunity-centric graphs

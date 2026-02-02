@@ -14,7 +14,7 @@ Features:
 
 Usage example:
 ```python
-from genai_graph.core.graph_html import generate_html
+from genai_graph.kg.export.html import generate_html
 
 # Generate visualization from a graph backend
 html_content = generate_html(
@@ -31,11 +31,9 @@ import os
 import uuid
 from typing import Any
 
-from genai_graph.core.graph_backend import GraphBackend
-from genai_graph.core.graph_core import NodeRecord, RelationshipRecord
-from genai_graph.core.graph_html_template import HTML_TEMPLATE
-
-# Import new schema types
+from genai_graph.kg.backend import KgBackend
+from genai_graph.kg.export.html_template import HTML_TEMPLATE
+from genai_graph.kg.ingest.extract import NodeRecord, RelationshipRecord
 
 # from genai_graph.demos.ekg.graph_schema import GraphNode, GraphRelationConfig, GraphSchema
 
@@ -171,7 +169,7 @@ def _generate_html_content(nodes_list: list[dict[str, Any]], links_list: list[di
 
 
 def _fetch_graph_data(
-    connection: GraphBackend,
+    connection: KgBackend,
     node_configs: list | None = None,
     relation_configs: list | None = None,
     query: str = "MATCH (n)-[r]->(m) RETURN n, r, m LIMIT 1000",
@@ -180,7 +178,7 @@ def _fetch_graph_data(
     """Fetch all nodes and edges from the graph database via the provided connection/backend.
 
     Args:
-        connection: Object exposing an execute() method (e.g. GraphBackend or kuzu.Connection)
+        connection: Object exposing an execute() method (e.g. KgBackend or kuzu.Connection)
         node_configs: Optional list of node configurations (legacy or new format)
         relation_configs: Optional list of relation configurations (legacy or new format)
         query: Cypher query to fetch relationships and nodes (default: "MATCH (n)-[r]->(m) RETURN n, r, m LIMIT 1000")
@@ -366,7 +364,7 @@ def _fetch_graph_data(
 
 
 def generate_html(
-    connection: GraphBackend,
+    connection: KgBackend,
     destination_file_path: str | None = None,
     node_configs: list | None = None,
     relation_configs: list | None = None,
@@ -377,7 +375,7 @@ def generate_html(
     """Generate an HTML graph visualization from a graph connection/backend.
 
     Args:
-        connection: Object exposing an execute() method (e.g. GraphBackend or kuzu.Connection) connected to a database that uses
+        connection: Object exposing an execute() method (e.g. KgBackend or kuzu.Connection) connected to a database that uses
             a schema with Node(id, name, type, properties) and EDGE(relationship_name, properties).
         destination_file_path: Optional path to write the HTML file. If omitted,
             the file will be saved as "graph_visualization.html" in the user's home directory.

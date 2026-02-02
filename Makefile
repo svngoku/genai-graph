@@ -148,11 +148,24 @@ install: check-uv   ## Install SW
 
 .PHONY: clean clean-notebooks clean-history help postgres chrome qwen show-dev-path
 
-clean:  ## Clean Python bytecode and cache files
+clean:  ## Clean Python bytecode, cache files, and system artifacts
 	@echo "Cleaning UV cache and Python artifacts..."
 	uv cache prune
 	@# Single find command for all cleanup operations
 	find . \( -name "*.py[co]" -o -name "__pycache__" -o -name ".ruff_cache" -o -name ".mypy_cache" \) -exec rm -rf {} + 2>/dev/null || true
+	@echo "Cleaning system artifacts..."
+	@# Clean /tmp directory (excluding socket and lock files)
+	rm -rf /tmp/pytest* /tmp/tmpdir* /tmp/*.tmp 2>/dev/null || true
+	@# Clean pip cache
+	rm -rf ~/.cache/pip 2>/dev/null || true
+	@# Clean unused Docker images and dangling containers
+	@if command -v docker >/dev/null 2>&1; then \
+		echo "Cleaning Docker artifacts..."; \
+		docker container prune -f 2>/dev/null || true; \
+		docker image prune -f 2>/dev/null || true; \
+		docker volume prune -f 2>/dev/null || true; \
+	fi
+	@echo "Cleanup complete!"
 
 clean-history: ## Remove duplicate entries and common commands from .bash_history
 	@if [ -f ~/.bash_history ]; then \

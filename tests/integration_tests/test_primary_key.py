@@ -2,9 +2,9 @@
 
 from pydantic import BaseModel
 
-from genai_graph.core.graph_backend import create_in_memory_backend
-from genai_graph.core.graph_core import create_schema
-from genai_graph.core.graph_schema import GraphNode, GraphSchema
+from genai_graph.kg.backend import create_in_memory_backend
+from genai_graph.kg.ingest import create_schema
+from genai_graph.kg.schema import GraphNode, GraphSchema
 
 
 class TestPrimaryKeyConfiguration:

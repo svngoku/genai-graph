@@ -12,24 +12,24 @@ from enum import Enum
 from functools import lru_cache
 from typing import Any, get_args, get_origin
 
-from genai_graph.core.graph_registry import GraphRegistry, get_subgraph
-from genai_graph.core.graph_schema import GraphSchema, find_embedded_field_for_class
+from genai_graph.kg.schema.core import GraphSchema, find_embedded_field_for_class
+from genai_graph.kg.schema.registry import GraphRegistry, get_graph
 
 
-def generate_schema_description(subgraphs: str | list[str], print_enums: bool = True) -> str:
+def generate_schema_description(graphs: str | list[str], print_enums: bool = True) -> str:
     """Generate a compact, token-efficient LLM description of the graph schema.
 
-    This unified function accepts either a single subgraph name (string)
-    or a list of subgraph names. Passing an empty list means "all registered"
-    subgraphs (delegated to `GraphRegistry.build_combined_schema`).
+    This unified function accepts either a single graph name (string)
+    or a list of graph names. Passing an empty list means "all registered"
+    graphs (delegated to `GraphRegistry.build_combined_schema`).
 
     Args:
-        subgraphs: Single subgraph name or list of names. Empty list means all.
+        graphs: Single graph name or list of names. Empty list means all.
         print_enums: Whether to include enumeration types in the output (default: True).
 
     Examples:
         ```python
-        # Single subgraph
+        # Single graph
         description = generate_schema_description("ReviewedOpportunity")
 
         # Combined (multiple or empty list = all)
@@ -43,37 +43,37 @@ def generate_schema_description(subgraphs: str | list[str], print_enums: bool = 
 
     baml_docs = _parse_baml_descriptions()
 
-    # Single subgraph name provided
-    if isinstance(subgraphs, str):
-        subgraph_impl = get_subgraph(subgraphs)
-        subgraph_impl.build_schema()
-        schema = _load_schema(subgraphs)
+    # Single graph name provided
+    if isinstance(graphs, str):
+        graph_impl = get_graph(graphs)
+        graph_impl.build_schema()
+        schema = _load_schema(graphs)
         return format_schema_description(schema=schema, baml_docs=baml_docs, print_enums=print_enums)
 
-    # Otherwise, treat as list of subgraph names (possibly empty => all)
+    # Otherwise, treat as list of graph names (possibly empty => all)
     # Suppress validation warnings for combined schemas (type mismatches between
-    # extended and base types are expected when merging different subgraphs)
+    # extended and base types are expected when merging different graphs)
     registry = GraphRegistry.get_instance()
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=UserWarning, message="Graph schema validation:")
-        schema = registry.build_combined_schema(subgraphs)
+        schema = registry.build_combined_schema(graphs)
     return format_schema_description(schema=schema, baml_docs=baml_docs, print_enums=print_enums)
 
 
 # NOTE: Combined-generator removed — use `generate_schema_description(list_or_name)`
 
 
-def _load_schema(subgraph_name: str) -> GraphSchema:
-    """Load and validate the subgraph schema.
+def _load_schema(graph_name: str) -> GraphSchema:
+    """Load and validate the graph schema.
 
-    Ensures default subgraphs are registered before lookup.
+    Ensures graphs are registered before lookup.
     """
 
     try:
-        subgraph_impl = get_subgraph(subgraph_name)
-        return subgraph_impl.build_schema()
+        graph_impl = get_graph(graph_name)
+        return graph_impl.build_schema()
     except ValueError as e:
-        raise ValueError(f"Unknown subgraph '{subgraph_name}': {e}") from e
+        raise ValueError(f"Unknown graph '{graph_name}': {e}") from e
 
 
 @lru_cache(maxsize=1)
@@ -254,6 +254,99 @@ def _extract_description_from_line(line: str, all_lines: list[str], start_idx: i
     return None
 
 
+def _get_pydantic_field_description(field_info: Any) -> str:
+    """Extract description from a Pydantic FieldInfo object.
+
+    Pydantic v2 stores the description in field_info.description.
+
+    Args:
+        field_info: Pydantic FieldInfo object from model_fields
+
+    Returns:
+        Description string, or empty string if not set
+    """
+    if hasattr(field_info, "description") and field_info.description:
+        return field_info.description
+    return ""
+
+
+def _get_class_description(cls: type) -> str:
+    """Extract description from a class docstring.
+
+    Gets the first non-empty line of the docstring as a brief description.
+
+    Args:
+        cls: Python class to extract docstring from
+
+    Returns:
+        First line of docstring, or empty string if not available
+    """
+    if not cls.__doc__:
+        return ""
+    # Get first non-empty line of docstring
+    lines = cls.__doc__.strip().split("\n")
+    for line in lines:
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return ""
+
+
+def _get_field_description(node_class: type, field_name: str, field_info: Any, baml_docs: dict[str, Any]) -> str:
+    """Get field description with proper fallback order.
+
+    Priority:
+    1. Pydantic Field(description=...) from the field_info
+    2. BAML @description annotation
+
+    Args:
+        node_class: The Pydantic model class
+        field_name: Name of the field
+        field_info: Pydantic FieldInfo object
+        baml_docs: Parsed BAML documentation
+
+    Returns:
+        Field description string
+    """
+    # First try Pydantic field description
+    pydantic_desc = _get_pydantic_field_description(field_info)
+    if pydantic_desc:
+        return pydantic_desc
+
+    # Fallback to BAML description
+    node_name = node_class.__name__
+    return baml_docs["fields"].get(node_name, {}).get(field_name, "")
+
+
+def _get_node_description(node: Any, baml_docs: dict[str, Any]) -> str:
+    """Get node description with proper fallback order.
+
+    Priority:
+    1. GraphNode.description (explicit schema definition)
+    2. Pydantic model class docstring
+    3. BAML class @description annotation
+
+    Args:
+        node: GraphNode configuration object
+        baml_docs: Parsed BAML documentation
+
+    Returns:
+        Node description string
+    """
+    # First try explicit GraphNode description
+    if node.description:
+        return node.description
+
+    # Then try class docstring
+    class_desc = _get_class_description(node.node_class)
+    if class_desc:
+        return class_desc
+
+    # Fallback to BAML description
+    node_name = node.node_class.__name__
+    return baml_docs["classes"].get(node_name, "")
+
+
 def _get_relation_properties(node_class: Any, baml_docs: dict[str, Any]) -> list[tuple[str, str, str]]:
     """Extract relationship properties from a node class.
 
@@ -272,10 +365,78 @@ def _get_relation_properties(node_class: Any, baml_docs: dict[str, Any]) -> list
             # Remove the p_ prefix and _ suffix to get the display name
             display_name = field_name[2:-1]
             field_type = _humanize_type_compact(field_info.annotation)
-            field_desc = baml_docs["fields"].get(node_name, {}).get(field_name, "")
+            # Use the new helper for field description
+            field_desc = _get_field_description(node_class, field_name, field_info, baml_docs)
             properties.append((display_name, field_type, field_desc))
 
     return properties
+
+
+def _collect_used_enums(schema: Any) -> set[type]:
+    """Collect all Enum types used in the schema's node classes.
+
+    Inspects all node classes and their fields (including embedded structs)
+    to find which Enum types are actually referenced.
+
+    Args:
+        schema: GraphSchema object
+
+    Returns:
+        Set of Enum types used in the schema
+    """
+    import types
+    import typing
+    from typing import get_args, get_origin
+
+    used_enums: set[type] = set()
+
+    def extract_enums_from_annotation(annotation: Any) -> None:
+        """Recursively extract enum types from a type annotation."""
+        if annotation is None or annotation is type(None):
+            return
+
+        # Check if it's an enum
+        if isinstance(annotation, type) and issubclass(annotation, Enum):
+            used_enums.add(annotation)
+            return
+
+        origin = get_origin(annotation)
+
+        # Handle Union/Optional types
+        if origin is typing.Union or (hasattr(types, "UnionType") and origin is types.UnionType):
+            for arg in get_args(annotation):
+                extract_enums_from_annotation(arg)
+            return
+
+        # Handle list, set, tuple
+        if origin in (list, set, tuple):
+            for arg in get_args(annotation):
+                extract_enums_from_annotation(arg)
+            return
+
+        # Handle dict
+        if origin is dict:
+            for arg in get_args(annotation):
+                extract_enums_from_annotation(arg)
+            return
+
+    def extract_enums_from_class(cls: type) -> None:
+        """Extract enums from a Pydantic model class."""
+        if not hasattr(cls, "model_fields"):
+            return
+
+        for field_info in cls.model_fields.values():
+            extract_enums_from_annotation(field_info.annotation)
+
+    # Process all node classes
+    for node in schema.nodes:
+        extract_enums_from_class(node.node_class)
+
+        # Also process embedded struct classes
+        for embedded_cls in getattr(node, "embedded_struct_classes", []) or []:
+            extract_enums_from_class(embedded_cls)
+
+    return used_enums
 
 
 def _get_kuzu_type_for_field(annotation: Any) -> str:
@@ -371,8 +532,9 @@ def format_schema_description(schema: GraphSchema, baml_docs: dict[str, Any], pr
         if node_name in embedded_classes:
             continue
 
-        # Prefer schema description, fallback to BAML
-        description = node.description or baml_docs["classes"].get(node_name, "")
+        # Get description using proper fallback order:
+        # 1. GraphNode.description, 2. class docstring, 3. BAML
+        description = _get_node_description(node, baml_docs)
 
         # Start with node type header
         if description:
@@ -393,7 +555,9 @@ def format_schema_description(schema: GraphSchema, baml_docs: dict[str, Any], pr
                 if "ForwardRef" in field_type_str:
                     continue
 
-                field_desc = baml_docs["fields"].get(node_name, {}).get(field_name, "")
+                # Get field description with proper fallback:
+                # 1. Pydantic Field(description=...), 2. BAML @description
+                field_desc = _get_field_description(node.node_class, field_name, field_info, baml_docs)
 
                 # Check if this field is an embedded class and flatten it
                 embedded_class = None
@@ -408,8 +572,9 @@ def format_schema_description(schema: GraphSchema, baml_docs: dict[str, Any], pr
                     if hasattr(embedded_class, "model_fields"):
                         for sub_field_name, sub_field_info in embedded_class.model_fields.items():
                             sub_field_type = _humanize_type_compact(sub_field_info.annotation)
-                            sub_field_desc = (
-                                baml_docs["fields"].get(embedded_class.__name__, {}).get(sub_field_name, "")
+                            # Use proper fallback for embedded field descriptions
+                            sub_field_desc = _get_field_description(
+                                embedded_class, sub_field_name, sub_field_info, baml_docs
                             )
 
                             # Format: parent.child: type // description
@@ -472,14 +637,36 @@ def format_schema_description(schema: GraphSchema, baml_docs: dict[str, Any], pr
     root_name = schema.root_model_class.__name__ if schema.root_model_class else "(no root)"
     lines.append(f"{root_name} → [relation] → [Target] // Relationships originating from the root entity")
 
-    # Add enumerations section
+    # Add enumerations section - only include enums actually used in the schema
     if print_enums:
-        if baml_docs["enums"]:
+        used_enums = _collect_used_enums(schema)
+        used_enum_names = {e.__name__ for e in used_enums}
+
+        # Filter to only enums used in this schema
+        relevant_enums = {name: values for name, values in baml_docs["enums"].items() if name in used_enum_names}
+
+        # Also add enums that are used but not in BAML docs (defined in Python)
+        for enum_cls in used_enums:
+            enum_name = enum_cls.__name__
+            if enum_name not in relevant_enums:
+                # Build enum values from the Python enum class
+                relevant_enums[enum_name] = {
+                    member.name: (member.value if isinstance(member.value, str) else "") for member in enum_cls
+                }
+
+        if relevant_enums:
             lines.extend(["### Enumerations", ""])
 
-            for enum_name in sorted(baml_docs["enums"].keys()):
-                enum_values = baml_docs["enums"][enum_name]
+            for enum_name in sorted(relevant_enums.keys()):
+                enum_values = relevant_enums[enum_name]
+                # Try to get description from BAML or class docstring
                 enum_desc = baml_docs["classes"].get(enum_name, "")
+                if not enum_desc:
+                    # Try to find the enum class and get its docstring
+                    for enum_cls in used_enums:
+                        if enum_cls.__name__ == enum_name:
+                            enum_desc = _get_class_description(enum_cls)
+                            break
 
                 if enum_desc:
                     lines.append(f"{enum_name} // {enum_desc}")

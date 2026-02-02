@@ -1,9 +1,9 @@
 from pydantic import BaseModel, Field
 
-from genai_graph.core.graph_schema import GraphNode
 from genai_graph.ekg.baml_client.types import Customer as BamlCustomer
 from genai_graph.ekg.baml_client.types import Opportunity as BamlOpportunity
 from genai_graph.ekg.baml_client.types import Person
+from genai_graph.kg.schema import GraphNode
 
 
 class FileMetadata(BaseModel):

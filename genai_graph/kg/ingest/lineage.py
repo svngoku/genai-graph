@@ -18,8 +18,8 @@ from loguru import logger
 from pydantic import BaseModel, Field
 from upath import UPath
 
-from genai_graph.core.kg_manager import KgManager
-from genai_graph.core.subgraph_factories import JsonFileBackedGraphFactory
+from genai_graph.kg.factories.json_factory import JsonFileBackedFactory
+from genai_graph.kg.manager import KgManager
 
 
 class JsonArtifact(BaseModel):
@@ -58,10 +58,10 @@ def build_lineage_for_manager(manager: KgManager) -> list[MarkdownLineage]:
         List of MarkdownLineage entries, one per Markdown file.
     """
 
-    # Ensure JSON file discovery is fresh even if JsonFileBackedGraphFactory
+    # Ensure JSON file discovery is fresh even if JsonFileBackedFactory
     # instances were created earlier in the process (for example by
     # GraphRegistry or other components).
-    JsonFileBackedGraphFactory.clear_cache()
+    JsonFileBackedFactory.clear_cache()
 
     profile_cfg = manager.get_profile_dict()
     graphs_cfg = profile_cfg.get("graphs", []) or []
@@ -81,7 +81,7 @@ def build_lineage_for_manager(manager: KgManager) -> list[MarkdownLineage]:
             logger.warning("Cannot import subgraph factory %s: %s", factory_path, exc)
             continue
 
-        if not isinstance(imported, type) or not issubclass(imported, JsonFileBackedGraphFactory):
+        if not isinstance(imported, type) or not issubclass(imported, JsonFileBackedFactory):
             # Not a JSON-file-backed subgraph; nothing to do for lineage.
             continue
 

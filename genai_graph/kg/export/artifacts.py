@@ -18,8 +18,8 @@ from loguru import logger
 from pydantic import BaseModel
 from upath import UPath
 
-from genai_graph.core.graph_backend import GraphBackend
-from genai_graph.core.kg_manager import get_kg_manager
+from genai_graph.kg.backend import KgBackend
+from genai_graph.kg.manager import get_kg_manager
 
 
 class HtmlExportResult(BaseModel):
@@ -59,7 +59,7 @@ class ParquetManifest(BaseModel):
 
 def export_html(
     config_name: str,
-    backend: GraphBackend,
+    backend: KgBackend,
     output_dir: UPath | None = None,
 ) -> HtmlExportResult:
     """Export an HTML visualization of the current KG and return its path.
@@ -69,7 +69,7 @@ def export_html(
         backend: The graph backend to export from
         output_dir: Optional custom output directory (if None, uses KG outcome manager)
     """
-    from genai_graph.core.graph_html import generate_html
+    from genai_graph.kg.export.html import generate_html
 
     if output_dir is None:
         # Use KgManager for organized output with the specified config
@@ -96,17 +96,16 @@ def export_schema(config_name: str) -> UPath:
     Returns:
         Path to the exported schema file
     """
-    from genai_graph.core.graph_registry import GraphRegistry
-    from genai_graph.core.schema_doc_generator import generate_schema_description
+    from genai_graph.kg.schema import GraphRegistry, generate_schema_description
 
     manager = get_kg_manager()
     manager.ensure_directories_for(config_name)
 
-    # Get all registered subgraphs and generate schema description
+    # Get all registered graphs and generate schema description
     registry = GraphRegistry.get_instance()
-    selected_subgraphs = registry.listsubgraphs()
+    selected_graphs = registry.list_graphs()
 
-    schema_content = generate_schema_description(selected_subgraphs, print_enums=True)
+    schema_content = generate_schema_description(selected_graphs, print_enums=True)
 
     # Write schema to file using the specified config
     destination = manager.get_schema_path_for(config_name)
@@ -134,15 +133,14 @@ def export_schema_json(config_name: str) -> UPath:
     import json
     import warnings
 
-    from genai_graph.core.graph_registry import GraphRegistry
-    from genai_graph.core.schema_doc_generator import _get_kuzu_type_for_field
+    from genai_graph.kg.schema import GraphRegistry, _get_kuzu_type_for_field
 
     manager = get_kg_manager()
     manager.ensure_directories_for(config_name)
 
-    # Build the combined schema from all registered subgraphs
+    # Build the combined schema from all registered graphs
     # Suppress validation warnings for combined schemas (type mismatches between
-    # extended and base types are expected when merging different subgraphs)
+    # extended and base types are expected when merging different graphs)
     registry = GraphRegistry.get_instance()
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=UserWarning, message="Graph schema validation:")
@@ -211,7 +209,7 @@ def export_schema_json(config_name: str) -> UPath:
     return destination
 
 
-def export_info(config_name: str, backend: GraphBackend) -> UPath:
+def export_info(config_name: str, backend: KgBackend) -> UPath:
     """Export the KG info as a markdown file.
 
     Args:
@@ -223,32 +221,31 @@ def export_info(config_name: str, backend: GraphBackend) -> UPath:
     """
     import warnings
 
-    from genai_graph.core.graph_backend import get_backend_storage_path_from_config
-    from genai_graph.core.graph_registry import GraphRegistry, get_subgraph
-    from genai_graph.core.graph_schema import find_embedded_field_for_class
+    from genai_graph.kg.backend import get_backend_storage_path_from_config
+    from genai_graph.kg.schema import GraphRegistry, find_embedded_field_for_class, get_graph
 
     manager = get_kg_manager()
     manager.ensure_directories_for(config_name)
 
-    # Build registry and get all subgraphs
+    # Build registry and get all graphs
     registry = GraphRegistry.get_instance()
-    selected_subgraphs = registry.listsubgraphs()
+    selected_graphs = registry.list_graphs()
 
     # Suppress validation warnings for combined schemas (type mismatches between
-    # extended and base types are expected when merging different subgraphs)
+    # extended and base types are expected when merging different graphs)
     try:
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=UserWarning, message="Graph schema validation:")
-            schema = registry.build_combined_schema(selected_subgraphs)
+            schema = registry.build_combined_schema(selected_graphs)
     except ValueError as exc:
         logger.error(f"Failed to build schema: {exc}")
         schema = None
 
-    subgraph_title = ", ".join(selected_subgraphs) if selected_subgraphs else "ALL"
+    graph_title = ", ".join(selected_graphs) if selected_graphs else "ALL"
 
     # Start building markdown content
     lines: list[str] = []
-    lines.append(f"# {subgraph_title} EKG Database Information")
+    lines.append(f"# {graph_title} EKG Database Information")
     lines.append("")
     lines.append("---")
     lines.append("")
@@ -262,11 +259,11 @@ def export_info(config_name: str, backend: GraphBackend) -> UPath:
 
     lines.append(f"- **Database Path**: `{db_path}`")
     lines.append("- **Database Type**: Cypher Graph Database")
-    lines.append("- **Backend**: Cypher (via GraphBackend abstraction)")
+    lines.append("- **Backend**: Cypher (via KgBackend abstraction)")
     lines.append("- **Storage**: Persistent File Storage")
     lines.append(f"- **Active KG Config**: `{active_cfg}@{manager.tag}`")
     lines.append(f"- **Default KG Config**: `{default_kg}`")
-    lines.append(f"- **Subgraph(s)**: **{subgraph_title}**")
+    lines.append(f"- **Graph(s)**: **{graph_title}**")
     lines.append("")
 
     # KG Outputs & Outcomes section
@@ -296,16 +293,16 @@ def export_info(config_name: str, backend: GraphBackend) -> UPath:
         lines.append("---")
         lines.append("")
 
-    # Subgraph Factories section
-    lines.append("## Subgraph Factories")
+    # Graph Factories section
+    lines.append("## Graph Factories")
     lines.append("")
     lines.append("| Name | Type | Module |")
     lines.append("|------|------|--------|")
-    for name in selected_subgraphs or registry.listsubgraphs():
+    for name in selected_graphs or registry.list_graphs():
         try:
-            subgraph_impl = get_subgraph(name)
-            factory_type = type(subgraph_impl).__name__
-            factory_module = type(subgraph_impl).__module__
+            graph_impl = get_graph(name)
+            factory_type = type(graph_impl).__name__
+            factory_module = type(graph_impl).__module__
             lines.append(f"| **{name}** | `{factory_type}` | `{factory_module}` |")
         except ValueError:
             lines.append(f"| **{name}** | *Not Found* | - |")
@@ -383,7 +380,7 @@ def export_info(config_name: str, backend: GraphBackend) -> UPath:
             lines.append("")
 
         # Node Mapping
-        lines.append(f"## Node Mapping for {subgraph_title}")
+        lines.append(f"## Node Mapping for {graph_title}")
         lines.append("")
         lines.append("| Node Type | Description | Primary Key |")
         lines.append("|-----------|-------------|-------------|")
@@ -473,7 +470,7 @@ def get_parquet_export_dir(config_name: str) -> UPath:
 
 def export_parquet(
     config_name: str,
-    backend: GraphBackend,
+    backend: KgBackend,
     source_files: list[str] | None = None,
 ) -> ParquetExportResult:
     """Export all nodes and relationships from a KG to parquet files.
@@ -491,7 +488,7 @@ def export_parquet(
     Returns:
         ParquetExportResult with export details
     """
-    import hashlib
+    from genai_tk.utils.hashing import buffer_digest
 
     manager = get_kg_manager()
     manager.ensure_directories_for(config_name)
@@ -555,7 +552,7 @@ def export_parquet(
     source_hash = None
     if source_files:
         combined = "|".join(sorted(source_files))
-        source_hash = hashlib.sha256(combined.encode()).hexdigest()[:16]
+        source_hash = buffer_digest(combined.encode(), algorithm="sha256")[:16]
 
     # Write manifest
     manifest = ParquetManifest(
@@ -603,9 +600,9 @@ def save_parquet_from_collector(
     Returns:
         ParquetExportResult with export details
     """
-    import hashlib
+    from genai_tk.utils.hashing import buffer_digest
 
-    from genai_graph.core.graph_merge import ParquetCollector
+    from genai_graph.kg.ingest.merge import ParquetCollector
 
     # Validate collector type
     if not isinstance(collector, ParquetCollector):
@@ -657,7 +654,7 @@ def save_parquet_from_collector(
     source_hash = None
     if source_files:
         combined = "|".join(sorted(source_files))
-        source_hash = hashlib.sha256(combined.encode()).hexdigest()[:16]
+        source_hash = buffer_digest(combined.encode(), algorithm="sha256")[:16]
 
     # Write manifest
     manifest = ParquetManifest(
@@ -711,7 +708,7 @@ def load_parquet_manifest(config_name: str) -> ParquetManifest | None:
 
 def import_from_parquet(
     config_name: str,
-    backend: GraphBackend,
+    backend: KgBackend,
 ) -> tuple[int, int]:
     """Import nodes and relationships from parquet files into the graph.
 
@@ -724,7 +721,7 @@ def import_from_parquet(
     Returns:
         Tuple of (nodes_imported, rels_imported)
     """
-    from genai_graph.core.graph_merge import get_parquet_collector
+    from genai_graph.kg.ingest.merge import get_parquet_collector
 
     export_dir = get_parquet_export_dir(config_name)
     nodes_dir = export_dir / "nodes"

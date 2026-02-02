@@ -10,12 +10,12 @@ from typing import Type
 
 from pydantic import BaseModel
 
-from genai_graph.core.graph_schema import GraphSchema
-from genai_graph.core.subgraph_factories import JsonFileBackedGraphFactory
 from genai_graph.ekg.baml_client.types import ReviewedOpportunity
+from genai_graph.kg.factories import JsonFileBackedFactory
+from genai_graph.kg.schema import GraphSchema
 
 
-class ReviewedOpportunityGraph(JsonFileBackedGraphFactory, BaseModel):
+class ReviewedOpportunityGraph(JsonFileBackedFactory, BaseModel):
     """Opportunity data graph using JSON files from BAML extract."""
 
     TOP_CLASS: Type[BaseModel] = ReviewedOpportunity
@@ -26,10 +26,6 @@ class ReviewedOpportunityGraph(JsonFileBackedGraphFactory, BaseModel):
         Returns:
             GraphSchema with all node and relationship configurations
         """
-        from genai_graph.core.graph_schema import (
-            GraphNode,
-            GraphRelation,
-        )
         from genai_graph.ekg.baml_client.types import (
             CompetitiveLandscape,
             Competitor,
@@ -41,6 +37,10 @@ class ReviewedOpportunityGraph(JsonFileBackedGraphFactory, BaseModel):
             ReviewedOpportunity,
             RiskAnalysis,
             TechnicalApproach,
+        )
+        from genai_graph.kg.schema import (
+            GraphNode,
+            GraphRelation,
         )
 
         # Note: We use BAML types directly here (not extended types from common_nodes)

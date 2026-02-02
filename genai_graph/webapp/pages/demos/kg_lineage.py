@@ -22,10 +22,10 @@ from loguru import logger
 from streamlit import session_state as sss
 from upath import UPath
 
-from genai_graph.core.kg_manager import get_kg_manager
+from genai_graph.kg.manager import get_kg_manager
 
 if TYPE_CHECKING:  # pragma: no cover - type checking only
-    from genai_graph.core.data_lineage import JsonArtifact, MarkdownLineage
+    from genai_graph.kg.ingest.lineage import JsonArtifact, MarkdownLineage
 
 
 def _get_data_roots() -> list[UPath]:

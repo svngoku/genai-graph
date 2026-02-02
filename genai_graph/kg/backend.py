@@ -1,4 +1,4 @@
-"""Graph database backend abstraction layer.
+"""Knowledge Graph database backend abstraction layer.
 
 This module provides an abstract interface for graph databases and concrete
 implementations for different backends (Kuzu, Neo4j, etc.).
@@ -15,7 +15,7 @@ from upath import UPath
 class QueryExecutor(ABC):
     """Thin abstraction for anything that can execute Cypher-like queries.
 
-    Implemented by GraphBackend and can be satisfied by raw connections that
+    Implemented by KgBackend and can be satisfied by raw connections that
     expose a compatible ``execute`` method.
     """
 
@@ -25,8 +25,8 @@ class QueryExecutor(ABC):
         ...
 
 
-class GraphBackend(QueryExecutor, ABC):
-    """Abstract base class for graph database backends."""
+class KgBackend(QueryExecutor, ABC):
+    """Abstract base class for KG database backends."""
 
     @abstractmethod
     def connect(self, connection_string: str) -> None:
@@ -195,7 +195,7 @@ class GraphBackend(QueryExecutor, ABC):
             return pd.DataFrame()
 
 
-class KuzuBackend(GraphBackend):
+class KuzuBackend(KgBackend):
     """Kuzu graph database backend implementation."""
 
     def __init__(self) -> None:
@@ -360,7 +360,7 @@ class KuzuBackend(GraphBackend):
         return "Cypher"
 
 
-class Neo4jBackend(GraphBackend):
+class Neo4jBackend(KgBackend):
     """Neo4j graph database backend implementation (placeholder)."""
 
     def __init__(self) -> None:
@@ -423,14 +423,14 @@ class Neo4jBackend(GraphBackend):
         return "Cypher"
 
 
-def create_backend(backend_type: str = "kuzu") -> GraphBackend:
+def create_backend(backend_type: str = "kuzu") -> KgBackend:
     """Create a graph backend instance.
 
     Args:
         backend_type: Type of backend ('kuzu', 'neo4j')
 
     Returns:
-        GraphBackend instance
+        KgBackend instance
     """
     backends = {
         "kuzu": KuzuBackend,
@@ -443,7 +443,7 @@ def create_backend(backend_type: str = "kuzu") -> GraphBackend:
     return backend_class()
 
 
-def create_in_memory_backend() -> GraphBackend:
+def create_in_memory_backend() -> KgBackend:
     """Create an in-memory graph backend for temporary graphs/tests.
 
     Currently returns a Kuzu-based backend connected to an in-memory database.
@@ -453,7 +453,7 @@ def create_in_memory_backend() -> GraphBackend:
     return backend
 
 
-def create_backend_from_config(config_key: str = "default", kg_config_name: str | None = None) -> GraphBackend:
+def create_backend_from_config(config_key: str = "default", kg_config_name: str | None = None) -> KgBackend:
     """Create a graph backend from YAML configuration.
 
     Reads configuration from global_config()["graph_db"][config_key] and creates
@@ -465,7 +465,7 @@ def create_backend_from_config(config_key: str = "default", kg_config_name: str 
         kg_config_name: Optional KG configuration name for organized output folders
 
     Returns:
-        Connected GraphBackend instance
+        Connected KgBackend instance
     """
     from genai_tk.utils.config_mngr import global_config
 
@@ -484,7 +484,7 @@ def create_backend_from_config(config_key: str = "default", kg_config_name: str 
 
     # Use KgManager-derived path if kg_config_name is provided
     if kg_config_name and backend_type.lower() == "kuzu":
-        from genai_graph.core.kg_manager import get_kg_manager
+        from genai_graph.kg.manager import get_kg_manager
 
         manager = get_kg_manager()
 
@@ -554,7 +554,7 @@ def get_backend_storage_path_from_config(config_key: str = "default", kg_config_
 
     # Use KgManager-derived path if kg_config_name is provided for Kuzu backend
     if kg_config_name and backend_type.lower() == "kuzu":
-        from genai_graph.core.kg_manager import get_kg_manager
+        from genai_graph.kg.manager import get_kg_manager
 
         manager = get_kg_manager()
         # Construct the path for the specified kg_config without relying on manager.db_path

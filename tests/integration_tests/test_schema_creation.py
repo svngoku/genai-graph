@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from genai_graph.core.graph_backend import KuzuBackend
-from genai_graph.core.graph_core import create_schema
-from genai_graph.core.graph_schema import GraphNode, GraphSchema
+from genai_graph.kg.backend import KuzuBackend
+from genai_graph.kg.ingest import create_schema
+from genai_graph.kg.schema import GraphNode, GraphSchema
 
 
 class TestSchemaCreation:

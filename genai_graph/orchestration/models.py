@@ -11,17 +11,17 @@ from typing import Any
 from pydantic import BaseModel
 from upath import UPath
 
-from genai_graph.core.graph_documents import DocumentStats
-from genai_graph.core.graph_schema import GraphSchema
-from genai_graph.core.kg_exports import HtmlExportResult
-from genai_graph.core.subgraph_factories import GraphFactory
+from genai_graph.kg.export import HtmlExportResult
+from genai_graph.kg.factories import KgFactory
+from genai_graph.kg.ingest import DocumentStats
+from genai_graph.kg.schema import GraphSchema
 
 
 class GraphBundle(BaseModel):
     """In-memory representation of a configured graph during KG creation."""
 
     config: dict[str, Any]
-    factory: GraphFactory
+    factory: KgFactory
     schema_obj: GraphSchema | None = None
 
 

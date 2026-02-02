@@ -1,16 +1,16 @@
-"""Utilities for building EKG-aware LangChain agents.
+"""Utilities for building KG-aware LangChain agents.
 
 This module centralizes the system prompt and tools used by CLI commands
-that interact with the Enterprise Knowledge Graph (EKG).
+that interact with the Knowledge Graph (KG).
 """
 
 from genai_tk.core.prompts import dedent_ws
 from langchain_core.tools import BaseTool, tool
 from rich.console import Console
 
-from genai_graph.core.graph_backend import create_backend_from_config
-from genai_graph.core.kg_manager import get_kg_manager
-from genai_graph.core.text2cypher import SYSTEM_PROMPT
+from genai_graph.kg.backend import create_backend_from_config
+from genai_graph.kg.manager import get_kg_manager
+from genai_graph.kg.query.text2cypher import SYSTEM_PROMPT
 
 
 def build_ekg_agent_system_prompt(single_tool_mode: bool = False) -> str:

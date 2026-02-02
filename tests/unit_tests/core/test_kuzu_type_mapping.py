@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from genai_graph.core.graph_core import _get_kuzu_type
+from genai_graph.kg.ingest import _get_kuzu_type
 
 
 class TestGetKuzuType:

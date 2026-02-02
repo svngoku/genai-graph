@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from genai_graph.core.graph_schema import GraphNode, GraphSchema
+from genai_graph.kg.schema import GraphNode, GraphSchema
 
 
 class TestEmbeddedStructs:
@@ -20,7 +20,7 @@ class TestEmbeddedStructs:
 
     def test_find_embedded_field_simple(self) -> None:
         """Test finding embedded field in parent class."""
-        from genai_graph.core.graph_schema import _find_embedded_field_for_class
+        from genai_graph.kg.schema import _find_embedded_field_for_class
 
         class Metrics(BaseModel):
             score: float
@@ -35,7 +35,7 @@ class TestEmbeddedStructs:
 
     def test_find_embedded_field_optional(self) -> None:
         """Test finding optional embedded field."""
-        from genai_graph.core.graph_schema import _find_embedded_field_for_class
+        from genai_graph.kg.schema import _find_embedded_field_for_class
 
         class Address(BaseModel):
             city: str
@@ -49,7 +49,7 @@ class TestEmbeddedStructs:
 
     def test_find_embedded_field_in_list(self) -> None:
         """Test finding embedded field when it's in a list."""
-        from genai_graph.core.graph_schema import _find_embedded_field_for_class
+        from genai_graph.kg.schema import _find_embedded_field_for_class
 
         class Tag(BaseModel):
             name: str
@@ -63,7 +63,7 @@ class TestEmbeddedStructs:
 
     def test_find_embedded_field_not_found(self) -> None:
         """Test that None is returned when field is not found."""
-        from genai_graph.core.graph_schema import _find_embedded_field_for_class
+        from genai_graph.kg.schema import _find_embedded_field_for_class
 
         class Unrelated(BaseModel):
             value: str

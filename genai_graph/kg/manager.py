@@ -3,7 +3,6 @@
 This module defines a singleton :class:`KgManager` responsible for
 coordinating KG configuration, identity (profile + tag), filesystem
 layout for artifacts, and high-level outcome/warning tracking.
-
 """
 
 from __future__ import annotations
@@ -19,7 +18,7 @@ from pydantic import BaseModel, Field
 from upath import UPath
 
 if TYPE_CHECKING:  # pragma: no cover - type checking only
-    from genai_graph.core.data_lineage import MarkdownLineage
+    from genai_graph.kg.ingest.lineage import MarkdownLineage
 
 
 class KgOutcome(BaseModel):
@@ -32,7 +31,7 @@ class KgOutcome(BaseModel):
     details: dict[str, Any] | None = None
 
 
-class EkgGraphConfig(BaseModel):
+class KgGraphConfig(BaseModel):
     """Configuration for a single graph entry."""
 
     factory: str
@@ -44,7 +43,7 @@ class EkgGraphConfig(BaseModel):
     }
 
 
-class EkgAgentConfig(BaseModel):
+class KgAgentConfig(BaseModel):
     """Agent-related configuration for a KG profile."""
 
     mcp_servers: list[str] = Field(default_factory=list)
@@ -54,11 +53,11 @@ class EkgAgentConfig(BaseModel):
     }
 
 
-class EkgProfileConfig(BaseModel):
+class KgProfileConfig(BaseModel):
     """Configuration for a single KG profile (entry in ``kg_configs``)."""
 
-    graphs: list[EkgGraphConfig] = Field(default_factory=list)
-    agent: EkgAgentConfig | None = None
+    graphs: list[KgGraphConfig] = Field(default_factory=list)
+    agent: KgAgentConfig | None = None
     imports: list[str] = Field(default_factory=list, alias="import")
     """List of KG config names to import before building this KG."""
 
@@ -68,19 +67,19 @@ class EkgProfileConfig(BaseModel):
     }
 
 
-class EkgConfig(BaseModel):
-    """Top-level EKG configuration loaded from ``config/ekg.yaml``."""
+class KgConfig(BaseModel):
+    """Top-level KG configuration loaded from ``config/ekg.yaml``."""
 
     kg_config: str
     kg_tag: str = "dev"
     schemas_root: str | None = None
-    kg_configs: dict[str, EkgProfileConfig] = Field(default_factory=dict)
+    kg_configs: dict[str, KgProfileConfig] = Field(default_factory=dict)
 
 
 class KgManager(BaseModel):
     """Singleton manager for KG configuration, identity and artifacts."""
 
-    ekg_config: EkgConfig
+    ekg_config: KgConfig
     profile: str
     tag: str
     warnings: list[str] = Field(default_factory=list)
@@ -107,7 +106,7 @@ class KgManager(BaseModel):
 
         cfg = global_config()
 
-        # Top-level EKG config
+        # Top-level KG config
         profile = cfg.get("kg_config", default="db_only")
         tag_env = os.environ.get("KG_CONFIG_TAG")
         tag = cfg.get("kg_tag", default=tag_env or "dev")
@@ -119,11 +118,11 @@ class KgManager(BaseModel):
 
         schemas_root = cfg.get("schemas_root", default=None)
 
-        ekg_config = EkgConfig(
+        ekg_config = KgConfig(
             kg_config=profile,
             kg_tag=tag,
             schemas_root=schemas_root,
-            kg_configs={k: EkgProfileConfig(**v) for k, v in kg_configs_dict.items()},
+            kg_configs={k: KgProfileConfig(**v) for k, v in kg_configs_dict.items()},
         )
 
         return cls(ekg_config=ekg_config, profile=profile, tag=tag)
@@ -143,23 +142,20 @@ class KgManager(BaseModel):
         Returns:
             Tuple of (profile, tag) in use.
         """
-
         if self.profile not in self.ekg_config.kg_configs:
             logger.warning(
                 "Unknown KG_CONFIG= '%s'; available=%s",
                 self.profile,
                 sorted(self.ekg_config.kg_configs.keys()),
             )
-
         return (self.profile, self.tag)
 
     # ------------------------------------------------------------------
     # Configuration access
     # ------------------------------------------------------------------
 
-    def get_profile_config(self) -> EkgProfileConfig:
+    def get_profile_config(self) -> KgProfileConfig:
         """Return configuration for the active profile."""
-
         if self.profile not in self.ekg_config.kg_configs:
             raise KeyError(
                 f"KG_CONFIG='{self.profile}' is not defined in ekg.yaml; "
@@ -169,7 +165,6 @@ class KgManager(BaseModel):
 
     def get_profile_dict(self) -> dict[str, Any]:
         """Return active profile configuration as a plain dictionary."""
-
         return self.get_profile_config().model_dump()
 
     # ------------------------------------------------------------------
@@ -222,7 +217,6 @@ class KgManager(BaseModel):
     @property
     def base_path(self) -> UPath:
         """Root directory for this KG profile."""
-
         if self._base_path is None:
             self._base_path = global_config().get_dir_path("paths.kg_outputs") / self.profile
         return self._base_path
@@ -230,7 +224,6 @@ class KgManager(BaseModel):
     @property
     def db_path(self) -> UPath:
         """Path to the Kuzu database file for this KG."""
-
         if self._db_path is None:
             self._db_path = self.base_path / f"{self.profile}-{self.tag}.db"
         return self._db_path
@@ -238,7 +231,6 @@ class KgManager(BaseModel):
     @property
     def html_path(self) -> UPath:
         """Path to the HTML export file for this KG."""
-
         if self._html_path is None:
             self._html_path = self.base_path / f"{self.profile}-{self.tag}.html"
         return self._html_path
@@ -246,7 +238,6 @@ class KgManager(BaseModel):
     @property
     def schema_path(self) -> UPath:
         """Path to the schema text file for this KG."""
-
         if self._schema_path is None:
             self._schema_path = self.base_path / f"{self.profile}-{self.tag}-schema.txt"
         return self._schema_path
@@ -254,7 +245,6 @@ class KgManager(BaseModel):
     @property
     def info_path(self) -> UPath:
         """Path to the info markdown file for this KG."""
-
         if self._info_path is None:
             self._info_path = self.base_path / f"{self.profile}-{self.tag}-info.md"
         return self._info_path
@@ -262,7 +252,6 @@ class KgManager(BaseModel):
     @property
     def outcomes_file(self) -> UPath:
         """Path to the outcomes log file (JSONL)."""
-
         if self._outcomes_file is None:
             self._outcomes_file = self.base_path / f"{self.profile}-{self.tag}-outcomes.jsonl"
         return self._outcomes_file
@@ -270,14 +259,12 @@ class KgManager(BaseModel):
     @property
     def warnings_file(self) -> UPath:
         """Path to the warnings log file (plain text)."""
-
         if self._warnings_file is None:
             self._warnings_file = self.base_path / f"{self.profile}-{self.tag}-warnings.log"
         return self._warnings_file
 
     def ensure_directories(self) -> None:
         """Create base directory if it doesn't exist."""
-
         self.base_path.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
@@ -292,7 +279,6 @@ class KgManager(BaseModel):
         details: dict[str, Any] | None = None,
     ) -> None:
         """Append a structured outcome entry to the JSONL outcomes file."""
-
         self.base_path.mkdir(parents=True, exist_ok=True)
 
         outcome = KgOutcome(
@@ -310,7 +296,6 @@ class KgManager(BaseModel):
 
     def log_warnings(self, warnings: list[str]) -> None:
         """Append a block of warnings to the warnings log file."""
-
         if not warnings:
             return
 
@@ -325,7 +310,6 @@ class KgManager(BaseModel):
 
     def get_recent_outcomes(self, limit: int = 10) -> list[KgOutcome]:
         """Return the most recent outcome entries (newest first)."""
-
         if not self.outcomes_file.exists():
             return []
 
@@ -344,7 +328,6 @@ class KgManager(BaseModel):
 
     def get_recent_warnings(self, limit: int = 50) -> list[str]:
         """Return the most recent warning lines (newest first)."""
-
         if not self.warnings_file.exists():
             return []
 
@@ -355,7 +338,6 @@ class KgManager(BaseModel):
 
     def clear_all(self) -> None:
         """Remove all files and directories for this KG profile/tag."""
-
         import shutil
 
         if self.base_path.exists():
@@ -364,7 +346,6 @@ class KgManager(BaseModel):
 
     def get_info(self) -> dict[str, Any]:
         """Return information about this KG's artifacts and logs."""
-
         info: dict[str, Any] = {
             "profile": self.profile,
             "tag": self.tag,
@@ -420,7 +401,7 @@ class KgManager(BaseModel):
     def get_data_lineage(self) -> list["MarkdownLineage"]:
         """Return data lineage entries for JSON/Markdown/source artifacts.
 
-        This delegates to :mod:`genai_graph.core.data_lineage` so that
+        This delegates to :mod:`genai_graph.kg.ingest.lineage` so that
         lineage computation remains independent from this manager's other
         responsibilities while still exposing a convenient entry point for
         callers.
@@ -429,8 +410,7 @@ class KgManager(BaseModel):
             List of MarkdownLineage objects describing source documents and
             associated JSON files for the active KG profile.
         """
-
-        from genai_graph.core.data_lineage import build_lineage_for_manager
+        from genai_graph.kg.ingest.lineage import build_lineage_for_manager
 
         return build_lineage_for_manager(self)
 
@@ -440,13 +420,11 @@ class KgManager(BaseModel):
 
     def add_warning(self, message: str) -> None:
         """Record a warning message in memory (deduplicated on retrieval)."""
-
         if message and message not in self.warnings:
             self.warnings.append(message)
 
     def get_warnings(self) -> list[str]:
         """Return deduplicated warnings in order of first occurrence."""
-
         seen: set[str] = set()
         result: list[str] = []
         for warning in self.warnings:
@@ -457,12 +435,10 @@ class KgManager(BaseModel):
 
     def has_warnings(self) -> bool:
         """Return True if any warnings were collected in memory."""
-
         return bool(self.warnings)
 
     def clear_warnings(self) -> None:
         """Clear in-memory warnings (does not touch log files)."""
-
         self.warnings.clear()
 
 
@@ -480,3 +456,11 @@ def get_kg_manager(activate: bool = True) -> KgManager:
     if activate:
         manager.activate()
     return manager
+
+
+def reset_kg_manager() -> None:
+    """Reset the singleton KgManager instance.
+
+    Call this when configuration changes and a fresh instance is needed.
+    """
+    get_kg_manager.clear()  # type: ignore[attr-defined]

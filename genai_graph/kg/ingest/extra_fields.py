@@ -4,7 +4,7 @@ from typing import Any, Dict
 
 from pydantic import BaseModel
 
-from genai_graph.core.graph_schema import GraphNode
+from genai_graph.kg.schema import GraphNode
 
 
 def apply_extra_fields(

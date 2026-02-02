@@ -17,12 +17,12 @@ import pandas as pd
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from genai_graph.core.graph_backend import GraphBackend
-from genai_graph.core.kg_manager import KgManager
+from genai_graph.kg.backend import KgBackend
+from genai_graph.kg.manager import KgManager
 
 if TYPE_CHECKING:
-    from genai_graph.core.graph_core import RelationshipRecord
-    from genai_graph.core.graph_schema import GraphNode
+    from genai_graph.kg.ingest.extract import RelationshipRecord
+    from genai_graph.kg.schema.core import GraphNode
 
 
 # =============================================================================
@@ -256,7 +256,7 @@ class NodeTypeConfig(BaseModel):
     @classmethod
     def from_graph_node(cls, node: GraphNode) -> NodeTypeConfig:
         """Create config from a GraphNode definition."""
-        from genai_graph.core.schema_doc_generator import _get_kuzu_type_for_field
+        from genai_graph.kg.schema.doc_generator import _get_kuzu_type_for_field
 
         node_type = node.node_class.__name__
         key_from = node.key_from
@@ -277,7 +277,7 @@ class NodeTypeConfig(BaseModel):
         struct_field_types: dict[str, dict[str, str]] = {}
         for emb_class in getattr(node, "embedded_struct_classes", []) or []:
             # Find the field name that holds this embedded class
-            from genai_graph.core.graph_schema import find_embedded_field_for_class
+            from genai_graph.kg.schema.core import find_embedded_field_for_class
 
             field_name = find_embedded_field_for_class(node.node_class, emb_class)
             if field_name and hasattr(emb_class, "model_fields"):
@@ -441,7 +441,7 @@ def _prepare_node_dataframe(
     Returns:
         DataFrame ready for LOAD FROM MERGE operation
     """
-    from genai_graph.core.graph_core import TypedNull
+    from genai_graph.kg.ingest.extract import TypedNull
 
     field_types = field_types or {}
     struct_field_types = struct_field_types or {}
@@ -532,7 +532,7 @@ def _get_columns_for_set_clause(
 
 
 def merge_nodes_batch(
-    conn: GraphBackend,
+    conn: KgBackend,
     nodes: NodeDataCollection,
     registry: NodeTypeRegistry,
     context: KgManager | None = None,
@@ -543,7 +543,7 @@ def merge_nodes_batch(
     This is significantly faster than individual MERGE queries.
 
     Args:
-        conn: Graph database connection (kuzu.Connection or GraphBackend)
+        conn: Graph database connection (kuzu.Connection or KgBackend)
         nodes: Node data collection
         registry: Node type configuration registry
         context: Optional KgManager for collecting warnings
@@ -579,7 +579,7 @@ def merge_nodes_batch(
         # Get columns for SET clauses
         on_create_cols, on_match_cols = _get_columns_for_set_clause(df, primary_key_field)
 
-        # Get the Kuzu connection (handle both GraphBackend and raw connection)
+        # Get the Kuzu connection (handle both KgBackend and raw connection)
         kuzu_conn = conn.conn if hasattr(conn, "conn") else conn  # type: ignore[union-attr]
 
         try:
@@ -639,7 +639,7 @@ def merge_nodes_batch(
 
 
 def merge_relationships_batch(
-    conn: GraphBackend,
+    conn: KgBackend,
     relationships: list[RelationshipRecord],
     registry: NodeTypeRegistry,
     id_mapping: NodeIdMapping,

@@ -1,3 +1,9 @@
+"""Graph data extraction from Pydantic models.
+
+This module provides functions for extracting graph data from Pydantic models
+and creating the graph schema and nodes/relationships in the database.
+"""
+
 from datetime import datetime
 from typing import Any, Dict, NamedTuple, Union
 
@@ -5,16 +11,16 @@ from loguru import logger
 from pydantic import BaseModel
 from rich.console import Console
 
-from genai_graph.core.extra_fields_utils import apply_extra_fields
-from genai_graph.core.graph_backend import GraphBackend, create_in_memory_backend
-from genai_graph.core.graph_merge import (
+from genai_graph.kg.backend import KgBackend, create_in_memory_backend
+from genai_graph.kg.ingest.extra_fields import apply_extra_fields
+from genai_graph.kg.ingest.merge import (
     NodeDataCollection,
     NodeTypeRegistry,
     merge_nodes_batch,
     merge_relationships_batch,
 )
-from genai_graph.core.graph_schema import GraphNode, GraphRelation, GraphSchema, _find_embedded_field_for_class
-from genai_graph.core.kg_manager import KgManager
+from genai_graph.kg.manager import KgManager
+from genai_graph.kg.schema.core import GraphNode, GraphRelation, GraphSchema, _find_embedded_field_for_class
 
 
 class TypedNull:
@@ -255,11 +261,11 @@ def _normalize_embedded_dict(data: dict[str, Any], model_class: type[BaseModel])
     return normalized
 
 
-def restart_database() -> GraphBackend:
+def restart_database() -> KgBackend:
     """Restart the database by creating a fresh in-memory backend.
 
     Returns:
-        GraphBackend instance connected to an in-memory database
+        KgBackend instance connected to an in-memory database
     """
 
     backend = create_in_memory_backend()
@@ -271,7 +277,7 @@ def restart_database() -> GraphBackend:
 
 
 def create_schema(
-    backend: GraphBackend, nodes: list[GraphNode], relations: list[GraphRelation], context: KgManager | None = None
+    backend: KgBackend, nodes: list[GraphNode], relations: list[GraphRelation], context: KgManager | None = None
 ) -> None:
     """Create node and relationship tables in the graph database (idempotent).
 
@@ -281,7 +287,7 @@ def create_schema(
     Embedded nodes have their fields merged into parent tables.
 
     Args:
-        backend: GraphBackend instance
+        backend: KgBackend instance
         nodes: List of GraphNode objects
         relations: List of GraphRelationConfig objects
         context: Optional KgContext for collecting warnings
@@ -698,7 +704,7 @@ def extract_graph_data(
 
 
 def load_graph_data(
-    backend: GraphBackend,
+    backend: KgBackend,
     nodes: list[GraphNode],
     nodes_data: NodeDataCollection,
     relationships: list[RelationshipRecord],
@@ -711,7 +717,7 @@ def load_graph_data(
     - LOAD FROM df MATCH ... CREATE for batch relationship creation
 
     Args:
-        backend: GraphBackend instance
+        backend: KgBackend instance
         nodes: List of GraphNode configurations
         nodes_data: Collection of nodes grouped by type
         relationships: List of RelationshipRecord instances
@@ -749,7 +755,7 @@ def load_graph_data(
 
 
 def import_neo4j_data(
-    backend: GraphBackend,
+    backend: KgBackend,
     nodes_data: NodeDataCollection,
     relationships: list[RelationshipRecord],
     context: KgManager | None = None,
@@ -769,7 +775,7 @@ def import_neo4j_data(
     Returns:
         Tuple of (nodes_data, relationships) that were loaded into the graph
     """
-    from genai_graph.core.graph_merge import (
+    from genai_graph.kg.ingest.merge import (
         NodeTypeRegistry,
         merge_nodes_batch,
         merge_relationships_batch,
@@ -809,7 +815,7 @@ def import_neo4j_data(
 
 
 def _create_dynamic_schema_for_nodes(
-    backend: GraphBackend,
+    backend: KgBackend,
     nodes_data: NodeDataCollection,
     relationships: list[RelationshipRecord],
 ) -> None:
@@ -995,7 +1001,7 @@ def _create_dynamic_schema_for_nodes(
 
 
 def create_graph(
-    backend: GraphBackend,
+    backend: KgBackend,
     model: BaseModel,
     schema_config: GraphSchema,
     source_key: str | None = None,

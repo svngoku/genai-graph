@@ -1,14 +1,21 @@
 # New
 
-1/
-Fix  and complete (or refactor completly) genai_graph/ekg/schema/stratnav.py and related code  (it never worked as expected ,and its based on old design choices).
+Improve generate_schema_description and related functions. Today it does not takes the actual schema associated with the KG definition. 
+For example, for the kg "db_only", the produced schema is indeed the one of "simple" (from BAML files).
+And the actual graph schema made from the db mapping is not generated. 
+So analyse the flow of how the graph schema is produced and produce an LLM-friendly schema that actually fit it.  Take care of having description. 
+Forget Stratnav factory for now. 
 
-The goal is to create a Kuzu graph from a ne4oj database, imported through a JSONL file. The Kuzu graph need to be merges with other graphs, and so chare same creation logic.
 
-We'll test fiest on a subset of the neo4j graph (it normally have > 150K lines).
-From this version of stratnav.py, we expect to have at least nodes of type 'Customers', 'L3' and 'Ambiion'.  there will be more later. 
+Refactor 
 
-to test : cli kg create --kg simple_neo4j  
+            GraphNode(
+                node_class=L3Service,
+                name_from="name",
+                key_from="code",
+                description="Level 3 service offering",
+                index_fields=["description"],
+            ),
 
 
 
