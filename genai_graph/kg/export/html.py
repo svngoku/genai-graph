@@ -235,83 +235,177 @@ def _fetch_graph_data(
             dst_node = row["m"]
             rel_obj = row["r"]
 
-            # Process source and destination nodes
-            for node_obj in [src_node, dst_node]:
-                if not isinstance(node_obj, dict):
+            # Check if rel_obj is a Kuzu path object (variable-length path result)
+            # Path objects have structure: {'_nodes': [...], '_rels': [...]}
+            is_path = isinstance(rel_obj, dict) and "_rels" in rel_obj and "_nodes" in rel_obj
+
+            if is_path:
+                # Unpack path: process all intermediate nodes and relationships
+                path_nodes = rel_obj.get("_nodes", [])
+                path_rels = rel_obj.get("_rels", [])
+
+                # Build list of all nodes in path: src -> intermediates -> dst
+                all_path_nodes = [src_node] + path_nodes + [dst_node]
+
+                # Process all nodes in the path
+                for node_obj in all_path_nodes:
+                    if not isinstance(node_obj, dict):
+                        continue
+
+                    # Get Kuzu internal ID for deduplication
+                    kuzu_id = _serialize_kuzu_id(node_obj.get("_id"))
+                    if not kuzu_id or kuzu_id in kuzu_id_to_node_data:
+                        continue
+
+                    # Get node type (label)
+                    node_type = node_obj.get("_label", "Unknown")
+
+                    # Apply node label filtering
+                    if allowed_node_labels and node_type not in allowed_node_labels:
+                        continue
+
+                    # Extract node properties (skip internal fields)
+                    node_dict = {}
+                    for key, val in node_obj.items():
+                        if key in ("_created_at", "_updated_at", "_original_name"):
+                            node_dict[key] = str(val).strip() if str(val).strip() else str(val)
+                        elif not key.startswith("_") and val is not None:
+                            node_dict[key] = str(val).strip() if str(val).strip() else str(val)
+
+                    # Generate display name and metadata
+                    node_name = _get_node_display_name(node_dict, node_type)
+                    node_dict["type"] = node_type
+                    node_dict["name"] = node_name
+
+                    # Generate UUID for this node
+                    node_uuid = str(uuid.uuid4())
+
+                    # Store in mapping
+                    kuzu_id_to_node_data[kuzu_id] = {
+                        "uuid": node_uuid,
+                        "type": node_type,
+                        "node_dict": node_dict,
+                    }
+
+                    nodes.append(NodeRecord(node_id=node_uuid, properties=node_dict))
+
+                # Process all relationships in the path
+                for path_rel in path_rels:
+                    if not isinstance(path_rel, dict):
+                        continue
+
+                    rel_type = path_rel.get("_label", "RELATED_TO")
+
+                    # Apply relationship type filtering
+                    if allowed_rel_types and rel_type not in allowed_rel_types:
+                        continue
+
+                    # Extract edge properties (non-internal fields)
+                    edge_props = {}
+                    for key, value in path_rel.items():
+                        if not key.startswith("_") and value is not None:
+                            edge_props[key] = value
+
+                    # Get source and destination from _src and _dst in the relationship
+                    src_kuzu_id = _serialize_kuzu_id(path_rel.get("_src"))
+                    dst_kuzu_id = _serialize_kuzu_id(path_rel.get("_dst"))
+
+                    if not src_kuzu_id or not dst_kuzu_id:
+                        continue
+
+                    src_data = kuzu_id_to_node_data.get(src_kuzu_id)
+                    dst_data = kuzu_id_to_node_data.get(dst_kuzu_id)
+
+                    if src_data and dst_data:
+                        relationships.append(
+                            RelationshipRecord(
+                                from_type=src_data["type"],
+                                from_id=src_data["uuid"],
+                                to_type=dst_data["type"],
+                                to_id=dst_data["uuid"],
+                                name=rel_type,
+                                properties=edge_props,
+                            )
+                        )
+            else:
+                # Simple relationship (not a path) - original processing logic
+                # Process source and destination nodes
+                for node_obj in [src_node, dst_node]:
+                    if not isinstance(node_obj, dict):
+                        continue
+
+                    # Get Kuzu internal ID for deduplication
+                    kuzu_id = _serialize_kuzu_id(node_obj.get("_id"))
+                    if not kuzu_id or kuzu_id in kuzu_id_to_node_data:
+                        continue
+
+                    # Get node type (label)
+                    node_type = node_obj.get("_label", "Unknown")
+
+                    # Apply node label filtering
+                    if allowed_node_labels and node_type not in allowed_node_labels:
+                        continue
+
+                    # Extract node properties (skip internal fields)
+                    node_dict = {}
+                    for key, val in node_obj.items():
+                        if key in ("_created_at", "_updated_at", "_original_name"):
+                            node_dict[key] = str(val).strip() if str(val).strip() else str(val)
+                        elif not key.startswith("_") and val is not None:
+                            node_dict[key] = str(val).strip() if str(val).strip() else str(val)
+
+                    # Generate display name and metadata
+                    node_name = _get_node_display_name(node_dict, node_type)
+                    node_dict["type"] = node_type
+                    node_dict["name"] = node_name
+
+                    # Generate UUID for this node
+                    node_uuid = str(uuid.uuid4())
+
+                    # Store in mapping
+                    kuzu_id_to_node_data[kuzu_id] = {
+                        "uuid": node_uuid,
+                        "type": node_type,
+                        "node_dict": node_dict,
+                    }
+
+                    nodes.append(NodeRecord(node_id=node_uuid, properties=node_dict))
+
+                # Process relationship
+                rel_type = "RELATED_TO"
+                edge_props = {}
+                if isinstance(rel_obj, dict):
+                    rel_type = rel_obj.get("_label", "RELATED_TO")
+                    # Extract edge properties (non-internal fields)
+                    for key, value in rel_obj.items():
+                        if not key.startswith("_") and value is not None:
+                            edge_props[key] = value
+
+                # Apply relationship type filtering
+                if allowed_rel_types and rel_type not in allowed_rel_types:
                     continue
 
-                # Get Kuzu internal ID for deduplication
-                kuzu_id = _serialize_kuzu_id(node_obj.get("_id"))
-                if not kuzu_id or kuzu_id in kuzu_id_to_node_data:
+                # Get UUIDs for source and destination
+                src_kuzu_id = _serialize_kuzu_id(src_node.get("_id")) if isinstance(src_node, dict) else None
+                dst_kuzu_id = _serialize_kuzu_id(dst_node.get("_id")) if isinstance(dst_node, dict) else None
+
+                if not src_kuzu_id or not dst_kuzu_id:
                     continue
 
-                # Get node type (label)
-                node_type = node_obj.get("_label", "Unknown")
+                src_data = kuzu_id_to_node_data.get(src_kuzu_id)
+                dst_data = kuzu_id_to_node_data.get(dst_kuzu_id)
 
-                # Apply node label filtering
-                if allowed_node_labels and node_type not in allowed_node_labels:
-                    continue
-
-                # Extract node properties (skip internal fields)
-                node_dict = {}
-                for key, val in node_obj.items():
-                    if key in ("_created_at", "_updated_at", "_original_name"):
-                        node_dict[key] = str(val).strip() if str(val).strip() else str(val)
-                    elif not key.startswith("_") and val is not None:
-                        node_dict[key] = str(val).strip() if str(val).strip() else str(val)
-
-                # Generate display name and metadata
-                node_name = _get_node_display_name(node_dict, node_type)
-                node_dict["type"] = node_type
-                node_dict["name"] = node_name
-
-                # Generate UUID for this node
-                node_uuid = str(uuid.uuid4())
-
-                # Store in mapping
-                kuzu_id_to_node_data[kuzu_id] = {
-                    "uuid": node_uuid,
-                    "type": node_type,
-                    "node_dict": node_dict,
-                }
-
-                nodes.append(NodeRecord(node_id=node_uuid, properties=node_dict))
-
-            # Process relationship
-            rel_type = "RELATED_TO"
-            edge_props = {}
-            if isinstance(rel_obj, dict):
-                rel_type = rel_obj.get("_label", "RELATED_TO")
-                # Extract edge properties (non-internal fields)
-                for key, value in rel_obj.items():
-                    if not key.startswith("_") and value is not None:
-                        edge_props[key] = value
-
-            # Apply relationship type filtering
-            if allowed_rel_types and rel_type not in allowed_rel_types:
-                continue
-
-            # Get UUIDs for source and destination
-            src_kuzu_id = _serialize_kuzu_id(src_node.get("_id")) if isinstance(src_node, dict) else None
-            dst_kuzu_id = _serialize_kuzu_id(dst_node.get("_id")) if isinstance(dst_node, dict) else None
-
-            if not src_kuzu_id or not dst_kuzu_id:
-                continue
-
-            src_data = kuzu_id_to_node_data.get(src_kuzu_id)
-            dst_data = kuzu_id_to_node_data.get(dst_kuzu_id)
-
-            if src_data and dst_data:
-                relationships.append(
-                    RelationshipRecord(
-                        from_type=src_data["type"],
-                        from_id=src_data["uuid"],
-                        to_type=dst_data["type"],
-                        to_id=dst_data["uuid"],
-                        name=rel_type,
-                        properties=edge_props,
+                if src_data and dst_data:
+                    relationships.append(
+                        RelationshipRecord(
+                            from_type=src_data["type"],
+                            from_id=src_data["uuid"],
+                            to_type=dst_data["type"],
+                            to_id=dst_data["uuid"],
+                            name=rel_type,
+                            properties=edge_props,
+                        )
                     )
-                )
 
         # Fetch isolated nodes (nodes without relationships)
         try:

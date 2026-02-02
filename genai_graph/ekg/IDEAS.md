@@ -1,10 +1,8 @@
 # New
 
-Improve generate_schema_description and related functions. Today it does not takes the actual schema associated with the KG definition. 
-For example, for the kg "db_only", the produced schema is indeed the one of "simple" (from BAML files).
-And the actual graph schema made from the db mapping is not generated. 
-So analyse the flow of how the graph schema is produced and produce an LLM-friendly schema that actually fit it.  Take care of having description. 
-Forget Stratnav factory for now. 
+Immprove genai_graph/webapp/pages/demos/kg_visualization.py so than, when the user filter on one or several node types, 2 hops are displayed. (ie, add '*..2' in the MATCH queries)
+
+
 
 
 Refactor 

@@ -22,8 +22,8 @@ from loguru import logger
 from streamlit import session_state as sss
 
 from genai_graph.kg.backend import create_backend_from_config
-from genai_graph.kg.schema import GraphRegistry
 from genai_graph.kg.query import text2cypher_chain
+from genai_graph.kg.schema import GraphRegistry
 
 if TYPE_CHECKING:
     from genai_graph.kg.backend import KgBackend
@@ -180,27 +180,22 @@ def main() -> None:
         with col2:
             st.markdown("**Cypher Query**")
 
-        with col3:
-            execute_btn = st.button("▶️ Execute", type="primary", width="stretch")
-
         # Editable Cypher query input
-        cypher_query = st.text_area(
+        st.text_area(
             "Query",
-            value=sss.cypher_query,
             height=200,
             help="Enter Cypher query (see Examples for templates)",
-            key="cypher_input",
+            key="cypher_query",
             label_visibility="collapsed",
         )
 
-        # Update session state when user types
-        if cypher_query != sss.cypher_query:
-            sss.cypher_query = cypher_query
+        with col3:
+            execute_btn = st.button("▶️ Execute", type="primary", key="execute_cypher", use_container_width=True)
 
-        if execute_btn and cypher_query:
+        if execute_btn and sss.cypher_query:
             with st.spinner("Executing query..."):
                 # Execute the query
-                df, error = execute_cypher_query(cypher_query, backend)
+                df, error = execute_cypher_query(sss.cypher_query, backend)
 
                 if error:
                     st.error(error)
@@ -247,7 +242,23 @@ def main() -> None:
 
         with col2:
             st.markdown("<br>", unsafe_allow_html=True)
-            generate_btn = st.button("🤖 Generate Cypher", type="primary", width="stretch")
+            col2a, col2b = st.columns(2)
+            with col2a:
+                generate_btn = st.button("🤖 Generate", type="primary", use_container_width=True)
+            with col2b:
+                execute_nl_btn = st.button(
+                    "▶️ Execute", type="secondary", use_container_width=True, disabled=not sss.generated_cypher
+                )
+
+        # Execute previously generated query
+        if execute_nl_btn and sss.generated_cypher:
+            with st.spinner("Executing query..."):
+                df, error = execute_cypher_query(sss.generated_cypher, backend)
+                if error:
+                    st.error(error)
+                else:
+                    sss.query_result = df
+                    st.success(f"✅ Query executed! {len(df)} rows returned.")
 
         if generate_btn and nl_query:
             if not selected_subgraphs:

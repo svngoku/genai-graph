@@ -74,3 +74,9 @@ kg_configs:
   #   graphs:
   #     - factory: genai_graph.ekg.schema.stratnav:StratnavGraph 
   #       neo4j_export_file: ${paths.stratnav_db}/26-01-2018/sn-v3-q4-2026-01-28.jsonl
+
+  kg_visialization:
+    default_filter:
+      - type: "ReviewedOpportunity"
+      - type: "ArchitectureDocument"
+

@@ -10,6 +10,15 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="utf-8">
     <script src="https://d3js.org/d3.v5.min.js"></script>
+    <script>
+        // Load Streamlit communication API for iframe communication
+        window.addEventListener('load', function() {
+            // Set iframe height
+            if (window.parent !== window) {
+                window.parent.postMessage({type: 'streamlit:componentReady'}, '*');
+            }
+        });
+    </script>
     <style>
         body, html { 
             margin: 0; 

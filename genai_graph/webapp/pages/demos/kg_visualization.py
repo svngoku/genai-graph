@@ -138,12 +138,22 @@ def build_filtered_cypher_query(
     Returns:
         Cypher query string (comma-separated for union execution)
     """
-    # Build relationship type filter
+    # Build relationship type filter with multi-hop pattern when node types are filtered
+    use_multi_hop = bool(node_types)  # Use multi-hop pattern when filtering by node types
+    HOPS = 2
+
+    # Build relationship filter
     if relationship_types:
         rel_patterns = "|".join(relationship_types)
-        rel_filter = f"[r:{rel_patterns}]"
+        if use_multi_hop:
+            rel_filter = f"[r:{rel_patterns}*1..{HOPS}]"
+        else:
+            rel_filter = f"[r:{rel_patterns}]"
     else:
-        rel_filter = "[r]"
+        if use_multi_hop:
+            rel_filter = f"[r*1..{HOPS}]"
+        else:
+            rel_filter = "[r]"
 
     # Build exclusion filter for WHERE clause
     exclusion_filter = ""
@@ -157,10 +167,10 @@ def build_filtered_cypher_query(
     # Build query based on filters
     if node_types and node_name:
         # Specific node and type - filter by name (use first selected type for node name filter)
-        # Include both outgoing and incoming relationships (semicolon-separated for Kuzu)
         name_escaped = node_name.replace("'", "\\'")
         node_type = node_types[0]  # Use first type for specific node selection
         half_limit = limit // 2
+
         if exclusion_filter:
             query = (
                 f"MATCH (n:{node_type})-{rel_filter}->(m) WHERE n.name = '{name_escaped}' AND {exclusion_filter} RETURN n, r, m LIMIT {half_limit}; "
@@ -173,10 +183,9 @@ def build_filtered_cypher_query(
             )
     elif node_types:
         # Node type filter - include both directions for each type
-        # There are type issues it seems with UNION in Kuzu, so the merge
-        # is done via comma-separated queries and dataframe merge afterwards
         queries = []
         per_type_limit = max(10, limit // (len(node_types) * 2))  # Split limit across types and directions
+
         for node_type in node_types:
             if exclusion_filter:
                 queries.append(
@@ -190,7 +199,7 @@ def build_filtered_cypher_query(
                 queries.append(f"MATCH (n)-{rel_filter}->(m:{node_type}) RETURN n, r, m LIMIT {per_type_limit}")
         query = "; ".join(queries)
     else:
-        # No node type filter
+        # No node type filter - use single hop
         if exclusion_filter:
             query = f"MATCH (n)-{rel_filter}->(m) WHERE {exclusion_filter} RETURN n, r, m LIMIT {limit}"
         else:
