@@ -15,7 +15,7 @@ class CrmExtractGraph(TableBackedFactory, BaseModel):
     with related Customer, Person, and WinLoss nodes.
     """
 
-    TOP_CLASS: Type[BaseModel] = Opportunity
+    TOP_CLASS: type[BaseModel] | None = Opportunity
 
     @property
     def table_name(self) -> str:

@@ -377,10 +377,11 @@ def create_schema(
         model_fields = node.node_class.model_fields
 
         # Add primary key field first if needed
-        if key_from == "AUTO_ID" or callable(key_from):
-            # AUTO_ID generates UUID, callable computes key - both stored as STRING
+        if key_from == "AUTO_ID" or callable(key_from) or key_from == "id":
+            # AUTO_ID generates UUID, callable computes key, or explicit 'id' field
+            # - all stored as STRING in the 'id' column
             fields.append("id STRING")
-        # If key_from is a field name, that field will be added from model_fields
+        # If key_from is a different field name, that field will be added from model_fields
 
         # Add other metadata fields
         fields.append("name STRING")  # Node name from name_from (user-chosen)

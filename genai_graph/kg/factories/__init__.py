@@ -5,11 +5,19 @@ This package provides factories that load data from various sources:
 - JsonFileBackedFactory: Load data from JSON files
 - TableBackedFactory: Load data from SQL database tables
 - Neo4jFactory: Load data from Neo4j JSONL exports
+- Neo4jImportFactory: Extended factory with schema-based mappings
+- Neo4jNodeMapping: Configuration for node type mappings
+- Neo4jRelationMapping: Configuration for relationship type mappings
 """
 
 from genai_graph.kg.factories.base import KgFactory
 from genai_graph.kg.factories.json_factory import JsonFileBackedFactory
-from genai_graph.kg.factories.neo4j_factory import Neo4jFactory, Neo4jImportFactory
+from genai_graph.kg.factories.neo4j_factory import (
+    Neo4jFactory,
+    Neo4jImportFactory,
+    Neo4jNodeMapping,
+    Neo4jRelationMapping,
+)
 from genai_graph.kg.factories.table_factory import TableBackedFactory
 
 __all__ = [
@@ -18,4 +26,6 @@ __all__ = [
     "TableBackedFactory",
     "Neo4jFactory",
     "Neo4jImportFactory",
+    "Neo4jNodeMapping",
+    "Neo4jRelationMapping",
 ]

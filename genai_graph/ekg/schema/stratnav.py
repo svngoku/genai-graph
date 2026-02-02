@@ -1,14 +1,15 @@
 """Stratnav graph factory for Neo4j JSONL exports.
 
 This module provides the StratnavGraph factory that processes Neo4j exports
-from the Stratnav system. It uses the Neo4jImportFactory base class for
-direct import with configurable mappings.
+from the Stratnav system. It uses the Neo4jImportFactory base class with
+schema-based mappings for rich documentation support.
 
 Features:
 - Node type renaming: Account → Customer, L3 → L3Service, etc.
 - Property renaming: irisCode → iris_code, L3Code → code, etc.
-- Filtering: Only import specified node/relationship types
-- Direct import: Bypasses hierarchical extraction for efficiency
+- Property descriptions for LLM documentation
+- Index fields for vector search
+- Relationship descriptions for schema documentation
 
 Usage:
     factory = StratnavGraph(neo4j_export_file="path/to/export.jsonl")
@@ -21,20 +22,22 @@ Usage:
 from __future__ import annotations
 
 from genai_graph.kg.factories import Neo4jImportFactory
+from genai_graph.kg.factories.neo4j_factory import Neo4jNodeMapping, Neo4jRelationMapping
 
 
 class StratnavGraph(Neo4jImportFactory):
     """Graph factory for Neo4j JSONL exports from Stratnav system.
 
-    Processes Neo4j exports and maps them to a cleaner schema:
-    - Account → Customer (with property mapping)
-    - L3 → L3Service (with property mapping)
-    - Ambition → Ambition (with property mapping)
+    Processes Neo4j exports and maps them to a cleaner schema with
+    full documentation support for LLM schema generation:
+    - Account → Customer (with property mapping and descriptions)
+    - L3 → L3Service (with property mapping and descriptions)
+    - Ambition → Ambition (with property mapping and descriptions)
     - ... and all relationships between them
 
-    The factory can be configured to include/exclude specific node types
-    and relationships by overriding get_included_node_types() and
-    get_included_rel_types().
+    The factory uses Neo4jNodeMapping and Neo4jRelationMapping to define
+    node and relationship mappings with descriptions, enabling rich schema
+    documentation for text-to-cypher and other LLM use cases.
     """
 
     @property
@@ -42,22 +45,18 @@ class StratnavGraph(Neo4jImportFactory):
         """Factory name for registration."""
         return "StratnavGraph"
 
-    def get_node_mappings(self) -> dict[str, tuple[str, dict[str, str]]]:
+    def get_node_mappings(self) -> list[Neo4jNodeMapping]:
         """Define Neo4j to Kuzu node type and property mappings.
 
-        Format: {neo4j_label: (target_type, {neo4j_prop: target_prop, ...})}
-
-        If a property mapping is empty {}, all properties are copied as-is.
-        If a property mapping has entries, only mapped properties are included.
-
         Returns:
-            Node type and property mapping configuration
+            List of Neo4jNodeMapping configurations with descriptions
         """
-        return {
-            # Account → Customer with property renaming
-            "Account": (
-                "Customer",
-                {
+        return [
+            # Account → Customer with property renaming and descriptions
+            Neo4jNodeMapping(
+                neo4j_label="Account",
+                target_label="Customer",
+                property_mappings={
                     "name": "name",
                     "irisCode": "iris_code",
                     "country": "country",
@@ -65,11 +64,24 @@ class StratnavGraph(Neo4jImportFactory):
                     "businessLine": "business_line",
                     "revenue": "revenue",
                 },
+                description="Customer organization with business context and financials",
+                name_field="name",
+                key_field="iris_code",
+                index_fields=["name", "segment"],
+                property_descriptions={
+                    "name": "Customer organization name",
+                    "iris_code": "Unique IRIS system identifier",
+                    "country": "Country where customer is headquartered",
+                    "segment": "Market segment classification",
+                    "business_line": "Primary business line",
+                    "revenue": "Annual revenue figure",
+                },
             ),
-            # L3 → L3Service with property renaming
-            "L3": (
-                "L3Service",
-                {
+            # L3 → L3Service with property renaming and descriptions
+            Neo4jNodeMapping(
+                neo4j_label="L3",
+                target_label="L3Service",
+                property_mappings={
                     "L3Code": "code",
                     "name": "name",
                     "L3ServiceDescription": "description",
@@ -78,65 +90,110 @@ class StratnavGraph(Neo4jImportFactory):
                     "L3Plm": "plm_stage",
                     "L3ServiceMaturityLevel": "maturity_level",
                 },
-            ),
-            # Ambition → Ambition with property renaming
-            "Ambition": (
-                "Ambition",
-                {
-                    "ambition_id": "ambition_id",
-                    "id": "ambition_id",  # Fallback if id is used instead
-                    "ambition_text": "text",
-                    "text": "text",  # Fallback
-                    "created_at": "created_at",
+                description="Level 3 service offering in the service catalog",
+                name_field="name",
+                key_field="code",
+                index_fields=["name", "description"],
+                property_descriptions={
+                    "code": "Unique service code identifier",
+                    "name": "Service offering name",
+                    "description": "Detailed service description",
+                    "service_type": "Type of service (e.g., Managed, Consulting)",
+                    "status": "Current service status (Active, Deprecated)",
+                    "plm_stage": "Product lifecycle management stage",
+                    "maturity_level": "Service maturity level",
                 },
             ),
-            # Add more mappings as needed:
-            # "Opportunity": ("Opportunity", {...}),
-            # "Contact": ("Contact", {...}),
-        }
-
-    def get_relationship_mappings(self) -> dict[str, str]:
-        """Define Neo4j to Kuzu relationship type mappings.
-
-        Format: {neo4j_rel_type: target_rel_type}
-
-        Returns:
-            Relationship type mapping configuration
-        """
-        return {
-            # Keep relationship names as-is or rename them
-            "HAS_AMBITION": "HAS_AMBITION",
-            "HAS_L3": "HAS_L3",
-            "USES": "USES_SERVICE",
-            "BELONGS_TO": "BELONGS_TO",
-            # Add more mappings as needed
-        }
-
-    def get_included_node_types(self) -> set[str] | None:
-        """Define which Neo4j node types to include.
-
-        Returns None to include all discovered types, or a set of
-        specific Neo4j labels to include.
-
-        Returns:
-            Set of Neo4j labels to include, or None for all
-        """
-        # Start with a focused set for testing, expand as needed
-        return {"Account", "L3", "Ambition"}
+            # Ambition → Ambition with property renaming and descriptions
+            Neo4jNodeMapping(
+                neo4j_label="Ambition",
+                target_label="Ambition",
+                property_mappings={
+                    "ambition_id": "ambition_id",
+                    "id": "ambition_id",
+                    "ambition_text": "text",
+                    "text": "text",
+                    "created_at": "created_at",
+                },
+                description="Strategic ambition or goal for a customer relationship",
+                name_field="text",
+                key_field="ambition_id",
+                index_fields=["text"],
+                property_descriptions={
+                    "ambition_id": "Unique ambition identifier",
+                    "text": "Description of the strategic ambition",
+                    "created_at": "Date when ambition was created",
+                },
+            ),
+            # GEO → GEO geographic region
+            Neo4jNodeMapping(
+                neo4j_label="GEO",
+                target_label="GEO",
+                property_mappings={
+                    "name": "name",
+                    "country": "country",
+                },
+                description="Geographic region or country",
+                name_field="name",
+                key_field="name",
+                property_descriptions={
+                    "name": "Geographic region code",
+                    "country": "Full country name",
+                },
+            ),
+        ]
 
     def get_included_rel_types(self) -> set[str] | None:
-        """Define which Neo4j relationship types to include.
+        """Get the set of Neo4j relationship types to include.
 
-        Returns None to include all discovered types, or a set of
-        specific relationship types to include.
+        Override to specify included types without requiring dynamic models.
+        """
+        return {"LOCATED_IN", "SIMILAR_TO", "X_SELL"}
+
+    def get_relation_mappings(self) -> list[Neo4jRelationMapping]:
+        """Define Neo4j to Kuzu relationship type mappings.
+
+        Note: These mappings must match actual relationship types in the Neo4j data.
+        Check the JSONL file for available relationship types using:
+            grep '"type": "relationship"' file.jsonl | grep -o '"label": "[^"]*"' | sort | uniq -c
 
         Returns:
-            Set of Neo4j rel types to include, or None for all
+            List of Neo4jRelationMapping configurations with descriptions
         """
-        # Include all relationships for now
-        # Can filter to specific types if needed:
-        # return {"HAS_AMBITION", "HAS_L3", "USES"}
-        return None
+        # Get dynamic models from node mappings (created by build_schema before this is called)
+        Customer = self._dynamic_models.get("Customer")
+        L3Service = self._dynamic_models.get("L3Service")
+        GEO = self._dynamic_models.get("GEO")
+
+        # Ensure models exist (they're created in build_schema)
+        if not all([Customer, L3Service, GEO]):
+            # Return empty if models not yet created (will be called again after build_schema)
+            return []
+
+        return [
+            # Account → GEO: Geographic location of customer
+            Neo4jRelationMapping(
+                neo4j_type="LOCATED_IN",
+                from_node=Customer,
+                to_node=GEO,
+                description="Geographic location where the customer operates",
+            ),
+            # L3 → L3: Similar services
+            Neo4jRelationMapping(
+                neo4j_type="SIMILAR_TO",
+                from_node=L3Service,
+                to_node=L3Service,
+                description="Indicates similar L3 service offerings",
+            ),
+            # L3 → L3: Cross-sell opportunities
+            Neo4jRelationMapping(
+                neo4j_type="X_SELL",
+                target_rel="CROSS_SELL",
+                from_node=L3Service,
+                to_node=L3Service,
+                description="Cross-selling opportunity between services",
+            ),
+        ]
 
     def get_sample_queries(self) -> list[str]:
         """Get sample Cypher queries for the Stratnav graph.

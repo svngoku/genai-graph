@@ -20,8 +20,8 @@ from sqlalchemy import create_engine, text
 from streamlit import session_state as sss
 from upath import UPath
 
-from genai_graph.kg.manager import get_kg_manager
 from genai_graph.kg.factories import TableBackedFactory
+from genai_graph.kg.manager import get_kg_manager
 
 
 class TableInfo(BaseModel):

@@ -1,6 +1,14 @@
 # New
 
-Immprove genai_graph/webapp/pages/demos/kg_visualization.py so than, when the user filter on one or several node types, 2 hops are displayed. (ie, add '*..2' in the MATCH queries)
+Refactor genai_graph/ekg/schema/stratnav.py and genai_graph/kg/factories/neo4j_factory.py so that better match other factories.
+Today the mapping to create a Kuzu KG from a Neo4j import is simply done with  dicts. That works, but miss some functionnalities that can have for example in the TableBackedFactory, to define descriptions, name node or index (with GraphNode class).
+This is notably important to generate a detailed schema usable by LLM.
+
+Try to refactor using GraphNode and GraphRelation, that you can modify or specialize if needed. 
+Ensure that the generated schema is correct.
+Test with cli kg create --kg simple_neo4j 
+
+
 
 
 
