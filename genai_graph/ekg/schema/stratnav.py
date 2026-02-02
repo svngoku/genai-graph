@@ -7,7 +7,7 @@ schema-based mappings for rich documentation support.
 Features:
 - Node type renaming: Account → Customer, L3 → L3Service, etc.
 - Property renaming: irisCode → iris_code, L3Code → code, etc.
-- Property descriptions for LLM documentation
+- Type-safe Pydantic models for nodes and relationships
 - Index fields for vector search
 - Relationship descriptions for schema documentation
 
@@ -21,8 +21,57 @@ Usage:
 
 from __future__ import annotations
 
+from pydantic import BaseModel, Field
+
 from genai_graph.kg.factories import Neo4jImportFactory
 from genai_graph.kg.factories.neo4j_factory import Neo4jNodeMapping, Neo4jRelationMapping
+
+# -----------------------------------------------------------------------------
+# Pydantic Models for Stratnav Graph Nodes
+# -----------------------------------------------------------------------------
+
+
+class Customer(BaseModel):
+    """Customer organization with business context and financials."""
+
+    id: str = Field(description="Unique identifier")
+    name: str = Field(description="Customer organization name")
+    iris_code: str | None = Field(default=None, description="Unique IRIS system identifier")
+    country: str | None = Field(default=None, description="Country where customer is headquartered")
+    segment: str | None = Field(default=None, description="Market segment classification")
+    business_line: str | None = Field(default=None, description="Primary business line")
+    revenue: str | None = Field(default=None, description="Annual revenue figure")
+
+
+class L3Service(BaseModel):
+    """Level 3 service offering in the service catalog."""
+
+    id: str = Field(description="Unique identifier")
+    name: str = Field(description="Service offering name")
+    code: str | None = Field(default=None, description="Unique service code identifier")
+    description: str | None = Field(default=None, description="Detailed service description")
+    service_type: str | None = Field(default=None, description="Type of service (e.g., Managed, Consulting)")
+    status: str | None = Field(default=None, description="Current service status (Active, Deprecated)")
+    plm_stage: str | None = Field(default=None, description="Product lifecycle management stage")
+    maturity_level: str | None = Field(default=None, description="Service maturity level")
+
+
+class Ambition(BaseModel):
+    """Strategic ambition or goal for a customer relationship."""
+
+    id: str = Field(description="Unique identifier")
+    name: str = Field(description="Display name")
+    ambition_id: str | None = Field(default=None, description="Unique ambition identifier")
+    text: str | None = Field(default=None, description="Description of the strategic ambition")
+    created_at: str | None = Field(default=None, description="Date when ambition was created")
+
+
+class GEO(BaseModel):
+    """Geographic region or country."""
+
+    id: str = Field(description="Unique identifier")
+    name: str = Field(description="Geographic region code")
+    country: str | None = Field(default=None, description="Full country name")
 
 
 class StratnavGraph(Neo4jImportFactory):
@@ -30,14 +79,13 @@ class StratnavGraph(Neo4jImportFactory):
 
     Processes Neo4j exports and maps them to a cleaner schema with
     full documentation support for LLM schema generation:
-    - Account → Customer (with property mapping and descriptions)
-    - L3 → L3Service (with property mapping and descriptions)
-    - Ambition → Ambition (with property mapping and descriptions)
-    - ... and all relationships between them
+    - Account → Customer (with property mapping)
+    - L3 → L3Service (with property mapping)
+    - Ambition → Ambition (with property mapping)
+    - GEO → GEO (geographic regions)
 
-    The factory uses Neo4jNodeMapping and Neo4jRelationMapping to define
-    node and relationship mappings with descriptions, enabling rich schema
-    documentation for text-to-cypher and other LLM use cases.
+    Uses type-safe Pydantic models (Customer, L3Service, etc.) for both
+    node and relationship mappings.
     """
 
     @property
@@ -49,13 +97,13 @@ class StratnavGraph(Neo4jImportFactory):
         """Define Neo4j to Kuzu node type and property mappings.
 
         Returns:
-            List of Neo4jNodeMapping configurations with descriptions
+            List of Neo4jNodeMapping configurations with Pydantic classes
         """
         return [
-            # Account → Customer with property renaming and descriptions
+            # Account → Customer with property renaming
             Neo4jNodeMapping(
                 neo4j_label="Account",
-                target_label="Customer",
+                node_class=Customer,
                 property_mappings={
                     "name": "name",
                     "irisCode": "iris_code",
@@ -64,23 +112,14 @@ class StratnavGraph(Neo4jImportFactory):
                     "businessLine": "business_line",
                     "revenue": "revenue",
                 },
-                description="Customer organization with business context and financials",
                 name_field="name",
                 key_field="iris_code",
                 index_fields=["name", "segment"],
-                property_descriptions={
-                    "name": "Customer organization name",
-                    "iris_code": "Unique IRIS system identifier",
-                    "country": "Country where customer is headquartered",
-                    "segment": "Market segment classification",
-                    "business_line": "Primary business line",
-                    "revenue": "Annual revenue figure",
-                },
             ),
-            # L3 → L3Service with property renaming and descriptions
+            # L3 → L3Service with property renaming
             Neo4jNodeMapping(
                 neo4j_label="L3",
-                target_label="L3Service",
+                node_class=L3Service,
                 property_mappings={
                     "L3Code": "code",
                     "name": "name",
@@ -90,24 +129,14 @@ class StratnavGraph(Neo4jImportFactory):
                     "L3Plm": "plm_stage",
                     "L3ServiceMaturityLevel": "maturity_level",
                 },
-                description="Level 3 service offering in the service catalog",
                 name_field="name",
                 key_field="code",
                 index_fields=["name", "description"],
-                property_descriptions={
-                    "code": "Unique service code identifier",
-                    "name": "Service offering name",
-                    "description": "Detailed service description",
-                    "service_type": "Type of service (e.g., Managed, Consulting)",
-                    "status": "Current service status (Active, Deprecated)",
-                    "plm_stage": "Product lifecycle management stage",
-                    "maturity_level": "Service maturity level",
-                },
             ),
-            # Ambition → Ambition with property renaming and descriptions
+            # Ambition → Ambition with property renaming
             Neo4jNodeMapping(
                 neo4j_label="Ambition",
-                target_label="Ambition",
+                node_class=Ambition,
                 property_mappings={
                     "ambition_id": "ambition_id",
                     "id": "ambition_id",
@@ -115,39 +144,25 @@ class StratnavGraph(Neo4jImportFactory):
                     "text": "text",
                     "created_at": "created_at",
                 },
-                description="Strategic ambition or goal for a customer relationship",
                 name_field="text",
                 key_field="ambition_id",
                 index_fields=["text"],
-                property_descriptions={
-                    "ambition_id": "Unique ambition identifier",
-                    "text": "Description of the strategic ambition",
-                    "created_at": "Date when ambition was created",
-                },
             ),
             # GEO → GEO geographic region
             Neo4jNodeMapping(
                 neo4j_label="GEO",
-                target_label="GEO",
+                node_class=GEO,
                 property_mappings={
                     "name": "name",
                     "country": "country",
                 },
-                description="Geographic region or country",
                 name_field="name",
                 key_field="name",
-                property_descriptions={
-                    "name": "Geographic region code",
-                    "country": "Full country name",
-                },
             ),
         ]
 
     def get_included_rel_types(self) -> set[str] | None:
-        """Get the set of Neo4j relationship types to include.
-
-        Override to specify included types without requiring dynamic models.
-        """
+        """Get the set of Neo4j relationship types to include."""
         return {"LOCATED_IN", "SIMILAR_TO", "X_SELL"}
 
     def get_relation_mappings(self) -> list[Neo4jRelationMapping]:
@@ -158,18 +173,8 @@ class StratnavGraph(Neo4jImportFactory):
             grep '"type": "relationship"' file.jsonl | grep -o '"label": "[^"]*"' | sort | uniq -c
 
         Returns:
-            List of Neo4jRelationMapping configurations with descriptions
+            List of Neo4jRelationMapping configurations with Pydantic classes
         """
-        # Get dynamic models from node mappings (created by build_schema before this is called)
-        Customer = self._dynamic_models.get("Customer")
-        L3Service = self._dynamic_models.get("L3Service")
-        GEO = self._dynamic_models.get("GEO")
-
-        # Ensure models exist (they're created in build_schema)
-        if not all([Customer, L3Service, GEO]):
-            # Return empty if models not yet created (will be called again after build_schema)
-            return []
-
         return [
             # Account → GEO: Geographic location of customer
             Neo4jRelationMapping(

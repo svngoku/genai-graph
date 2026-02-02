@@ -15,7 +15,7 @@ import json
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from loguru import logger
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, Field
 from upath import UPath
 
 from genai_graph.kg.factories.base import KgFactory
@@ -30,25 +30,39 @@ class Neo4jNodeMapping(BaseModel):
     """Configuration for mapping a Neo4j node type to the target schema.
 
     This class defines how a Neo4j node type should be transformed:
-    - Target node type name
+    - Target node class (actual Pydantic model for type safety)
     - Property mappings (rename, filter)
-    - Description for LLM documentation
     - Index fields for vector search
+
+    Example:
+        Neo4jNodeMapping(
+            neo4j_label="Account",
+            node_class=Customer,
+            property_mappings={"irisCode": "iris_code"},
+        )
     """
 
     neo4j_label: str = Field(description="Original Neo4j label")
-    target_label: str = Field(description="Target node type name in the graph")
+    node_class: type[BaseModel] = Field(description="Target Pydantic model class")
     property_mappings: dict[str, str] = Field(
         default_factory=dict,
         description="Map of neo4j_prop -> target_prop. Empty means copy all properties.",
     )
-    description: str = Field(default="", description="Human-readable description for LLM documentation")
     name_field: str = Field(default="name", description="Field to use as node display name")
     key_field: str = Field(default="id", description="Field to use as primary key")
     index_fields: list[str] = Field(default_factory=list, description="Fields to index for vector search")
-    property_descriptions: dict[str, str] = Field(
-        default_factory=dict, description="Descriptions for individual properties"
-    )
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    @property
+    def target_label(self) -> str:
+        """Get target label from node class name."""
+        return self.node_class.__name__
+
+    @property
+    def description(self) -> str:
+        """Get description from node class docstring."""
+        return self.node_class.__doc__ or ""
 
 
 class Neo4jRelationMapping(BaseModel):
@@ -348,23 +362,17 @@ class Neo4jImportFactory(Neo4jFactory):
     """Extended Neo4j factory for direct graph import with schema-based mappings.
 
     This factory provides a complete solution for importing Neo4j data with:
-    - Node type renaming (e.g., "Account" -> "Customer")
+    - Node type mapping via Pydantic classes (type-safe)
     - Property renaming (e.g., "irisCode" -> "iris_code")
     - Property filtering (include only specified properties)
-    - Relationship type renaming
-    - Node type filtering (only import specified types)
+    - Relationship mapping via Pydantic classes (type-safe)
     - Full GraphSchema support with descriptions for LLM documentation
 
-    Subclasses should override:
-    - get_node_mappings(): Return list of Neo4jNodeMapping
-    - get_relation_mappings(): Return list of Neo4jRelationMapping
-
-    The factory generates dynamic Pydantic models for each node type and builds
-    a proper GraphSchema that can be used for documentation generation.
+    Subclasses should:
+    1. Define Pydantic model classes for each node type (e.g., Customer, L3Service)
+    2. Override get_node_mappings() to return list of Neo4jNodeMapping with node_class
+    3. Override get_relation_mappings() to return list of Neo4jRelationMapping with from_node/to_node
     """
-
-    # Cache for dynamically generated Pydantic models
-    _dynamic_models: dict[str, type[BaseModel]] = {}
 
     @property
     def name(self) -> str:
@@ -374,7 +382,7 @@ class Neo4jImportFactory(Neo4jFactory):
     def get_node_mappings(self) -> list[Neo4jNodeMapping]:
         """Get node type mappings using Neo4jNodeMapping.
 
-        Override this to define your node mappings with descriptions.
+        Override this to define your node mappings with Pydantic classes.
 
         Returns:
             List of Neo4jNodeMapping configurations
@@ -383,9 +391,8 @@ class Neo4jImportFactory(Neo4jFactory):
             return [
                 Neo4jNodeMapping(
                     neo4j_label="Account",
-                    target_label="Customer",
+                    node_class=Customer,
                     property_mappings={"irisCode": "iris_code", "name": "name"},
-                    description="Customer organization",
                     name_field="name",
                     key_field="iris_code",
                 ),
@@ -445,50 +452,6 @@ class Neo4jImportFactory(Neo4jFactory):
             return {m.neo4j_type for m in mappings}
         return None
 
-    def _get_or_create_dynamic_model(self, target_label: str, mapping: Neo4jNodeMapping) -> type[BaseModel]:
-        """Get or create a dynamic Pydantic model for a node type.
-
-        The model is created based on the property mappings and sample data.
-
-        Args:
-            target_label: Target node type label
-            mapping: Node mapping configuration
-
-        Returns:
-            Dynamic Pydantic model class
-        """
-        if target_label in self._dynamic_models:
-            return self._dynamic_models[target_label]
-
-        # Determine fields from property mappings or sample data
-        field_definitions: dict[str, Any] = {}
-        field_definitions["id"] = (str, Field(description="Unique identifier"))
-        field_definitions["name"] = (str, Field(description="Display name"))
-
-        if mapping.property_mappings:
-            for _neo4j_prop, target_prop in mapping.property_mappings.items():
-                if target_prop not in field_definitions:
-                    desc = mapping.property_descriptions.get(target_prop, f"{target_prop} property")
-                    field_definitions[target_prop] = (str | None, Field(default=None, description=desc))
-        else:
-            # Infer from sample data
-            sample_nodes = self._node_data.get(mapping.neo4j_label, [])
-            if sample_nodes:
-                sample = sample_nodes[0]
-                for key in sample.keys():
-                    if not key.startswith("_") and key not in field_definitions:
-                        desc = mapping.property_descriptions.get(key, f"{key} property")
-                        field_definitions[key] = (str | None, Field(default=None, description=desc))
-
-        # Create dynamic model with docstring
-        model = create_model(
-            target_label,
-            __doc__=mapping.description or f"Node type: {target_label}",
-            **field_definitions,
-        )
-        self._dynamic_models[target_label] = model
-        return model
-
     def build_schema(self) -> GraphSchema:
         """Build a GraphSchema from the node and relation mappings.
 
@@ -504,19 +467,16 @@ class Neo4jImportFactory(Neo4jFactory):
             GraphSchema with full node and relationship definitions
         """
         node_mappings = self.get_node_mappings()
+        relation_mappings = self.get_relation_mappings()
 
-        # Build GraphNode list and create dynamic models first
+        # Build GraphNode list from node mappings
         graph_nodes: list[GraphNode] = []
-
         for mapping in node_mappings:
-            # Get or create dynamic model for this node type
-            model_class = self._get_or_create_dynamic_model(mapping.target_label, mapping)
-
             # For Neo4j imports, always use 'id' as the database primary key
             # The key_field value gets stored in the 'id' column by build_nodes_and_relationships
             graph_nodes.append(
                 GraphNode(
-                    node_class=model_class,
+                    node_class=mapping.node_class,
                     name_from=mapping.name_field,
                     key_from="id",  # Always use 'id' for Neo4j imports
                     description=mapping.description,
@@ -524,13 +484,9 @@ class Neo4jImportFactory(Neo4jFactory):
                 )
             )
 
-        # Now get relation mappings (after dynamic models are created)
-        relation_mappings = self.get_relation_mappings()
-
-        # Build GraphRelation list
+        # Build GraphRelation list from relation mappings
         graph_relations: list[GraphRelation] = []
         for mapping in relation_mappings:
-            # Use the model classes directly from the mapping
             graph_relations.append(
                 GraphRelation(
                     from_node=mapping.from_node,
@@ -541,15 +497,6 @@ class Neo4jImportFactory(Neo4jFactory):
             )
 
         return GraphSchema(root_model_class=None, nodes=graph_nodes, relations=graph_relations)
-
-    def _ensure_models_created(self) -> None:
-        """Ensure dynamic models are created for all node mappings.
-
-        This must be called before get_relation_mappings() since relation
-        mappings reference the dynamic model classes.
-        """
-        for mapping in self.get_node_mappings():
-            self._get_or_create_dynamic_model(mapping.target_label, mapping)
 
     def build_nodes_and_relationships(
         self,
@@ -571,12 +518,9 @@ class Neo4jImportFactory(Neo4jFactory):
         relationships: list[RelationshipRecord] = []
 
         node_mappings = self.get_node_mappings()
+        rel_mappings = self.get_relation_mappings()
         included_nodes = self.get_included_node_types()
         included_rels = self.get_included_rel_types()
-
-        # Ensure dynamic models are created before calling get_relation_mappings
-        self._ensure_models_created()
-        rel_mappings = self.get_relation_mappings()
 
         # Build lookup dicts from mapping lists
         node_mapping_by_label: dict[str, Neo4jNodeMapping] = {m.neo4j_label: m for m in node_mappings}
