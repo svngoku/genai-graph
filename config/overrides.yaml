@@ -14,7 +14,7 @@ ekg_local:
 
   paths:
     data_root : ${oc.env:ONEDRIVE, null}/prj/atos-kg/data
-    ekg_data : ${oc.env:ONEDRIVE, null}/prj/atos-kg/data
+    ekg_data : "${oc.env:ONEDRIVE, null}/KORTEX_EKG/proto/input_data/"
     kg_outputs :  ${oc.env:HOME}/kg_outputs
 
 

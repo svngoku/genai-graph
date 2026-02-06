@@ -596,19 +596,22 @@ class Neo4jImportFactory(Neo4jFactory):
 
         # Process relationships
         for rel_key, rel_list in self._rel_data.items():
-            # Parse rel_key format: TYPE__FromLabel__ToLabel
-            parts = rel_key.split("__")
-            neo4j_rel_type = parts[0] if parts else rel_key
-
-            # Filter by included types
-            if included_rels is not None and neo4j_rel_type not in included_rels:
-                logger.debug(f"Skipping relationship type {neo4j_rel_type} (not in included types)")
+            # rel_key format: TYPE__FromLabel__ToLabel
+            # Filter by included types using the full rel_key
+            if included_rels is not None and rel_key not in included_rels:
+                logger.debug(f"Skipping relationship type {rel_key} (not in included types)")
                 continue
 
-            # Get mapping config
-            rel_mapping = rel_mapping_by_type.get(neo4j_rel_type)
-            target_rel_type = rel_mapping.rel_name if rel_mapping else neo4j_rel_type
-            rel_prop_mapping = rel_mapping.property_mappings if rel_mapping else {}
+            # Get mapping config using the full rel_key
+            rel_mapping = rel_mapping_by_type.get(rel_key)
+            if rel_mapping:
+                target_rel_type = rel_mapping.rel_name
+                rel_prop_mapping = rel_mapping.property_mappings
+            else:
+                # No mapping - extract just the relationship type part
+                parts = rel_key.split("__")
+                target_rel_type = parts[0] if parts else rel_key
+                rel_prop_mapping = {}
 
             for rel in rel_list:
                 from_neo4j_id = rel.get("_from_id", "")

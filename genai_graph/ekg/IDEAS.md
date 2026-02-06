@@ -1,10 +1,22 @@
 # New
 
-Refactor genai_graph/ekg/schema/stratnav.py and genai_graph/kg/factories/neo4j_factory.py so that better match other factories.
+
+Extend stratnav.py (and possibly genai_graph/kg/factories/neo4j_factory.py)  to import all graph nodes type and relationship from the Neo4j database. 
+
+The full Neo4j schema (as Kuzu create clauses) is here: 
+/home/tcl/OneDrive/prj/atos-kg/data/stratnav/26-01-2018/schema.cypher
+
+Don't import _neo4j_id, date information (createdAt, ...), version .
+Do your best to provide very short fields, tables and relationships descriptions (to complement the field or prop name )
+
+
+
 Today the mapping to create a Kuzu KG from a Neo4j import is simply done with  dicts. That works, but miss some functionnalities that can have for example in the TableBackedFactory, to define descriptions, name node or index (with GraphNode class).
 This is notably important to generate a detailed schema usable by LLM.
 
 Try to refactor using GraphNode and GraphRelation, that you can modify or specialize if needed. 
+
+
 Ensure that the generated schema is correct.
 Test with cli kg create --kg simple_neo4j 
 

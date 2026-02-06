@@ -728,24 +728,60 @@ def merge_relationships_batch(
 
         # Fix DataFrame column types to handle None values properly
         # Kuzu doesn't handle object dtype well - convert to proper types
+        # Also, Kuzu's LOAD FROM df requires all columns to exist and be properly typed
         for col in property_cols:
             if col in df.columns:
                 # Check column content to infer proper type
                 non_null_vals = df[col].dropna()
                 if len(non_null_vals) > 0:
                     first_val = non_null_vals.iloc[0]
-                    if isinstance(first_val, bool):
+                    if isinstance(first_val, list):
+                        # Convert list properties to JSON strings for Kuzu compatibility
+                        import json
+
+                        df[col] = df[col].apply(lambda x: json.dumps(x) if isinstance(x, list) else x)
+                    elif isinstance(first_val, bool):
                         # Convert None to False for boolean columns, then cast to bool
                         df[col] = df[col].fillna(False)
                         df[col] = df[col].astype(bool)
                     elif isinstance(first_val, (int, float)):
                         # Keep numeric types as-is (NaN is handled)
                         pass
+                    elif isinstance(first_val, str):
+                        # For string columns, fill None with empty string
+                        df[col] = df[col].fillna("")
+                else:
+                    # All values are None - fill with empty string for safety
+                    df[col] = df[col].fillna("")
+
+        # Filter out properties that have all NaN/None/empty values
+        # These cause issues with Kuzu's LOAD FROM df
+        non_empty_prop_cols = set()
+        for col in property_cols:
+            if col in df.columns:
+                # Check if column has any non-empty values
+                if df[col].notna().any():
+                    # For strings, also check if not all empty
+                    if df[col].dtype == object:
+                        if (df[col] != "").any():
+                            non_empty_prop_cols.add(col)
+                    else:
+                        non_empty_prop_cols.add(col)
+
+        # Use only non-empty property columns
+        property_cols = non_empty_prop_cols
 
         # Build property assignment for CREATE
+        # Note: Kuzu's LOAD FROM df doesn't currently support inline property assignment
+        # in CREATE clauses for relationships (unlike MERGE for nodes).
+        # See: https://github.com/kuzudb/kuzu/issues/XXXX
+        # TODO: Implement workaround using separate SET operations or row-by-row creation
         if property_cols:
-            prop_assignments = ", ".join([f"{c}: {c}" for c in property_cols])
-            props_str = f" {{{prop_assignments}}}"
+            props_str = ""
+            logger.debug(
+                f"Skipping {len(property_cols)} properties for {rel_name} relationships "
+                f"due to Kuzu limitation with LOAD FROM df"
+            )
         else:
             props_str = ""
 
