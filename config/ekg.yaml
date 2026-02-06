@@ -3,7 +3,7 @@ schemas_root: genai_graph.ekg.schema
 
 paths:
   rainbow_md : ${paths.ekg_data}/rainbow/md/
-  rainbow_json : ${paths.7.}/rainbow/json/
+  rainbow_json : ${paths.ekg_data}/rainbow/json/
   rainbow_pdf : ${paths.ekg_data}/rainbow/pdf/
   rainbow_ppt : ${paths.ekg_data}/rainbow/ppt/
   add_json : ${paths.ekg_data}/arch_doc/json/
