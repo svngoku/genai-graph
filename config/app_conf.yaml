@@ -46,6 +46,8 @@ ui:
         name: "Markdown Files Lineage"
       - path: demos/kg_tables.py
         name: "Data Tables Imports"
+      - path: demos/kg_schema_visualization.py
+        name: "Schema Visualization"
     Knowledge Graph:
       - path: demos/reAct_agent.py
         name: "ReAct Agent"

@@ -117,94 +117,71 @@ def export_schema(config_name: str) -> UPath:
 
 
 def export_schema_json(config_name: str) -> UPath:
-    """Export the KG schema as a JSON file with type mappings.
+    """Export the KG schema as a D3-friendly JSON file.
 
-    This exports a machine-readable schema that includes:
-    - Node types with their field names and Kuzu types
-    - Embedded struct field types for proper type coercion
-    - Relationship types with their properties
+    The exported JSON is intended to be consumed directly by D3.js:
+    - ``nodes`` is a list with stable string IDs
+    - ``links`` references nodes by those IDs
+
+    The JSON includes descriptions and per-field descriptions whenever available.
 
     Args:
-        config_name: Name of the KG configuration
+        config_name: Name of the KG configuration.
 
     Returns:
-        Path to the exported JSON schema file
+        Path to the exported schema JSON file.
     """
-    import json
+
     import warnings
 
-    from genai_graph.kg.schema import GraphRegistry, _get_kuzu_type_for_field
+    from genai_graph.kg.schema import GraphRegistry
+    from genai_graph.kg.schema.schema_d3 import build_schema_d3_data
 
     manager = get_kg_manager()
     manager.ensure_directories_for(config_name)
 
-    # Build the combined schema from all registered graphs
-    # Suppress validation warnings for combined schemas (type mismatches between
-    # extended and base types are expected when merging different graphs)
     registry = GraphRegistry.get_instance()
+    selected_graphs = registry.list_graphs()
+
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=UserWarning, message="Graph schema validation:")
-        schema = registry.build_combined_schema([])
+        schema = registry.build_combined_schema(selected_graphs)
 
-    schema_dict: dict[str, Any] = {
-        "nodes": {},
-        "relationships": {},
-        "embedded_structs": {},
-    }
+    schema_data = build_schema_d3_data(schema, graph_names=selected_graphs)
 
-    # Process nodes
-    for node in schema.nodes:
-        node_name = node.node_class.__name__
-        fields: dict[str, str] = {}
+    destination = manager.get_schema_json_path_for(config_name)
+    destination.write_text(json.dumps(schema_data, indent=2), encoding="utf-8")
 
-        # Get field types from Pydantic model
-        if hasattr(node.node_class, "model_fields"):
-            for field_name, field_info in node.node_class.model_fields.items():
-                if field_name not in node.excluded_fields:
-                    kuzu_type = _get_kuzu_type_for_field(field_info.annotation)
-                    fields[field_name] = kuzu_type
+    logger.debug("Exported KG schema JSON to '%s'", destination)
 
-        # Process embedded struct classes
-        embedded_fields: dict[str, dict[str, str]] = {}
-        for emb_class in getattr(node, "embedded_struct_classes", []) or []:
-            emb_name = emb_class.__name__
-            emb_fields: dict[str, str] = {}
-            if hasattr(emb_class, "model_fields"):
-                for emb_field_name, emb_field_info in emb_class.model_fields.items():
-                    kuzu_type = _get_kuzu_type_for_field(emb_field_info.annotation)
-                    emb_fields[emb_field_name] = kuzu_type
-            embedded_fields[emb_name] = emb_fields
+    return destination
 
-            # Also add to top-level embedded_structs for cross-reference
-            if emb_name not in schema_dict["embedded_structs"]:
-                schema_dict["embedded_structs"][emb_name] = emb_fields
 
-        schema_dict["nodes"][node_name] = {
-            "fields": fields,
-            "embedded": embedded_fields,
-        }
+def export_schema_html(config_name: str) -> UPath:
+    """Export the KG schema visualization as an HTML file.
 
-    # Process relationships
-    for rel in schema.relations:
-        rel_name = rel.relation_name
-        rel_props: dict[str, str] = {}
+    Args:
+        config_name: Name of the KG configuration.
 
-        if rel.relation_properties:
-            for prop_name, prop_info in rel.relation_properties.model_fields.items():
-                kuzu_type = _get_kuzu_type_for_field(prop_info.annotation)
-                rel_props[prop_name] = kuzu_type
+    Returns:
+        Path to the exported schema HTML file.
+    """
 
-        schema_dict["relationships"][rel_name] = {
-            "from": rel.from_node.node_class.__name__,
-            "to": rel.to_node.node_class.__name__,
-            "properties": rel_props,
-        }
+    from genai_graph.kg.schema.schema_html import generate_schema_html
 
-    # Write JSON schema
-    destination = manager.get_output_path_for(config_name).with_suffix(".schema.json")
-    destination.write_text(json.dumps(schema_dict, indent=2), encoding="utf-8")
+    manager = get_kg_manager()
+    manager.ensure_directories_for(config_name)
 
-    logger.debug("Exported KG JSON schema to '%s'", destination)
+    schema_json_path = manager.get_schema_json_path_for(config_name)
+    if schema_json_path.exists():
+        schema_data = json.loads(schema_json_path.read_text(encoding="utf-8"))
+    else:
+        schema_data = json.loads(export_schema_json(config_name).read_text(encoding="utf-8"))
+
+    destination = manager.get_schema_html_path_for(config_name)
+    generate_schema_html(schema_data, destination_file_path=str(destination))
+
+    logger.debug("Exported KG schema HTML visualization to '%s'", destination)
 
     return destination
 

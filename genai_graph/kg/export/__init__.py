@@ -13,6 +13,8 @@ from genai_graph.kg.export.artifacts import (
     export_html,
     export_info,
     export_schema,
+    export_schema_html,
+    export_schema_json,
 )
 from genai_graph.kg.export.html import generate_html
 
@@ -20,6 +22,8 @@ __all__ = [
     "generate_html",
     "export_html",
     "export_schema",
+    "export_schema_json",
+    "export_schema_html",
     "export_info",
     "HtmlExportResult",
     "ParquetExportResult",

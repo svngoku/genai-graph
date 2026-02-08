@@ -12,6 +12,7 @@ from genai_graph.kg.schema.core import (
     GraphNode,
     GraphRelation,
     GraphSchema,
+    _find_embedded_field_for_class,
     find_embedded_field_for_class,
 )
 from genai_graph.kg.schema.doc_generator import (
@@ -30,6 +31,7 @@ __all__ = [
     "GraphRelation",
     "GraphSchema",
     "GraphRegistry",
+    "_find_embedded_field_for_class",
     "find_embedded_field_for_class",
     "generate_schema_description",
     "_get_kuzu_type_for_field",

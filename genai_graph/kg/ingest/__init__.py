@@ -15,6 +15,7 @@ from genai_graph.kg.ingest.documents import (
 from genai_graph.kg.ingest.extract import (
     NodeRecord,
     RelationshipRecord,
+    _get_kuzu_type,
     create_graph,
     create_schema,
     extract_graph_data,
@@ -39,6 +40,7 @@ __all__ = [
     "create_schema",
     "extract_graph_data",
     "restart_database",
+    "_get_kuzu_type",
     # Merge
     "NodeDataCollection",
     "NodeTypeRegistry",

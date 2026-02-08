@@ -88,6 +88,8 @@ class KgManager(BaseModel):
     _db_path: UPath | None = None
     _html_path: UPath | None = None
     _schema_path: UPath | None = None
+    _schema_json_path: UPath | None = None
+    _schema_html_path: UPath | None = None
     _info_path: UPath | None = None
     _outcomes_file: UPath | None = None
     _warnings_file: UPath | None = None
@@ -132,6 +134,8 @@ class KgManager(BaseModel):
         self._db_path = None
         self._html_path = None
         self._schema_path = None
+        self._schema_json_path = None
+        self._schema_html_path = None
         self._info_path = None
         self._outcomes_file = None
         self._warnings_file = None
@@ -191,8 +195,16 @@ class KgManager(BaseModel):
         return self.get_base_path_for(profile) / f"{profile}-{self.tag}.html"
 
     def get_schema_path_for(self, profile: str) -> UPath:
-        """Return the schema file path for any given KG profile."""
+        """Return the schema text file path for any given KG profile."""
         return self.get_base_path_for(profile) / f"{profile}-{self.tag}-schema.txt"
+
+    def get_schema_json_path_for(self, profile: str) -> UPath:
+        """Return the schema JSON file path for any given KG profile."""
+        return self.get_base_path_for(profile) / f"{profile}-{self.tag}-schema.json"
+
+    def get_schema_html_path_for(self, profile: str) -> UPath:
+        """Return the schema HTML file path for any given KG profile."""
+        return self.get_base_path_for(profile) / f"{profile}-{self.tag}-schema.html"
 
     def get_info_path_for(self, profile: str) -> UPath:
         """Return the info file path for any given KG profile."""
@@ -241,6 +253,20 @@ class KgManager(BaseModel):
         if self._schema_path is None:
             self._schema_path = self.base_path / f"{self.profile}-{self.tag}-schema.txt"
         return self._schema_path
+
+    @property
+    def schema_json_path(self) -> UPath:
+        """Path to the schema JSON file for this KG."""
+        if self._schema_json_path is None:
+            self._schema_json_path = self.base_path / f"{self.profile}-{self.tag}-schema.json"
+        return self._schema_json_path
+
+    @property
+    def schema_html_path(self) -> UPath:
+        """Path to the schema HTML visualization for this KG."""
+        if self._schema_html_path is None:
+            self._schema_html_path = self.base_path / f"{self.profile}-{self.tag}-schema.html"
+        return self._schema_html_path
 
     @property
     def info_path(self) -> UPath:
@@ -373,6 +399,31 @@ class KgManager(BaseModel):
             }
         else:
             info["html_export"] = None
+
+        # Schema artifacts
+        if self.schema_path.exists():
+            info["schema"] = {
+                "path": str(self.schema_path),
+                "size_mb": self.schema_path.stat().st_size / (1024 * 1024),
+            }
+        else:
+            info["schema"] = None
+
+        if self.schema_json_path.exists():
+            info["schema_json"] = {
+                "path": str(self.schema_json_path),
+                "size_mb": self.schema_json_path.stat().st_size / (1024 * 1024),
+            }
+        else:
+            info["schema_json"] = None
+
+        if self.schema_html_path.exists():
+            info["schema_html"] = {
+                "path": str(self.schema_html_path),
+                "size_mb": self.schema_html_path.stat().st_size / (1024 * 1024),
+            }
+        else:
+            info["schema_html"] = None
 
         # Outcomes
         if self.outcomes_file.exists():

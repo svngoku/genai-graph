@@ -13,6 +13,8 @@ from genai_graph.kg.export import (
 from genai_graph.kg.export import (
     export_info,
     export_schema,
+    export_schema_html,
+    export_schema_json,
 )
 from genai_graph.kg.export.artifacts import (
     import_from_parquet,
@@ -266,12 +268,26 @@ def create_kg_flow(
             exc,
         )
 
-    # Export schema to text file
+    # Export schema artifacts
     export_schema(cfg_name)
     manager.log_outcome(
         "export_schema",
         "success",
         f"Schema exported to {manager.schema_path}",
+    )
+
+    export_schema_json(cfg_name)
+    manager.log_outcome(
+        "export_schema_json",
+        "success",
+        f"Schema JSON exported to {manager.schema_json_path}",
+    )
+
+    export_schema_html(cfg_name)
+    manager.log_outcome(
+        "export_schema_html",
+        "success",
+        f"Schema HTML exported to {manager.schema_html_path}",
     )
 
     # Export info to markdown file
