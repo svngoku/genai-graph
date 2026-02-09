@@ -43,12 +43,13 @@ class ReviewedOpportunityGraph(JsonFileBackedFactory, BaseModel):
             GraphRelation,
         )
 
-        # Note: We use BAML types directly here (not extended types from common_nodes)
-        # because ReviewedOpportunity's fields reference these BAML types.
+        # Note: We use BAML types directly here because ReviewedOpportunity's
+        # fields reference these exact BAML types. The path introspection needs
+        # to find the same types. Since all types share the same __name__,
+        # they'll map to the same Kuzu tables for cross-factory deduplication.
 
         # Define nodes with descriptions
         nodes = [
-            # BAML types that ReviewedOpportunity references
             GraphNode(
                 node_class=Opportunity,
                 name_from="name",

@@ -754,6 +754,65 @@ def import_from_parquet(
             if df.empty:
                 continue
 
+            # Check for missing columns in the table schema and add them if needed
+            # This handles schema evolution when importing from different sources
+            try:
+                info_result = kuzu_conn.execute(f"CALL table_info('{node_type}') RETURN *")
+                info_df = info_result.get_as_df() if hasattr(info_result, "get_as_df") else pd.DataFrame()
+                existing_cols = set(info_df["name"].tolist()) if "name" in info_df.columns else set()
+
+                for col in df.columns:
+                    if col not in existing_cols:
+                        # Infer Kuzu type from pandas dtype
+                        dtype = df[col].dtype
+                        if dtype == "object":
+                            kuzu_type = "STRING"
+                        elif dtype == "int64":
+                            kuzu_type = "INT64"
+                        elif dtype == "float64":
+                            kuzu_type = "DOUBLE"
+                        elif dtype == "bool":
+                            kuzu_type = "BOOL"
+                        else:
+                            kuzu_type = "STRING"  # fallback
+
+                        try:
+                            kuzu_conn.execute(f"ALTER TABLE {node_type} ADD {col} {kuzu_type}")
+                            logger.debug(f"Added column {col} ({kuzu_type}) to {node_type}")
+                        except Exception as alter_exc:
+                            logger.debug(f"Could not add column {col} to {node_type}: {alter_exc}")
+            except Exception as schema_exc:
+                logger.debug(f"Could not check schema for {node_type}: {schema_exc}")
+
+            # Convert numpy arrays to Python lists/values for Kuzu compatibility
+            import numpy as np
+
+            def convert_numpy_recursive(obj):
+                """Recursively convert numpy types to Python native types."""
+                if isinstance(obj, np.ndarray):
+                    return [convert_numpy_recursive(item) for item in obj.tolist()]
+                elif isinstance(obj, dict):
+                    return {k: convert_numpy_recursive(v) for k, v in obj.items()}
+                elif isinstance(obj, (list, tuple)):
+                    return [convert_numpy_recursive(item) for item in obj]
+                elif isinstance(obj, (np.integer,)):
+                    return int(obj)
+                elif isinstance(obj, (np.floating,)):
+                    return float(obj)
+                elif isinstance(obj, np.bool_):
+                    return bool(obj)
+                return obj
+
+            for col in df.columns:
+                if df[col].dtype == "object" and len(df) > 0:
+                    # Check first non-null value to see if conversion is needed
+                    sample_idx = df[col].first_valid_index()
+                    if sample_idx is not None:
+                        sample = df[col].loc[sample_idx]
+                        if isinstance(sample, (np.ndarray, dict, list)):
+                            # Convert numpy types to Python native types
+                            df[col] = df[col].apply(lambda x: convert_numpy_recursive(x) if x is not None else None)
+
             # Determine primary key from schema info or fallback to 'id' or first column
             pk_field = pk_info.get(node_type) or ("id" if "id" in df.columns else df.columns[0])
 

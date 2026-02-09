@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from genai_graph.ekg.baml_client.types import Customer as BamlCustomer
+from genai_graph.ekg.schema.common_nodes import Customer
 from genai_graph.kg.factories import Neo4jImportFactory
 from genai_graph.kg.factories.neo4j_factory import Neo4jNodeMapping, Neo4jRelationMapping
 
@@ -31,17 +31,8 @@ from genai_graph.kg.factories.neo4j_factory import Neo4jNodeMapping, Neo4jRelati
 # Pydantic Models for Stratnav Graph Nodes
 # =============================================================================
 
-
-class Account(BamlCustomer):
-    """Customer organization with business context and financials."""
-
-    id: str = Field(description="Unique identifier")
-    name: str = Field(description="Organization name")
-    iris_code: str | None = Field(default=None, description="IRIS system code")
-    country: str | None = Field(default=None, description="Headquarters country")
-    segment: str | None = Field(default=None, description="Market segment")
-    business_line: str | None = Field(default=None, description="Primary business line")
-    revenue: str | None = Field(default=None, description="Annual revenue")
+# Note: Customer is imported from common_nodes.py to ensure node unification
+# across factories. The neo4j "Account" label is mapped to Customer.
 
 
 class Ambition(BaseModel):
@@ -151,10 +142,13 @@ class StratnavGraph(Neo4jImportFactory):
     """Graph factory for complete Neo4j Stratnav system imports.
 
     Processes Neo4j JSONL exports with full schema support:
-    - All 9 node types (Account, Ambition, BL, Counter, GEO, L1, L2, L3, L4, TechnologyPartner)
+    - All 9 node types (Customer, Ambition, BL, Counter, GEO, L1, L2, L3, L4, TechnologyPartner)
     - All 20 relationship types with properties
     - Property renaming and filtering
     - Full documentation for LLM schema generation
+
+    Note: Neo4j 'Account' nodes are mapped to the canonical 'Customer' type
+    from common_nodes.py to ensure proper node unification across factories.
     """
 
     @property
@@ -169,10 +163,11 @@ class StratnavGraph(Neo4jImportFactory):
             List of Neo4jNodeMapping configurations with Pydantic classes
         """
         return [
-            # Account: Customer organization
+            # Account -> Customer: Customer organization (maps to canonical Customer type)
+            # Using 'name' as key_field for consistency with common_nodes.Customer
             Neo4jNodeMapping(
                 neo4j_label="Account",
-                node_class=Account,
+                node_class=Customer,
                 property_mappings={
                     "name": "name",
                     "irisCode": "iris_code",
@@ -182,7 +177,7 @@ class StratnavGraph(Neo4jImportFactory):
                     "revenue": "revenue",
                 },
                 name_field="name",
-                key_field="iris_code",
+                key_field="name",  # Must match common_nodes for cross-factory deduplication
                 index_fields=["name", "segment"],
             ),
             # Ambition: Strategic goal
@@ -347,18 +342,18 @@ class StratnavGraph(Neo4jImportFactory):
             List of Neo4jRelationMapping configurations with Pydantic classes
         """
         return [
-            # Account relationships
+            # Customer relationships (Account in neo4j maps to Customer)
             Neo4jRelationMapping(
                 neo4j_type="LOCATED_IN__Account__GEO",
                 target_rel="LOCATED_IN",
-                from_node=Account,
+                from_node=Customer,
                 to_node=GEO,
                 description="Geographic location where customer operates",
             ),
             Neo4jRelationMapping(
                 neo4j_type="HAS__Account__Ambition",
                 target_rel="HAS_AMBITION",
-                from_node=Account,
+                from_node=Customer,
                 to_node=Ambition,
                 description="Strategic ambition of the customer",
             ),
@@ -544,10 +539,10 @@ class StratnavGraph(Neo4jImportFactory):
         """
         return [
             "MATCH (n) RETURN labels(n)[0] as NodeType, count(n) as Count",
-            "MATCH (a:Account) RETURN a.name, a.iris_code, a.segment LIMIT 5",
+            "MATCH (c:Customer) RETURN c.name, c.iris_code, c.segment LIMIT 5",
             "MATCH (l:L3) RETURN l.name, l.code, l.status LIMIT 5",
             "MATCH (amb:Ambition) RETURN amb.text LIMIT 5",
-            "MATCH (a:Account)-[r:HAS_AMBITION]->(amb:Ambition) RETURN a.name, amb.text LIMIT 5",
+            "MATCH (c:Customer)-[r:HAS_AMBITION]->(amb:Ambition) RETURN c.name, amb.text LIMIT 5",
             "MATCH (l:L3)-[r:CROSS_SELL]->(l2:L3) RETURN l.name, r.theme, l2.name LIMIT 5",
             "MATCH (l1:L1)-[r:BL_OFFERINGS]->(l2:L2) RETURN l1.name, l2.name LIMIT 5",
             "MATCH (l3:L3)-[r:DELIVERY_LOCATION]->(g:GEO) RETURN l3.name, g.country LIMIT 5",

@@ -18,7 +18,7 @@ ekg_local:
     kg_outputs :  ${oc.env:HOME}/kg_outputs
 
 
-  kg_config: ${oc.env:KG_CONFIG,test1_with_db}
+  kg_config: ${oc.env:KG_CONFIG,one_rainbow_with_db}
   kg_tag: ${oc.env:KG_CONFIG_TAG,dev}
 
   llm:

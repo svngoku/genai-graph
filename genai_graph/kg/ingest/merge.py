@@ -785,14 +785,16 @@ def merge_relationships_batch(
         else:
             props_str = ""
 
-        # Use MATCH + CREATE for relationships
-        create_rel_query = f"""
+        # Use MERGE for relationships to avoid duplicates when the same relationship
+        # is created from multiple sources (e.g., both BAML extraction and Neo4j import).
+        # This ensures (from)-[r:REL]->(to) is only created once per node pair.
+        merge_rel_query = f"""
             LOAD FROM df
             MATCH (from:{from_type} {{{from_key_field}: from_id}}), (to:{to_type} {{{to_key_field}: to_id}})
-            CREATE (from)-[:{rel_name}{props_str}]->(to)
+            MERGE (from)-[:{rel_name}{props_str}]->(to)
         """
         try:
-            kuzu_conn.execute(create_rel_query)
+            kuzu_conn.execute(merge_rel_query)
             total_created += len(df)
 
             # Collect DataFrame for parquet export if collector is active
@@ -808,7 +810,7 @@ def merge_relationships_batch(
 
         except Exception as e:
             logger.error(f"Error in batch relationship creation for {rel_name}: {e}")
-            logger.error(f"Query: {create_rel_query}")
+            logger.error(f"Query: {merge_rel_query}")
             raise
 
     return total_created

@@ -1,5 +1,24 @@
 # New
 
+Helo me to adress node and relationship duplication issues in a KG. There are likely several causes...  
+
+When running cli kg create --kg stratnav_subset_rainbow_crm, we observe : 
+- There are several "Opportunity" nodes (comming from different sources)
+- There are several "HAS_CONTACT" between Customer and Person (and other duplicated relationships "HAS_PARTNER", )
+- "Account" and "Customer" are actually the same entities.   "Account" node from the neo4j should be renamed as "Customer" .
+That's not unexpected - The creation of a graph from different subgraphs comming from very differnet data source (BAML, DB, neo4j, ) is a quite recent.
+The issue can be adressed at several levels:
+- We can modify the factories in genai_graph/ekg/schema and their base classes.  The "common nodes" package can notably be reworked. Python is quite flexible so we can likely merge stuff at that level.  For example  the "Account" nodes/classe from the neo4j import can likely be renamed "Customer" at that level, and different 'Opportunity"  classes might be signified to be identical there (with multi-inheritance or python statements). BAML Pydantic classes are generated, but they can be extended, and the description can be overriden. 
+
+
+- Merge can also be done by extending the Kuzu node and relationships MERGE capabilities.  We have recently introduces  the use of the powerful MERGE from dataframe - it can likely be further extended. (https://kuzudb.github.io/docs/import/merge/#merge-from-dataframes) .
+
+Plan  a solution to adress these problems, and implement it. Focus on model and code maintenance. Propose another approaches if needed  if better design seems possible.. 
+
+Note that the "normal" way the KG will be created is the start from the neo4j import, then merge some database / excel import, then unstructured texts (through BAML import). The first data source are considered as more trustfull than the BAML one.
+
+Take care of caching. You mighy need to rebuiltd imported graphs.
+Don't care about legacy code 
 
 
 

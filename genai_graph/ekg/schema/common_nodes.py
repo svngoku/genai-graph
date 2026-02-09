@@ -36,16 +36,27 @@ class L3Service(BaseModel):
 
 
 class Customer(BamlCustomer):
-    """Customer with extended fields for location and services.
+    """Customer organization with extended fields.
 
-    Extends the base BAML Customer with:
-    - location: Geographic location of the customer
-    - services: L3 services associated with the customer
-    - metadata: Provenance and source tracking information
+    Extends the base BAML Customer with fields from various sources:
+    - Neo4j/Stratnav: country, business_line, revenue
+    - BAML extraction: location, services
+    - Provenance: metadata
+
+    This is the canonical Customer type that should be used across all factories
+    to ensure proper node deduplication during graph merging.
     """
 
+    # Fields from Neo4j/Stratnav import (Account)
+    country: str | None = Field(default=None, description="Headquarters country")
+    business_line: str | None = Field(default=None, description="Primary business line")
+    revenue: str | None = Field(default=None, description="Annual revenue")
+
+    # Fields from BAML extraction
     location: GeoLocation | None = None
     services: list[L3Service] = Field(default_factory=list)
+
+    # Provenance tracking
     metadata: dict[str, str] | None = None
 
 

@@ -115,6 +115,9 @@ class GraphNode(BaseModel):
     description: str = ""
     index_fields: list[str] = []
 
+    # Set to True for nodes from explicit mappings (Neo4j, etc.) to skip orphan warnings
+    explicitly_defined: bool = False
+
     # Auto-deduced attributes (populated during schema validation)
     field_paths: list[str] = []  # All paths where this class appears in the root model
     is_list_at_paths: dict[str, bool] = {}  # Whether it's a list at each path
@@ -712,6 +715,10 @@ class GraphSchema(BaseModel):
             is_root_node = node.node_class in all_root_classes or node.field_paths == [""]
             # Never warn for the root node, even if field_paths is empty or [""]
             if is_root_node:
+                continue
+            # Skip nodes that are explicitly defined (e.g., from Neo4j mappings)
+            # These nodes don't need field paths since they come from explicit definitions
+            if node.explicitly_defined:
                 continue
             # Only warn if not root node and field_paths is empty or None
             if not node.field_paths:

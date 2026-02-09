@@ -166,23 +166,26 @@ class GraphRegistry(BaseModel):
         # Filter out None values from schemas without root_model_class
         merged_root_classes = [schema.root_model_class for schema in schemas if schema.root_model_class is not None]
 
-        # Merge nodes, de-duplicating by underlying Pydantic class
+        # Merge nodes, de-duplicating by class name (which determines Kuzu table name).
+        # When multiple node_classes have the same __name__, prefer the one that appears first
+        # (typically from more authoritative sources like Neo4j or database imports).
         merged_nodes: list[Any] = []
-        seen_node_classes: set[type] = set()
+        seen_node_names: set[str] = set()
         for schema in schemas:
             for node in schema.nodes:
-                node_class = node.node_class
-                if node_class in seen_node_classes:
+                node_name = node.node_class.__name__
+                if node_name in seen_node_names:
                     continue
-                seen_node_classes.add(node_class)
+                seen_node_names.add(node_name)
                 merged_nodes.append(node)
 
-        # Merge relations, de-duplicating by (from_node, to_node, name)
+        # Merge relations, de-duplicating by (from_node_name, to_node_name, rel_name).
+        # Use class names since different factories may use different classes with the same name.
         merged_relations: list[GraphRelation] = []
-        seen_relations: set[tuple[type, type, str]] = set()
+        seen_relations: set[tuple[str, str, str]] = set()
         for schema in schemas:
             for rel in schema.relations:
-                key = (rel.from_node, rel.to_node, rel.name)
+                key = (rel.from_node.__name__, rel.to_node.__name__, rel.name)
                 if key in seen_relations:
                     continue
                 seen_relations.add(key)

@@ -481,6 +481,7 @@ class Neo4jImportFactory(Neo4jFactory):
                     key_from="id",  # Always use 'id' for Neo4j imports
                     description=mapping.description,
                     index_fields=mapping.index_fields,
+                    explicitly_defined=True,  # Neo4j nodes don't need field path validation
                 )
             )
 

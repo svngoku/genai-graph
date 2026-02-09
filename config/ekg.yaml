@@ -10,7 +10,7 @@ paths:
   stratnav_db : ${paths.ekg_data}/stratnav
 
 kg_configs:
-  simple:
+  one_rainbow:
     graphs:
       - factory: genai_graph.ekg.schema.rainbow_review:ReviewedOpportunityGraph
         data_root: ${paths.rainbow_json}
@@ -22,7 +22,7 @@ kg_configs:
         file_embedding:
           metadata: ["Opportunity.opportunity_id","Customer.name"]
 
-  db_only:  
+  crm_export:  
     graphs:
       - factory: "${schemas_root}.crm_export:CrmExtractGraph"
         db_dsn: sqlite:///${paths.data_root}/ekg/crm_extract.db
@@ -30,9 +30,9 @@ kg_configs:
           - ${paths.ekg_data}/crm_export/report1750429630460_SHORTEN.xlsx
         pd_read_parameters: {} 
 
-  simple_with_db:
+  one_rainbow_with_db:
     import:
-      - db_only
+      - crm_export
     graphs:
       - factory: "${schemas_root}.rainbow_review:ReviewedOpportunityGraph"
         data_root: ${paths.rainbow_json}
@@ -42,9 +42,9 @@ kg_configs:
           - "fake/*"
         recursive: true
 
-  test1_with_db:
+  rainbow_add_crm:
     import:
-      - db_only
+      - crm_export
     graphs:
       - factory: genai_graph.ekg.schema.rainbow_review:ReviewedOpportunityGraph
         data_root: ${paths.rainbow_json}
@@ -57,7 +57,7 @@ kg_configs:
           - "*_CNES_*"
         recursive: true 
 
-  test1_with_real:
+  several_rainbow:
     graphs:
       - factory: genai_graph.ekg.schema.rainbow_review:ReviewedOpportunityGraph
         data_root: ${paths.rainbow_json}
@@ -65,18 +65,19 @@ kg_configs:
           - "*.json"
         recursive: true
   
-  simple_neo4j:
+  stratnav_subset:
     graphs:
       - factory: genai_graph.ekg.schema.stratnav:StratnavGraph 
         neo4j_export_file: ${paths.stratnav_db}/subset/sn-subset200.jsonl
+
+  stratnav_subset_rainbow_crm:
+    import:
+      - one_rainbow_with_db
+      - stratnav_subset
 
   # stratnav:
   #   graphs:
   #     - factory: genai_graph.ekg.schema.stratnav:StratnavGraph 
   #       neo4j_export_file: ${paths.stratnav_db}/26-01-2018/sn-v3-q4-2026-01-28.jsonl
 
-  kg_visialization:
-    default_filter:
-      - type: "ReviewedOpportunity"
-      - type: "ArchitectureDocument"
 

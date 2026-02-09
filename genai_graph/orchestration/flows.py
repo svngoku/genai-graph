@@ -110,18 +110,27 @@ def _process_imports(
     return total_nodes, total_rels
 
 
-def _create_schema_for_import(import_name: str, backend: any, logger: any) -> None:
+def _create_schema_for_import(import_name: str, backend: any, logger: any, visited: set | None = None) -> None:
     """Create schema from an imported KG's configuration.
 
     This loads the factories from the imported KG and creates their schemas
-    in the current backend so that nodes can be imported.
+    in the current backend so that nodes can be imported. It recursively
+    processes nested imports.
 
     Args:
         import_name: Name of the KG config to import schema from
         backend: Graph backend instance
         logger: Logger instance
+        visited: Set of already visited imports (to prevent cycles)
     """
     from genai_graph.kg.manager import get_kg_manager
+
+    # Track visited imports to prevent infinite cycles
+    if visited is None:
+        visited = set()
+    if import_name in visited:
+        return
+    visited.add(import_name)
 
     manager = get_kg_manager()
 
@@ -130,6 +139,13 @@ def _create_schema_for_import(import_name: str, backend: any, logger: any) -> No
         raise ValueError(f"Imported KG config '{import_name}' not found")
 
     import_cfg = manager.ekg_config.kg_configs[import_name].model_dump()
+
+    # Recursively process nested imports first
+    nested_imports = import_cfg.get("imports", []) or import_cfg.get("import", [])
+    if nested_imports:
+        logger.info(f"Processing {len(nested_imports)} nested import(s) for '{import_name}': {nested_imports}")
+    for nested_import in nested_imports:
+        _create_schema_for_import(nested_import, backend, logger, visited)
 
     # Load factories and create schemas
     bundles = load_factories_task.submit(import_cfg).result()
