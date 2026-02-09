@@ -77,22 +77,18 @@ class TechnicalApproach {
 }
 
 
+class KeyStatementOfWorkElement {
+  objectives string[]? @description("Key business objectives of the project")
+  scope string? @description("Scope of work description")
+  requirements string[]? @description("Key requirements")
+  success_metrics string[]? @description("Measurable success criteria")
+}
 
-// class KeyStatementOfWorkElement {
-//   objectives string[]? @description("Key business objectives of the project")
-//   scope string? @description("Scope of work description")
-//   requirements string[]? @description("Key requirements")
-//   success_metrics string[]? @description("Measurable success criteria")
+class DeliveryInfo {
+  business_lines string[]? @description("Involved business units")
+  locations Geo[]? @description("Geographic locations of delivery")
 
-// }
-
-
-
-// class DeliveryInfo {
-//   business_lines string[]? @description("Involved business units")
-//   locations string[]? @description("Geographic locations of delivery")
-
-// }
+ }
 
 class FinancialMetrics {
   tcv float? @description("Total Contract Value in EUR")

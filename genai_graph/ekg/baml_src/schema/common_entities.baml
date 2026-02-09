@@ -66,3 +66,10 @@ class Partner {
 class MetaData {
   metadata map<string, string> @description("Additional metadata")
 }
+
+class Geo{ 
+    @@description ("Geographic region or country.")
+
+    geo_code string? @description("three-letter country code (ISO 3166-1 alpha-3)")
+    country string   @description("Country or or geographic region name") 
+}

@@ -465,6 +465,7 @@ def generate_html(
     custom_colors: dict[str, str] | None = None,
     query: str = "MATCH (n)-[r]->(m) RETURN n, r, m",
     union: bool = True,
+    filter_orphan_nodes: bool = False,
 ) -> str:
     """Generate an HTML graph visualization from a graph connection/backend.
 
@@ -480,6 +481,8 @@ def generate_html(
                Can be customized to filter by node types, limit results, etc.
                Must return columns named 'n', 'r', 'm' for source node, relationship, target node.
         union: If True and query contains multiple statements, union the results. Default True.
+        filter_orphan_nodes: If True, remove nodes that don't appear in any relationship.
+            Useful when using multi-hop queries that may include intermediate nodes. Default False.
 
     Returns:
         The HTML content as a string.
@@ -545,6 +548,15 @@ def generate_html(
                 "edge_info": edge_info,
             }
         )
+
+    # Optionally filter out orphan nodes - nodes that don't appear in any relationship
+    # This prevents intermediate path nodes from appearing disconnected in multi-hop queries
+    if filter_orphan_nodes:
+        connected_node_ids: set[str] = set()
+        for link in links_list:
+            connected_node_ids.add(link["source"])
+            connected_node_ids.add(link["target"])
+        nodes_list = [node for node in nodes_list if node["id"] in connected_node_ids]
 
     html_content = _generate_html_content(nodes_list, links_list)
 

@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 
+from genai_graph.ekg.baml_client.types import GEO as BamlGeo
 from genai_graph.ekg.baml_client.types import Customer as BamlCustomer
 from genai_graph.ekg.baml_client.types import Opportunity as BamlOpportunity
 from genai_graph.ekg.baml_client.types import Person
@@ -19,13 +20,6 @@ class WinLoss(BaseModel):
     reason: str | None = Field(None, description="Short reason for the outcome")
 
 
-class GeoLocation(BaseModel):
-    """Geographic location."""
-
-    name: str = Field(..., description="Location name")
-    country: str = Field(default="", description="Country code or name")
-
-
 class L3Service(BaseModel):
     """Level 3 service offering."""
 
@@ -33,6 +27,10 @@ class L3Service(BaseModel):
     name: str = Field(default="", description="Service name")
     description: str = Field(default="", description="Description of the service")
     service_type: str = Field(default="", description="Type of service")
+
+
+class GeoLocation(BamlGeo):
+    """Geographic region or country."""
 
 
 class Customer(BamlCustomer):

@@ -103,13 +103,13 @@ def handle_kg_config_change() -> None:
     clear_chat_history()
 
 
-def show_execution_traces_dialog() -> None:
+def show_execution_traces() -> None:
     """Show a popup dialog with execution traces."""
     middleware = sss.trace_middleware
 
-    @st.dialog("🔍 Execution Traces", width="large")
-    def _dialog() -> None:
-        # Collect all events
+    # Collect all events
+
+    with st.container(height=800, width=1200):
         events: list[dict] = []
 
         # Add LLM calls
@@ -231,8 +231,6 @@ def show_execution_traces_dialog() -> None:
                             st.caption(f"Result: {len(result_text)} characters")
                         else:
                             st.code(result_text, language="text")
-
-    _dialog()
 
 
 def show_examples_dialog() -> None:
@@ -505,11 +503,13 @@ async def main() -> None:
     total_events = llm_count + tool_count
 
     if total_events > 0:
-        if st.button(
-            f"🔍 View Execution Traces ({total_events} events)",
-            width="content",
+        with st.popover(
+            type="secondary",
+            label=f"📊 Traces ({total_events})",
+            # use_container_width=True,
+            # width="800",
         ):
-            show_execution_traces_dialog()
+            show_execution_traces()
 
 
 # Run the async main function

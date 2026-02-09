@@ -72,7 +72,7 @@ kg_configs:
 
   stratnav_subset_rainbow_crm:
     import:
-      - one_rainbow_with_db
+      - rainbow_add_crm
       - stratnav_subset
 
   # stratnav:

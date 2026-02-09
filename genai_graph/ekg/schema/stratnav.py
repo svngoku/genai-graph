@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from genai_graph.ekg.schema.common_nodes import Customer
+from genai_graph.ekg.schema.common_nodes import Customer, GeoLocation
 from genai_graph.kg.factories import Neo4jImportFactory
 from genai_graph.kg.factories.neo4j_factory import Neo4jNodeMapping, Neo4jRelationMapping
 
@@ -52,22 +52,6 @@ class BL(BaseModel):
     name: str = Field(description="Business line name")
     longname: str | None = Field(default=None, description="Full business line name")
     status: str | None = Field(default=None, description="Status (Active/Deprecated)")
-
-
-class Counter(BaseModel):
-    """Metric counter for tracking."""
-
-    id: str = Field(description="Unique identifier")
-    name: str = Field(description="Counter name")
-    value: int | None = Field(default=None, description="Current count value")
-
-
-class GEO(BaseModel):
-    """Geographic region or country."""
-
-    id: str = Field(description="Unique identifier")
-    name: str = Field(description="Geographic region code")
-    country: str | None = Field(default=None, description="Country name")
 
 
 class L1(BaseModel):
@@ -142,7 +126,7 @@ class StratnavGraph(Neo4jImportFactory):
     """Graph factory for complete Neo4j Stratnav system imports.
 
     Processes Neo4j JSONL exports with full schema support:
-    - All 9 node types (Customer, Ambition, BL, Counter, GEO, L1, L2, L3, L4, TechnologyPartner)
+    - All 9 node types (Customer, Ambition, BL, Counter, Geo, L1, L2, L3, L4, TechnologyPartner)
     - All 20 relationship types with properties
     - Property renaming and filtering
     - Full documentation for LLM schema generation
@@ -206,21 +190,10 @@ class StratnavGraph(Neo4jImportFactory):
                 name_field="name",
                 key_field="name",
             ),
-            # Counter: Metric counter
-            Neo4jNodeMapping(
-                neo4j_label="Counter",
-                node_class=Counter,
-                property_mappings={
-                    "name": "name",
-                    "value": "value",
-                },
-                name_field="name",
-                key_field="name",
-            ),
             # GEO: Geographic region
             Neo4jNodeMapping(
                 neo4j_label="GEO",
-                node_class=GEO,
+                node_class=GeoLocation,
                 property_mappings={
                     "name": "name",
                     "country": "country",

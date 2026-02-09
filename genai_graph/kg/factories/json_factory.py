@@ -22,7 +22,7 @@ class JsonFileBackedFactory(KgFactory):
     This factory works with the output of 'baml extract' command, which stores
     extracted structured data as JSON files in a directory structure with model subdirectory.
 
-    Note: TOP_CLASS must be set for this factory type.
+    Note: build_schema() must return a schema with root_model_class set.
     """
 
     data_root: str
@@ -44,10 +44,12 @@ class JsonFileBackedFactory(KgFactory):
         """
         from genai_tk.utils.file_patterns import resolve_config_path, resolve_files
 
-        if self.TOP_CLASS is None:
-            raise ValueError(f"{self.__class__.__name__} requires TOP_CLASS to be set")
+        schema = self.build_schema()
+        root_model_class = schema.root_model_class
+        if root_model_class is None:
+            raise ValueError(f"{self.__class__.__name__} requires build_schema() to return a schema with root_model_class set")
 
-        model_name = self.TOP_CLASS.__name__
+        model_name = root_model_class.__name__
 
         # Check if this root + model combination has already been initialized
         root_key = (self.data_root, model_name)
@@ -128,12 +130,14 @@ class JsonFileBackedFactory(KgFactory):
 
     def get_struct_data_by_file_path(self, file_path: UPath) -> BaseModel | None:
         """Load structured data from a JSON file."""
-        if self.TOP_CLASS is None:
-            raise ValueError(f"{self.__class__.__name__} requires TOP_CLASS to be set")
+        schema = self.build_schema()
+        root_model_class = schema.root_model_class
+        if root_model_class is None:
+            raise ValueError(f"{self.__class__.__name__} requires build_schema() to return a schema with root_model_class set")
         try:
             json_text = file_path.read_text(encoding="utf-8")
             data = json.loads(json_text)
-            return self.TOP_CLASS.model_validate(data)
+            return root_model_class.model_validate(data)
         except Exception as e:
             logger.error(f"Failed to load JSON file {file_path}: {e}")
             return None

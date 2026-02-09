@@ -18,7 +18,9 @@ from genai_graph.kg.schema import GraphSchema
 class ReviewedOpportunityGraph(JsonFileBackedFactory, BaseModel):
     """Opportunity data graph using JSON files from BAML extract."""
 
-    TOP_CLASS: Type[BaseModel] = ReviewedOpportunity
+    def get_model_class(self) -> type[BaseModel]:
+        """Return the root model class for this graph factory."""
+        return ReviewedOpportunity
 
     def build_schema(self) -> GraphSchema:
         """Build the graph schema configuration for opportunity data.
@@ -34,7 +36,6 @@ class ReviewedOpportunityGraph(JsonFileBackedFactory, BaseModel):
             Opportunity,
             Partner,
             Person,
-            ReviewedOpportunity,
             RiskAnalysis,
             TechnicalApproach,
         )

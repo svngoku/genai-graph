@@ -140,7 +140,7 @@ def build_filtered_cypher_query(
     """
     # Build relationship type filter with multi-hop pattern when node types are filtered
     use_multi_hop = bool(node_types)  # Use multi-hop pattern when filtering by node types
-    HOPS = 2
+    HOPS = 5
 
     # Build relationship filter
     if relationship_types:
@@ -182,7 +182,7 @@ def build_filtered_cypher_query(
                 f"MATCH (n)-{rel_filter}->(m:{node_type}) WHERE m.name = '{name_escaped}' RETURN n, r, m LIMIT {half_limit}"
             )
     elif node_types:
-        # Node type filter - include both directions for each type
+        # Node type filter - query both directions, allowing connections to any node type
         queries = []
         per_type_limit = max(10, limit // (len(node_types) * 2))  # Split limit across types and directions
 
@@ -431,9 +431,11 @@ def main() -> None:
                     sss.current_query = query
 
                     # Generate HTML visualization
+                    # Filter orphan nodes when node type filter is active (multi-hop can create them)
                     html_content = generate_html(
                         backend,
                         query=query,
+                        filter_orphan_nodes=bool(sss.selected_node_types),
                     )
                     sss.graph_html = html_content
                     st.success("✅ Visualization generated!")
