@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field
 
-from genai_graph.ekg.baml_client.types import GEO as BamlGeo
 from genai_graph.ekg.baml_client.types import Customer as BamlCustomer
+from genai_graph.ekg.baml_client.types import Geo as BamlGeo
 from genai_graph.ekg.baml_client.types import Opportunity as BamlOpportunity
 from genai_graph.ekg.baml_client.types import Person
 from genai_graph.kg.schema import GraphNode
@@ -29,15 +29,15 @@ class L3Service(BaseModel):
     service_type: str = Field(default="", description="Type of service")
 
 
-class GeoLocation(BamlGeo):
-    """Geographic region or country."""
+class Geo(BamlGeo):
+    """Geographic region or country (canonical type for deduplication)."""
 
 
 class Customer(BamlCustomer):
     """Customer organization with extended fields.
 
     Extends the base BAML Customer with fields from various sources:
-    - Neo4j/Stratnav: country, business_line, revenue
+    - Neo4j/Stratnav: iris_code, country, business_line, revenue
     - BAML extraction: location, services
     - Provenance: metadata
 
@@ -46,12 +46,13 @@ class Customer(BamlCustomer):
     """
 
     # Fields from Neo4j/Stratnav import (Account)
+    iris_code: str | None = Field(default=None, description="IRIS code identifier")
     country: str | None = Field(default=None, description="Headquarters country")
     business_line: str | None = Field(default=None, description="Primary business line")
     revenue: str | None = Field(default=None, description="Annual revenue")
 
     # Fields from BAML extraction
-    location: GeoLocation | None = None
+    location: Geo | None = None
     services: list[L3Service] = Field(default_factory=list)
 
     # Provenance tracking

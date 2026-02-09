@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from genai_graph.ekg.schema.common_nodes import Customer, GeoLocation
+from genai_graph.ekg.schema.common_nodes import Customer, Geo
 from genai_graph.kg.factories import Neo4jImportFactory
 from genai_graph.kg.factories.neo4j_factory import Neo4jNodeMapping, Neo4jRelationMapping
 
@@ -193,7 +193,7 @@ class StratnavGraph(Neo4jImportFactory):
             # GEO: Geographic region
             Neo4jNodeMapping(
                 neo4j_label="GEO",
-                node_class=GeoLocation,
+                node_class=Geo,
                 property_mappings={
                     "name": "name",
                     "country": "country",
@@ -320,7 +320,7 @@ class StratnavGraph(Neo4jImportFactory):
                 neo4j_type="LOCATED_IN__Account__GEO",
                 target_rel="LOCATED_IN",
                 from_node=Customer,
-                to_node=GEO,
+                to_node=Geo,
                 description="Geographic location where customer operates",
             ),
             Neo4jRelationMapping(
@@ -431,28 +431,28 @@ class StratnavGraph(Neo4jImportFactory):
                 neo4j_type="DELIVERY_LOCATION__L3__GEO",
                 target_rel="DELIVERY_LOCATION",
                 from_node=L3,
-                to_node=GEO,
+                to_node=Geo,
                 description="Geographic location where L3 is delivered",
             ),
             Neo4jRelationMapping(
                 neo4j_type="ALLOWED_IN__L3__GEO",
                 target_rel="ALLOWED_IN",
                 from_node=L3,
-                to_node=GEO,
+                to_node=Geo,
                 description="L3 allowed for delivery in region",
             ),
             Neo4jRelationMapping(
                 neo4j_type="EXCLUDED_FROM__L3__GEO",
                 target_rel="EXCLUDED_FROM",
                 from_node=L3,
-                to_node=GEO,
+                to_node=Geo,
                 description="L3 explicitly excluded from region",
             ),
             Neo4jRelationMapping(
                 neo4j_type="CANNOT_DELIVER_FROM__L3__GEO",
                 target_rel="CANNOT_DELIVER_FROM",
                 from_node=L3,
-                to_node=GEO,
+                to_node=Geo,
                 description="L3 cannot be delivered in region",
             ),
             # L3 synergy relationships

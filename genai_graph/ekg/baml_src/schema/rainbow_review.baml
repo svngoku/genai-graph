@@ -41,7 +41,7 @@ class ReviewedOpportunity {
   keywords string[]? @description("Key terms for semantic search")
   tech_stack TechnicalApproach @description("Architecure and technology choices")
 
-  // statement_of_work KeyStatementOfWorkElement? @description("Business approach to win the opportunity")
+  statement_of_work KeyStatementOfWorkElement? @description("Key requirements, objectives, scope and success metrics")
   team Person[] @description("Atos or Eviden person involved")  
   financials FinancialMetrics @description("Financial metrics")
   risks RiskAnalysis[] @description("Risk analysis")
@@ -49,6 +49,7 @@ class ReviewedOpportunity {
   competitors Competitor[]? @description("Identified competitors for that opportunity")
   // bidding BiddingStrategy @description("Bidding strategy")
   partners Partner[]? @description("Third-party partners/subcontractors")
+  delivery_info DeliveryInfo? @description("Delivery information including business lines and geographic locations")
 
   metadata map<string, string>? @description("Additional metadata")
   //competitor_map map<string, Competitor> @description("Identified competitors for that opportunity")

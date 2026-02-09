@@ -6,8 +6,6 @@ This is the only module that imports BAML client types.
 
 from __future__ import annotations
 
-from typing import Type
-
 from pydantic import BaseModel
 
 from genai_graph.ekg.baml_client.types import ReviewedOpportunity
@@ -31,14 +29,15 @@ class ReviewedOpportunityGraph(JsonFileBackedFactory, BaseModel):
         from genai_graph.ekg.baml_client.types import (
             CompetitiveLandscape,
             Competitor,
-            Customer,
             FinancialMetrics,
+            KeyStatementOfWorkElement,
             Opportunity,
             Partner,
             Person,
             RiskAnalysis,
             TechnicalApproach,
         )
+        from genai_graph.ekg.schema.common_nodes import Customer, Geo
         from genai_graph.kg.schema import (
             GraphNode,
             GraphRelation,
@@ -74,7 +73,7 @@ class ReviewedOpportunityGraph(JsonFileBackedFactory, BaseModel):
             # Root node
             GraphNode(
                 node_class=ReviewedOpportunity,
-                extra_classes=[FinancialMetrics, CompetitiveLandscape],
+                extra_classes=[FinancialMetrics, CompetitiveLandscape, KeyStatementOfWorkElement],
                 name_from=lambda data, _: "Rainbow:" + str(data.get("start_date")),
                 key_from="AUTO_ID",  # Use auto-generated SERIAL id
                 description="Root node containing the complete reviewed opportunity",
@@ -114,6 +113,13 @@ class ReviewedOpportunityGraph(JsonFileBackedFactory, BaseModel):
                 key_from="AUTO_ID",  # Use auto-generated SERIAL id
                 # deduplication_key="name",
                 description="Atos partner organization information",
+            ),
+            GraphNode(
+                node_class=Geo,
+                name_from="country",
+                key_from="country",  # Use country as primary key
+                description="Geographic location for delivery",
+                index_fields=["country", "geo_code"],
             ),
         ]
 
@@ -155,6 +161,13 @@ class ReviewedOpportunityGraph(JsonFileBackedFactory, BaseModel):
                 to_node=Partner,
                 name="HAS_PARTNER",
                 description="Partner organizations involved",
+            ),
+            GraphRelation(
+                from_node=ReviewedOpportunity,
+                to_node=Geo,
+                name="DELIVERED_IN",
+                description="Geographic locations where solution is delivered",
+                field_paths=[("", "delivery_info.locations")],  # Explicit path to Geo objects
             ),
             GraphRelation(
                 from_node=ReviewedOpportunity,

@@ -15,7 +15,7 @@ kg_configs:
       - factory: genai_graph.ekg.schema.rainbow_review:ReviewedOpportunityGraph
         data_root: ${paths.rainbow_json}
         include: 
-          - "*_CNES_TMA_VENUS_VIP_PEPS_THEIA_MUSCATE*"
+          - "*CNES*TMA*VENUS*"
         exclude: 
           - "fake/*"
         recursive: true
@@ -37,7 +37,7 @@ kg_configs:
       - factory: "${schemas_root}.rainbow_review:ReviewedOpportunityGraph"
         data_root: ${paths.rainbow_json}
         include: 
-          - "*_CNES_TMA_VENUS_VIP_PEPS_THEIA_MUSCATE*"
+          - "*CNES*TMA*VENUS*"
         exclude: 
           - "fake/*"
         recursive: true
