@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from genai_graph.ekg.schema.common_nodes import Customer, Geo
+from genai_graph.ekg.schema.common_nodes import Customer, Geo, Partner
 from genai_graph.kg.factories import Neo4jImportFactory
 from genai_graph.kg.factories.neo4j_factory import Neo4jNodeMapping, Neo4jRelationMapping
 
@@ -38,7 +38,6 @@ from genai_graph.kg.factories.neo4j_factory import Neo4jNodeMapping, Neo4jRelati
 class Ambition(BaseModel):
     """Strategic goal or vision for customer engagement."""
 
-    id: str = Field(description="Unique identifier")
     name: str = Field(description="Ambition title")
     ambition_id: str | None = Field(default=None, description="Unique ambition code")
     text: str | None = Field(default=None, description="Full ambition description")
@@ -48,7 +47,6 @@ class Ambition(BaseModel):
 class BL(BaseModel):
     """Business Line in the service catalog hierarchy."""
 
-    id: str = Field(description="Unique identifier")
     name: str = Field(description="Business line name")
     longname: str | None = Field(default=None, description="Full business line name")
     status: str | None = Field(default=None, description="Status (Active/Deprecated)")
@@ -57,7 +55,6 @@ class BL(BaseModel):
 class L1(BaseModel):
     """Level 1 service portfolio division."""
 
-    id: str = Field(description="Unique identifier")
     name: str = Field(description="L1 portfolio name")
     status: str | None = Field(default=None, description="Status (Active/Deprecated)")
     sales_portal_url: str | None = Field(default=None, description="Sales portal link")
@@ -66,7 +63,6 @@ class L1(BaseModel):
 class L2(BaseModel):
     """Level 2 service offering within L1."""
 
-    id: str = Field(description="Unique identifier")
     name: str = Field(description="L2 service name")
     code: str | None = Field(default=None, description="Service code")
     description: str | None = Field(default=None, description="Service details")
@@ -80,7 +76,6 @@ class L2(BaseModel):
 class L3(BaseModel):
     """Level 3 service offering - primary service unit."""
 
-    id: str = Field(description="Unique identifier")
     name: str = Field(description="Service name")
     code: str | None = Field(default=None, description="Service code")
     description: str | None = Field(default=None, description="Service details")
@@ -106,15 +101,7 @@ class L3(BaseModel):
 class L4(BaseModel):
     """Level 4 service component - sub-service detail."""
 
-    id: str = Field(description="Unique identifier")
     name: str = Field(description="Component name")
-
-
-class TechnologyPartner(BaseModel):
-    """Technology partner or vendor."""
-
-    id: str = Field(description="Unique identifier")
-    name: str = Field(description="Partner name")
 
 
 # =============================================================================
@@ -126,13 +113,14 @@ class StratnavGraph(Neo4jImportFactory):
     """Graph factory for complete Neo4j Stratnav system imports.
 
     Processes Neo4j JSONL exports with full schema support:
-    - All 9 node types (Customer, Ambition, BL, Counter, Geo, L1, L2, L3, L4, TechnologyPartner)
+    - All 9 node types (Customer, Ambition, BL, Counter, Geo, L1, L2, L3, L4, Partner)
     - All 20 relationship types with properties
     - Property renaming and filtering
     - Full documentation for LLM schema generation
 
     Note: Neo4j 'Account' nodes are mapped to the canonical 'Customer' type
-    from common_nodes.py to ensure proper node unification across factories.
+    and 'TechnologyPartner' nodes to the canonical 'Partner' type,
+    both from common_nodes.py, to ensure proper node unification across factories.
     """
 
     @property
@@ -272,10 +260,10 @@ class StratnavGraph(Neo4jImportFactory):
                 name_field="name",
                 key_field="name",
             ),
-            # TechnologyPartner: Vendor/Partner
+            # TechnologyPartner -> Partner: Vendor/Partner (maps to canonical Partner type)
             Neo4jNodeMapping(
                 neo4j_label="TechnologyPartner",
-                node_class=TechnologyPartner,
+                node_class=Partner,
                 property_mappings={
                     "name": "name",
                 },
@@ -499,7 +487,7 @@ class StratnavGraph(Neo4jImportFactory):
                 neo4j_type="PARTNER_WITH__L3__TechnologyPartner",
                 target_rel="PARTNER_WITH",
                 from_node=L3,
-                to_node=TechnologyPartner,
+                to_node=Partner,
                 description="Technology partner for L3 service",
             ),
         ]

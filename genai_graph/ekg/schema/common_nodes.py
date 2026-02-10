@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 from genai_graph.ekg.baml_client.types import Customer as BamlCustomer
 from genai_graph.ekg.baml_client.types import Geo as BamlGeo
 from genai_graph.ekg.baml_client.types import Opportunity as BamlOpportunity
+from genai_graph.ekg.baml_client.types import Partner as BamlPartner
 from genai_graph.ekg.baml_client.types import Person
 from genai_graph.kg.schema import GraphNode
 
@@ -31,6 +32,18 @@ class L3Service(BaseModel):
 
 class Geo(BamlGeo):
     """Geographic region or country (canonical type for deduplication)."""
+
+
+class Partner(BamlPartner):
+    """Partner organization (canonical type for deduplication).
+
+    Extends the base BAML Partner for cross-factory unification.
+    - Neo4j/Stratnav: TechnologyPartner nodes are mapped to this type
+    - BAML extraction: Partner entities with optional role info
+
+    The p_role_ field (from BamlPartner) becomes a relationship property
+    on HAS_PARTNER edges, not stored on the Partner node itself.
+    """
 
 
 class Customer(BamlCustomer):
@@ -97,5 +110,11 @@ def get_common_nodes() -> list[GraphNode]:
             name_from="name",
             key_from="name",  # Use name as primary key for deduplication
             description="Individual contacts and team members",
+        ),
+        GraphNode(
+            node_class=Partner,
+            name_from="name",
+            key_from="name",
+            description="Partner organization (technology vendor, subcontractor, etc.)",
         ),
     ]

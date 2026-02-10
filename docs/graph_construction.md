@@ -104,6 +104,46 @@ The `genai_graph.ekg.schema.common_nodes` module defines canonical types used ac
 
 **Key principle**: Classes with the same `__name__` create the same Kuzu table, regardless of which module they're imported from.
 
+### Currently defined canonical types
+
+| Canonical type | Extends | Used by factories | Notes |
+|---------------|---------|-------------------|-------|
+| `Customer` | `BamlCustomer` | Stratnav (Account→Customer), RainbowReview, CRM | Extended with iris_code, country, etc. |
+| `Geo` | `BamlGeo` | Stratnav (GEO→Geo), RainbowReview | Geographic location |
+| `Partner` | `BamlPartner` | Stratnav (TechnologyPartner→Partner), RainbowReview | Technology vendors, subcontractors |
+| `Opportunity` | `BamlOpportunity` | RainbowReview, CRM | Extended with lead, win_loss |
+
+### Adding a new canonical type
+
+When an entity appears in multiple data sources under different names
+(e.g. Neo4j `TechnologyPartner` and BAML `Partner`), unify them:
+
+1. **Create a canonical class** in `common_nodes.py` extending the BAML type:
+```python
+from genai_graph.ekg.baml_client.types import Partner as BamlPartner
+
+class Partner(BamlPartner):
+    """Partner organization (canonical type for deduplication)."""
+```
+
+2. **Import from `common_nodes`** in all factories (not from `baml_client.types`):
+```python
+from genai_graph.ekg.schema.common_nodes import Customer, Geo, Partner
+```
+
+3. **Map the Neo4j label** to the canonical class:
+```python
+Neo4jNodeMapping(
+    neo4j_label="TechnologyPartner",  # Original Neo4j label
+    node_class=Partner,               # Canonical class (table name = "Partner")
+    ...
+)
+```
+
+**Critical**: The canonical class `__name__` must match the BAML type's `__name__` (e.g. both are `"Partner"`), so all factories write to the same Kuzu table.
+
+### Example: Customer
+
 ```python
 from genai_graph.ekg.baml_client.types import Customer as BamlCustomer
 
@@ -123,7 +163,7 @@ class Customer(BamlCustomer):
 **Usage in factories**:
 ```python
 # Import from common_nodes, not from baml_client.types
-from genai_graph.ekg.schema.common_nodes import Customer, Opportunity, Person
+from genai_graph.ekg.schema.common_nodes import Customer, Geo, Partner, Opportunity
 
 # All factories creating Customer nodes will share the same table
 ```

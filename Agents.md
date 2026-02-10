@@ -2,6 +2,9 @@
 
 This document provides guidelines for AI coding agents working on this codebase.
 
+See also **[Agents_Skills.md](Agents_Skills.md)** for step-by-step procedures
+(merging node types, assessing dead fields, adding nodes, etc.).
+
 ## Data Modeling Guidelines
 
 ### Use Pydantic Models (Strongly Preferred)

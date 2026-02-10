@@ -543,11 +543,16 @@ class identity — this allows `common_nodes.Customer` (which extends
 **Step 1**: Define canonical type in `common_nodes.py`:
 ```python
 from genai_graph.ekg.baml_client.types import Customer as BamlCustomer
+from genai_graph.ekg.baml_client.types import Partner as BamlPartner
 
 class Customer(BamlCustomer):
     """Extended Customer with fields from multiple sources."""
     iris_code: str | None = None      # From Neo4j / CRM
     country: str | None = None
+
+class Partner(BamlPartner):
+    """Partner organization (canonical type for deduplication)."""
+    # Unifies Neo4j TechnologyPartner and BAML Partner
 
 class Geo(BamlGeo):
     """Canonical geographic location type."""
@@ -563,10 +568,23 @@ class GeoLocation(BamlGeo):  # ❌ __name__ = "GeoLocation" ≠ "Geo"
 **Step 2**: Import canonical types in factories that need cross-source dedup:
 ```python
 # In rainbow_review.py
-from genai_graph.ekg.schema.common_nodes import Customer, Geo
+from genai_graph.ekg.schema.common_nodes import Customer, Geo, Partner
+
+# In stratnav.py (Neo4j TechnologyPartner → canonical Partner)
+from genai_graph.ekg.schema.common_nodes import Customer, Geo, Partner
 
 # In crm_export.py
 from genai_graph.ekg.schema.common_nodes import Customer
+```
+
+**For Neo4j factories**: The `neo4j_label` parameter preserves the original
+label while mapping to the canonical class:
+```python
+Neo4jNodeMapping(
+    neo4j_label="TechnologyPartner",  # Label in the Neo4j export
+    node_class=Partner,               # Canonical type (table = "Partner")
+    key_field="name",
+)
 ```
 
 **Result**: All factories create nodes in the same table; Kuzu MERGE

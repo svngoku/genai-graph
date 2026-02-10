@@ -32,12 +32,11 @@ class ReviewedOpportunityGraph(JsonFileBackedFactory, BaseModel):
             FinancialMetrics,
             KeyStatementOfWorkElement,
             Opportunity,
-            Partner,
             Person,
             RiskAnalysis,
             TechnicalApproach,
         )
-        from genai_graph.ekg.schema.common_nodes import Customer, Geo
+        from genai_graph.ekg.schema.common_nodes import Customer, Geo, Partner
         from genai_graph.kg.schema import (
             GraphNode,
             GraphRelation,
