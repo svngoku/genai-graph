@@ -175,9 +175,7 @@ class EkgCommands(CliTopCommand):
                     warnings_md_path = get_kg_manager().get_warnings_md_path_for(cfg_name)
                     if warnings_md_path.exists():
                         file_url = f"file://{warnings_md_path}"
-                        console.print(
-                            f"[cyan]📋 Warnings report:[/cyan] [link={file_url}]{warnings_md_path}[/link]"
-                        )
+                        console.print(f"[cyan]📋 Warnings report:[/cyan] [link={file_url}]{warnings_md_path}[/link]")
 
                 except Exception as exc:  # pragma: no cover - defensive
                     import traceback as tb

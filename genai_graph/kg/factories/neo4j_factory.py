@@ -495,7 +495,7 @@ class Neo4jImportFactory(Neo4jFactory):
                 # For Neo4j imports, we infer all property types as str by default
                 # since the actual data types will be preserved from the parquet
                 rel_properties = {target_prop: str for _, target_prop in mapping.property_mappings.items()}
-            
+
             graph_relations.append(
                 GraphRelation(
                     from_node=mapping.from_node,
@@ -598,8 +598,7 @@ class Neo4jImportFactory(Neo4jFactory):
                 # Validate that required fields are not empty (Fix 1: BAML extraction issue)
                 if not mapped_props.get("id") or mapped_props["id"] == "":
                     logger.warning(
-                        f"Skipping {target_type} node with empty id/key: neo4j_id={neo4j_id}, "
-                        f"properties={mapped_props}"
+                        f"Skipping {target_type} node with empty id/key: neo4j_id={neo4j_id}, properties={mapped_props}"
                     )
                     continue
 

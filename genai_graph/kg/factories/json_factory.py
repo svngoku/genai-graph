@@ -47,7 +47,9 @@ class JsonFileBackedFactory(KgFactory):
         schema = self.build_schema()
         root_model_class = schema.root_model_class
         if root_model_class is None:
-            raise ValueError(f"{self.__class__.__name__} requires build_schema() to return a schema with root_model_class set")
+            raise ValueError(
+                f"{self.__class__.__name__} requires build_schema() to return a schema with root_model_class set"
+            )
 
         model_name = root_model_class.__name__
 
@@ -133,7 +135,9 @@ class JsonFileBackedFactory(KgFactory):
         schema = self.build_schema()
         root_model_class = schema.root_model_class
         if root_model_class is None:
-            raise ValueError(f"{self.__class__.__name__} requires build_schema() to return a schema with root_model_class set")
+            raise ValueError(
+                f"{self.__class__.__name__} requires build_schema() to return a schema with root_model_class set"
+            )
         try:
             json_text = file_path.read_text(encoding="utf-8")
             data = json.loads(json_text)
