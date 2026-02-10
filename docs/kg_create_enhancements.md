@@ -102,3 +102,61 @@ kg_configs:
 - The command maintains full backward compatibility with existing usage
 - Multiple KG creation allows for batch processing workflows
 - Each KG gets its own database path and HTML export
+
+## Warnings Reporting
+
+### Structured Markdown Reports
+
+The KG creation process now generates comprehensive warnings reports in Markdown format, in addition to the plain text log file. This report is automatically created at the end of each KG creation.
+
+**File Location**: `{kg_outputs}/{profile}-{tag}-warnings.md`
+
+### Report Features
+
+1. **Categorized Warnings**: Groups related warnings into categories:
+   - 🔄 **Duplicate Relationships**: Multiple relationship types between node pairs
+   - ⚠️ **Missing Node Configurations**: Referenced nodes without GraphNode configs
+   - 🔗 **Orphaned Nodes**: Nodes not reachable from root model
+   - ❌ **Schema Creation Failures**: Subgraph schema errors
+   - ℹ️ **Other Warnings**: Miscellaneous warnings
+
+2. **Structured Tables**: Each category includes:
+   - Count of warnings in that category
+   - Description explaining the issue
+   - Actionable suggestions for resolution
+   - Detailed tables with structured information
+   - Expandable raw warning messages
+
+3. **Cross-Graph Detection**: The report analyzes warnings across all subgraphs, making it easier to spot issues that span multiple graph definitions (e.g., duplicate relationships between the same nodes defined in different files).
+
+### Example Warning Detection
+
+For instance, if you have:
+- `HAS_CUSTOMER` relationship from `Opportunity` to `Customer` in `rainbow_review.py`
+- `FOR_CUSTOMER` relationship from `Opportunity` to `Customer` in `crm_export.py`
+
+The warnings report will detect this and display:
+
+| From Node | To Node | Relationship Names |
+|-----------|---------|-------------------|
+| `Opportunity` | `Customer` | HAS_CUSTOMER, FOR_CUSTOMER |
+
+With a suggestion to consolidate to a single, semantically clear relationship type.
+
+### Accessing the Report
+
+The warnings report is:
+- Automatically generated at the end of KG creation
+- Linked in the info markdown file (`{profile}-{tag}-info.md`)
+- Displayed in the KG creation summary
+- Accessible via the KgManager's `warnings_md_path` property
+
+### Integration with Info Report
+
+The info markdown file now includes a direct link to the warnings report:
+
+```markdown
+- **Warnings Report**: [📊 {profile}-{tag}-warnings.md]({profile}-{tag}-warnings.md)
+```
+
+This makes it easy to navigate from the main info page to the detailed warnings analysis.

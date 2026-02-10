@@ -1,4 +1,4 @@
-from typing import Any, Type
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -88,11 +88,12 @@ class CrmExtractGraph(TableBackedFactory, BaseModel):
                 to_node=Person,
                 name="LEAD_BY",
                 description="Account Sales Leader",
+                field_paths=[("", "lead")],
             ),
             GraphRelation(
                 from_node=Opportunity,
                 to_node=Customer,
-                name="FOR_CUSTOMER",
+                name="HAS_CUSTOMER",
                 description="Customer organization for this opportunity",
             ),
             GraphRelation(
@@ -100,6 +101,7 @@ class CrmExtractGraph(TableBackedFactory, BaseModel):
                 to_node=Person,
                 name="HAS_CONTACT",
                 description="Customer contact persons",
+                field_paths=[("customer", "customer.employees")],
             ),
         ]
         return GraphSchema(root_model_class=Opportunity, nodes=nodes, relations=relations)

@@ -169,6 +169,16 @@ class EkgCommands(CliTopCommand):
                             f"[green]📊 HTML export:[/green] [link={file_url}]{result.html_export.output_path}[/link]"
                         )
 
+                    # Display warnings report path
+                    from genai_graph.kg.manager import get_kg_manager
+
+                    warnings_md_path = get_kg_manager().get_warnings_md_path_for(cfg_name)
+                    if warnings_md_path.exists():
+                        file_url = f"file://{warnings_md_path}"
+                        console.print(
+                            f"[cyan]📋 Warnings report:[/cyan] [link={file_url}]{warnings_md_path}[/link]"
+                        )
+
                 except Exception as exc:  # pragma: no cover - defensive
                     import traceback as tb
 

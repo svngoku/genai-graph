@@ -60,6 +60,7 @@ class GraphRegistry(BaseModel):
 
         # Get graphs: [{factory: "module:Class", initial_load: [...]}, ...]
         graph_configs = profile_cfg.get("graphs", []) or []
+        self._failed_factories: list[tuple[str, str]] = []  # (factory_path, error)
 
         # Extract and import factory classes
         for graph_cfg in graph_configs:
@@ -101,6 +102,7 @@ class GraphRegistry(BaseModel):
             except Exception as ex:
                 import traceback
 
+                self._failed_factories.append((factory, str(ex)))
                 logger.warning(f"Cannot load graph factory {factory}: {ex}")
                 logger.debug(traceback.format_exc())
 
@@ -140,7 +142,18 @@ class GraphRegistry(BaseModel):
               nodes/relations.
         """
         if not self.graphs:
-            raise ValueError("No graphs are registered in the GraphRegistry")
+            failed = getattr(self, "_failed_factories", [])
+            if failed:
+                details = "\n".join(f"  - {f}: {err}" for f, err in failed)
+                raise ValueError(
+                    f"No graphs registered — all {len(failed)} graph factory import(s) failed:\n"
+                    f"{details}\n"
+                    f"Fix the errors above and retry."
+                )
+            raise ValueError(
+                "No graphs are registered in the GraphRegistry. "
+                "Check that your KG profile config has a 'graphs' section with valid factory entries."
+            )
 
         # Default to all registered graphs when none are explicitly provided
         if not graph_names:

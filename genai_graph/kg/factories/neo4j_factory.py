@@ -488,12 +488,21 @@ class Neo4jImportFactory(Neo4jFactory):
         # Build GraphRelation list from relation mappings
         graph_relations: list[GraphRelation] = []
         for mapping in relation_mappings:
+            # Transfer property_mappings to GraphRelation (Fix 2: Schema alignment)
+            # The properties dict maps target property names to their type annotations
+            rel_properties = None
+            if mapping.property_mappings:
+                # For Neo4j imports, we infer all property types as str by default
+                # since the actual data types will be preserved from the parquet
+                rel_properties = {target_prop: str for _, target_prop in mapping.property_mappings.items()}
+            
             graph_relations.append(
                 GraphRelation(
                     from_node=mapping.from_node,
                     to_node=mapping.to_node,
                     name=mapping.rel_name,
                     description=mapping.description,
+                    properties=rel_properties,
                 )
             )
 
@@ -585,6 +594,14 @@ class Neo4jImportFactory(Neo4jFactory):
                                 break
                         else:
                             mapped_props["name"] = neo4j_id
+
+                # Validate that required fields are not empty (Fix 1: BAML extraction issue)
+                if not mapped_props.get("id") or mapped_props["id"] == "":
+                    logger.warning(
+                        f"Skipping {target_type} node with empty id/key: neo4j_id={neo4j_id}, "
+                        f"properties={mapped_props}"
+                    )
+                    continue
 
                 # Add metadata timestamps
                 mapped_props["_created_at"] = now

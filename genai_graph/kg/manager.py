@@ -93,6 +93,7 @@ class KgManager(BaseModel):
     _info_path: UPath | None = None
     _outcomes_file: UPath | None = None
     _warnings_file: UPath | None = None
+    _warnings_md_path: UPath | None = None
 
     model_config = {
         "arbitrary_types_allowed": True,
@@ -139,6 +140,7 @@ class KgManager(BaseModel):
         self._info_path = None
         self._outcomes_file = None
         self._warnings_file = None
+        self._warnings_md_path = None
 
     def activate(self) -> tuple[str, str]:
         """Validate profile and return current profile and tag.
@@ -148,9 +150,7 @@ class KgManager(BaseModel):
         """
         if self.profile not in self.ekg_config.kg_configs:
             logger.warning(
-                "Unknown KG_CONFIG= '%s'; available=%s",
-                self.profile,
-                sorted(self.ekg_config.kg_configs.keys()),
+                f"Unknown KG_CONFIG= '{self.profile}'; available={sorted(self.ekg_config.kg_configs.keys())}"
             )
         return (self.profile, self.tag)
 
@@ -217,6 +217,10 @@ class KgManager(BaseModel):
     def get_warnings_file_for(self, profile: str) -> UPath:
         """Return the warnings log file path for any given KG profile."""
         return self.get_base_path_for(profile) / f"{profile}-{self.tag}-warnings.log"
+
+    def get_warnings_md_path_for(self, profile: str) -> UPath:
+        """Return the warnings markdown report path for any given KG profile."""
+        return self.get_base_path_for(profile) / f"{profile}-{self.tag}-warnings.md"
 
     def ensure_directories_for(self, profile: str) -> None:
         """Create base directory for any given profile if it doesn't exist."""
@@ -288,6 +292,13 @@ class KgManager(BaseModel):
         if self._warnings_file is None:
             self._warnings_file = self.base_path / f"{self.profile}-{self.tag}-warnings.log"
         return self._warnings_file
+
+    @property
+    def warnings_md_path(self) -> UPath:
+        """Path to the warnings markdown report file."""
+        if self._warnings_md_path is None:
+            self._warnings_md_path = self.base_path / f"{self.profile}-{self.tag}-warnings.md"
+        return self._warnings_md_path
 
     def ensure_directories(self) -> None:
         """Create base directory if it doesn't exist."""
@@ -446,6 +457,15 @@ class KgManager(BaseModel):
             }
         else:
             info["warnings"] = None
+
+        # Warnings markdown report
+        if self.warnings_md_path.exists():
+            info["warnings_report"] = {
+                "file": str(self.warnings_md_path),
+                "size_bytes": self.warnings_md_path.stat().st_size,
+            }
+        else:
+            info["warnings_report"] = None
 
         return info
 

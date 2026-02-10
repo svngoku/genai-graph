@@ -49,12 +49,16 @@ kg_configs:
       - factory: genai_graph.ekg.schema.rainbow_review:ReviewedOpportunityGraph
         data_root: ${paths.rainbow_json}
         include: 
-          - "*_CNES_*"
+          - "*CNES*"
+        exclude: 
+          - "fake/*"
         recursive: true
       - factory: genai_graph.ekg.schema.architecture_doc:ArchitectureDocumentGraph
         data_root: ${paths.add_json}
         include: 
-          - "*_CNES_*"
+          - "*CNES*"
+        exclude: 
+          - "fake/*"
         recursive: true 
 
   several_rainbow:

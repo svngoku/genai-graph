@@ -11,7 +11,9 @@ and relationships, reducing boilerplate and errors.
 
 from __future__ import annotations
 
+import re
 import types
+import unicodedata
 import uuid
 import warnings
 from enum import Enum
@@ -30,6 +32,36 @@ from pydantic import BaseModel, PrivateAttr, model_validator
 
 if TYPE_CHECKING:
     from genai_graph.kg.manager import KgManager
+
+
+# Unicode characters that should be normalised to ASCII for dedup keys.
+# Maps various dash/hyphen codepoints to a plain ASCII hyphen-minus.
+_HYPHEN_LIKE = re.compile(
+    "["
+    "\u2010"  # HYPHEN
+    "\u2011"  # NON-BREAKING HYPHEN
+    "\u2012"  # FIGURE DASH
+    "\u2013"  # EN DASH
+    "\u2014"  # EM DASH
+    "\u2015"  # HORIZONTAL BAR
+    "\u00ad"  # SOFT HYPHEN
+    "\ufe63"  # SMALL HYPHEN-MINUS
+    "\uff0d"  # FULLWIDTH HYPHEN-MINUS
+    "]"
+)
+
+
+def _normalize_key(value: str) -> str:
+    """Normalise a string for use as a deduplication key.
+
+    Applies NFKC unicode normalisation and replaces common Unicode
+    dash/hyphen variants with a plain ASCII hyphen-minus so that
+    e.g. "Gérard Lassalle‑Valier" (U+2011) and
+    "Gérard Lassalle-Valier" (U+002D) map to the same key.
+    """
+    value = unicodedata.normalize("NFKC", value)
+    value = _HYPHEN_LIKE.sub("-", value)
+    return value
 
 
 def _find_embedded_field_for_class(parent_cls: type[BaseModel], embedded_cls: type[BaseModel]) -> str | None:
@@ -150,6 +182,9 @@ class GraphNode(BaseModel):
         This becomes the primary 'name' field in the graph. Any original Pydantic
         'name' field is preserved as '_original_name'.
 
+        The result is normalised via :func:`_normalize_key` so that
+        equivalent Unicode representations produce the same display name.
+
         Args:
             data: Node data dictionary
             node_type: Name of the node type
@@ -168,12 +203,14 @@ class GraphNode(BaseModel):
         if isinstance(value, Enum):
             return value.name
         else:
-            return str(value)
+            return _normalize_key(str(value))
 
     def get_key_value(self, data: dict[str, Any], node_type: str) -> str:
         """Get the primary key value for a node instance.
 
         This computes the primary key based on the ``key_from`` configuration.
+        String keys are normalised via :func:`_normalize_key` so that
+        equivalent Unicode representations produce the same dedup key.
 
         Args:
             data: Node data dictionary
@@ -190,16 +227,27 @@ class GraphNode(BaseModel):
             # Use the specified field value
             value = data.get(self.key_from)
             if not value:
-                raise ValueError(f"Key field '{self.key_from}' not found or empty in data for {node_type}")
-            return str(value)
+                available_fields = list(data.keys())[:10]  # Show first 10 fields
+                fields_preview = ", ".join(available_fields)
+                if len(data.keys()) > 10:
+                    fields_preview += f" (and {len(data.keys()) - 10} more)"
+                raise ValueError(
+                    f"Key field '{self.key_from}' not found or empty in data for {node_type}. "
+                    f"Available fields: {fields_preview}. "
+                    f"Consider using key_from='AUTO_ID' if this field may be missing."
+                )
+            return _normalize_key(str(value))
         else:
             # key_from is a callable - compute the key value
+            # Return None to signal "skip this item" (no node should be created)
             value = self.key_from(data, node_type)
+            if value is None:
+                return None  # type: ignore[return-value]
             if not value:
                 raise ValueError(f"Computed key is empty for {node_type}")
             if isinstance(value, Enum):
                 return value.name
-            return str(value)
+            return _normalize_key(str(value))
 
     @property
     def label(self) -> str:
@@ -238,6 +286,7 @@ class GraphRelation(BaseModel):
     to_node: type[BaseModel]
     name: str
     description: str = ""
+    properties: dict[str, Any] | None = None  # Property name -> annotation/type
 
     # Auto-deduced attributes (populated during schema validation)
     field_paths: list[tuple[str, str]] = []  # (from_path, to_path) pairs
@@ -480,7 +529,13 @@ class GraphSchema(BaseModel):
             # Find all paths where this class appears
             for _model_class, fields in self._model_field_map.items():
                 for _field_name, field_info in fields.items():
-                    if field_info["type"] == node_config.node_class:
+                    field_type = field_info["type"]
+                    # Match by __name__ to support extended types (e.g.,
+                    # common_nodes.Customer extends BamlCustomer but both
+                    # share __name__ == "Customer" for Kuzu table dedup).
+                    if field_type == node_config.node_class or (
+                        hasattr(field_type, "__name__") and field_type.__name__ == node_config.node_class.__name__
+                    ):
                         path = field_info["path"]
                         is_list = field_info["is_list"]
                         node_config.field_paths.append(path)
@@ -530,39 +585,46 @@ class GraphSchema(BaseModel):
 
     def _get_node_paths(self, node_class: type[BaseModel]) -> list[str]:
         """Get all field paths for a given node class."""
-        node_config = next((n for n in self.nodes if n.node_class == node_class), None)
+        node_config = next(
+            (n for n in self.nodes if n.node_class.__name__ == node_class.__name__),
+            None,
+        )
         return node_config.field_paths if node_config else []
 
     def _path_complexity_score(self, from_path: str, to_path: str) -> tuple[int, int, int, int]:
         """Calculate a complexity score for a relationship path.
 
-        Returns a tuple (path_depth, is_nested, nesting_depth, combined_length) where:
-        - path_depth: sum of path depths (fewer dots = simpler) - MOST IMPORTANT
-        - is_nested: 0 if sibling relationship, 1 if one is nested in the other
-        - nesting_depth: how deeply nested the relationship is
-        - combined_length: total character length
+        Returns a tuple ``(containment, path_depth, nesting_depth,
+        combined_length)`` where:
+
+        - containment: **0** when ``to_path`` is nested inside ``from_path``
+          (i.e. a true parent→child containment such as
+          ``customer → customer.employees``), **1** otherwise.  This is the
+          **most important** criterion — a containment relationship is always
+          preferred over a lateral/sibling one because it means the target
+          objects are directly *owned* by the source node.
+        - path_depth: sum of from/to path depths (fewer dots = simpler).
+        - nesting_depth: how deeply nested the relationship is.
+        - combined_length: total character length as final tiebreaker.
 
         Lower scores are preferred (simpler, more direct paths).
-        The primary criterion is minimizing total path depth (preferring simple, direct fields).
         """
-        # Calculate path depth (number of dots = nesting level) - PRIMARY CRITERION
+        # -- PRIMARY CRITERION: containment ---------------------------------
+        # ``to_path`` starts with ``from_path.`` ⇒ true ownership.
+        # When ``from_path`` is root (""), every ``to_path`` is "contained",
+        # so we don't penalise that case.
+        is_contained = from_path == "" or to_path.startswith(from_path + ".")
+        containment = 0 if is_contained else 1
+
+        # -- SECONDARY: path depth ------------------------------------------
         from_depth = from_path.count(".") if from_path else 0
         to_depth = to_path.count(".") if to_path else 0
         path_depth = from_depth + to_depth
 
-        # Check if paths are siblings (share same parent) vs nested (one contains the other)
-        # Sibling relationships (e.g., "opportunity" → "lead") are simpler than nested ones
-        is_direct_child = to_path.startswith(from_path + ".") if from_path else False
-        is_direct_parent = from_path.startswith(to_path + ".") if to_path else False
-        is_nested = 1 if (is_direct_child or is_direct_parent) else 0
-
-        # Calculate nesting depth (how many levels deep the relationship goes)
-        # For siblings, this is the depth of their common parent
-        # For nested relationships, this is the depth of the deeper path
-        if is_nested:
-            nesting_depth = max(from_depth, to_depth)
+        # -- TERTIARY: nesting depth ----------------------------------------
+        if is_contained and from_path:
+            nesting_depth = to_depth
         else:
-            # For siblings, find common parent depth
             from_parts = from_path.split(".") if from_path else []
             to_parts = to_path.split(".") if to_path else []
             common_len = 0
@@ -573,10 +635,9 @@ class GraphSchema(BaseModel):
                     break
             nesting_depth = common_len
 
-        # Total length as final tiebreaker
         combined_length = len(from_path) + len(to_path)
 
-        return (path_depth, is_nested, nesting_depth, combined_length)
+        return (containment, path_depth, nesting_depth, combined_length)
 
     def _is_valid_relationship_path(self, from_path: str, to_path: str, relation_config: GraphRelation) -> bool:
         """Check if a relationship path makes logical sense.
@@ -636,7 +697,7 @@ class GraphSchema(BaseModel):
 
             # Find all fields that are handled by relationships
             for relation_config in self.relations:
-                if relation_config.from_node == node_config.node_class:
+                if relation_config.from_node.__name__ == node_config.node_class.__name__:
                     # Fields that point to other nodes should be excluded
                     for from_path, to_path in relation_config.field_paths:
                         # Extract the field name from the path

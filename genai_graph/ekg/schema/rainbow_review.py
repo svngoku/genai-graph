@@ -63,6 +63,7 @@ class ReviewedOpportunityGraph(JsonFileBackedFactory, BaseModel):
                 key_from="name",
                 description="Customer organization details",
                 index_fields=["name"],
+                explicitly_defined=True,  # Connected via multi-hop path (ReviewedOpportunity → Opportunity → Customer)
             ),
             GraphNode(
                 node_class=Person,
@@ -74,15 +75,19 @@ class ReviewedOpportunityGraph(JsonFileBackedFactory, BaseModel):
             GraphNode(
                 node_class=ReviewedOpportunity,
                 extra_classes=[FinancialMetrics, CompetitiveLandscape, KeyStatementOfWorkElement],
-                name_from=lambda data, _: "Rainbow:" + str(data.get("start_date")),
-                key_from="AUTO_ID",  # Use auto-generated SERIAL id
+                name_from=lambda data, _: "Review:"
+                + str(data.get("opportunity", {}).get("opportunity_id", ""))
+                + ":"
+                + str(data.get("start_date", "")),
+                key_from=lambda data, _: str(data.get("opportunity", {}).get("opportunity_id", "unknown")),
                 description="Root node containing the complete reviewed opportunity",
             ),
             # Regular nodes - field paths auto-deduced
             GraphNode(
                 node_class=RiskAnalysis,
-                name_from=lambda data, _: data.get("risk_category") or data.get("p_risk_description_") or "other_risk",
-                key_from="AUTO_ID",
+                name_from=lambda data, _: getattr(data.get("risk_category"), "name", None)
+                or str(data.get("risk_category", "other_risk")),
+                key_from=lambda data, _: str(getattr(data.get("risk_category"), "name", None) or "Other Risks"),
                 description="Risk assessment and mitigation details",
                 index_fields=["risk_description"],
             ),
@@ -103,35 +108,28 @@ class ReviewedOpportunityGraph(JsonFileBackedFactory, BaseModel):
             GraphNode(
                 node_class=Competitor,
                 name_from=lambda data, base: data.get("known_as") or data.get("name") or f"{base}_competitor",
-                key_from="AUTO_ID",  # Use auto-generated SERIAL id
-                # name_from="known_as",
+                key_from=lambda data, base: data.get("known_as") or data.get("name") or f"{base}_competitor",
                 description="Competitor",
             ),
             GraphNode(
                 node_class=Partner,
                 name_from="name",
-                key_from="AUTO_ID",  # Use auto-generated SERIAL id
-                # deduplication_key="name",
+                key_from="name",
                 description="Atos partner organization information",
             ),
             GraphNode(
                 node_class=Geo,
-                name_from="country",
-                key_from="country",  # Use country as primary key
+                name_from=lambda data, base: data.get("geo_code") or data.get("country") or f"{base}_geo",
+                key_from=lambda data, base: data.get("geo_code") or data.get("country") or f"{base}_geo",
                 description="Geographic location for delivery",
                 index_fields=["country", "geo_code"],
+                explicitly_defined=True,  # Connected via explicit field path in DELIVERED_IN relationship
             ),
         ]
 
         # Define relationships with descriptions
         # Field paths are automatically deduced from the model structure
         relations = [
-            # GraphRelation(
-            #     from_node=ReviewedOpportunity,
-            #     to_node=Document,
-            #     name="PRESENTED_DOCUMENTS",
-            #     description="Document reviewed",
-            # ),
             GraphRelation(
                 from_node=ReviewedOpportunity,
                 to_node=Opportunity,
@@ -155,6 +153,7 @@ class ReviewedOpportunityGraph(JsonFileBackedFactory, BaseModel):
                 to_node=Person,
                 name="HAS_TEAM_MEMBER",
                 description="Internal team members",
+                field_paths=[("", "team")],  # Use team field (not customer.employees)
             ),
             GraphRelation(
                 from_node=ReviewedOpportunity,

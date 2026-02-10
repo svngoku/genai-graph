@@ -168,13 +168,22 @@ ON MATCH SET n.country = country, n.segment = segment
 - **Key selection**: See [Primary Key Implementation](primary_key_implementation.md)
 
 ### Relationships
+
+Relationships use row-by-row MERGE + SET to support edge properties:
+
 ```cypher
-LOAD FROM df
-MATCH (a:Customer {name: from_id}), (b:Person {name: to_id})
+-- Without edge properties
+MATCH (a:Customer {name: $from_id}), (b:Person {name: $to_id})
 MERGE (a)-[:HAS_CONTACT]->(b)
+
+-- With edge properties (from p_*_ fields)
+MATCH (a:ReviewedOpportunity {id: $from_id}), (b:Partner {name: $to_id})
+MERGE (a)-[r:HAS_PARTNER]->(b)
+SET r.role = $role
 ```
 
-Relationships are unique by (from_node, to_node, rel_type). Kuzu ensures no duplicate edges.
+Relationships are unique by (from_node, to_node, rel_type). Edge properties
+(from `p_*_` fields on the target node class) are stored on the relationship.
 
 ## Import/Export via Parquet
 
@@ -279,23 +288,57 @@ Sources are processed in order defined in the configuration. Data merging behavi
 
 ## Warnings and How to Handle Them
 
+### Structured Warnings Report
+
+As of the latest version, KG creation generates a **comprehensive warnings report** in Markdown format. This report provides better visibility into cross-graph issues and categorizes warnings with actionable suggestions.
+
+**Report Location**: `{kg_outputs}/{profile}-{tag}-warnings.md`
+
+The report includes:
+- **Categorized warnings**: Duplicate relationships, missing nodes, orphaned nodes, schema failures
+- **Structured tables**: Easy-to-scan summary of issues
+- **Actionable suggestions**: Specific recommendations for each category
+- **Cross-graph detection**: Spots issues spanning multiple subgraph definitions
+
+**Access methods**:
+1. View the report file directly
+2. Follow the link in `{profile}-{tag}-info.md`
+3. Check CLI output at the end of KG creation
+
+See [KG Create Enhancements](kg_create_enhancements.md#warnings-reporting) for detailed examples and usage.
+
+### Common Warning Types
+
 During KG creation, various warnings may appear. Here's a reference guide:
 
 ### Schema Warnings
 
+#### "No graphs are registered in the GraphRegistry"
+```
+No graphs are registered in the GraphRegistry.
+The following factories failed to load:
+  - genai_graph.ekg.schema.my_factory:MyGraph: ImportError: cannot import name ...
+```
+**Cause**: Factory import failed due to syntax error, missing dependency, or wrong module path.  
+**Solution**: Check the listed module paths and fix the import errors shown in the message.
+
 #### "Multiple valid paths found for RELATION_NAME"
 ```
 Multiple valid paths found for HAS_CONTACT (Customer → Person). 
-Using: customer → lead. Alternatives: customer → customer.employees.
+Using: customer → customer.employees. Alternatives: customer → lead.
 ```
 **Cause**: A relationship can be inferred from multiple field paths in the Pydantic model.  
-**Solution**: This is informational. The system auto-selects the first valid path. To specify explicitly:
+**Solution**: The system auto-selects the best path using a **containment-first** heuristic:
+1. **Containment preferred**: If the target path starts with the source path (e.g. `customer.employees` starts with `customer`), this path is preferred over lateral paths.
+2. **Shallow depth as tiebreaker**: Among containment-equivalent paths, shallower ones are preferred.
+
+If the auto-chosen path is still wrong, specify `field_paths` explicitly as a list of `(from_path, to_path)` tuples:
 ```python
 GraphRelation(
     from_node=Customer,
     to_node=Person,
     name="HAS_CONTACT",
-    field_paths=["customer.employees"],  # Explicit path
+    field_paths=[("customer", "customer.employees")],  # Explicit path
 )
 ```
 

@@ -85,7 +85,7 @@ This generates `baml_client/types.py` with Pydantic models.
 
 Graph factories define how extracted data becomes nodes and relationships in the graph.
 
-**Location**: `genai_graph/ekg/schema/*_review.py`
+**Location**: `genai_graph/ekg/schema/*.py`
 
 ### Basic Factory Structure
 
@@ -106,10 +106,10 @@ class ReviewedOpportunityGraph(JsonFileBackedFactory, BaseModel):
         """Define nodes and relationships."""
         from genai_graph.ekg.baml_client.types import (
             Opportunity,
-            Customer,
             Person,
-            KeyStatementOfWorkElement,
         )
+        # Import canonical types for cross-factory dedup
+        from genai_graph.ekg.schema.common_nodes import Customer, Geo
         
         nodes = [
             GraphNode(
@@ -144,18 +144,82 @@ class ReviewedOpportunityGraph(JsonFileBackedFactory, BaseModel):
 ```python
 GraphNode(
     node_class=Person,           # Pydantic class
-    name_from="name",            # Field for display name
-    key_from="AUTO_ID",          # Primary key (AUTO_ID or field name)
+    name_from="name",            # Field for display name (or callable)
+    key_from="name",             # Primary key for dedup (or "AUTO_ID" or callable)
     description="Team member",   # Documentation
     index_fields=["name"],       # Fields to index for search
 )
 ```
 
-#### Key Field Options
+#### `key_from` Options
 
-- `"AUTO_ID"` - Auto-generate unique sequential ID
-- `"name"` - Use a specific field as primary key
-- Lambda function for complex logic
+The `key_from` parameter is **critical** for deduplication. It determines the
+PRIMARY KEY in the Kuzu table and controls when a MERGE creates a new node vs
+updates an existing one.
+
+| Value | Behaviour | Dedup? | Use when |
+|-------|-----------|--------|----------|
+| `"field_name"` | Use a Pydantic field as PK | ✅ Yes | Entity has a stable identifier (name, ID code, …) |
+| `"AUTO_ID"` | Generate a UUID per extraction | ❌ No | Each occurrence must be kept separate |
+| `lambda data, _: …` | Compute a key dynamically | ✅ Yes | Key requires logic (combination, normalisation) |
+
+> **Deduplication tip:** When the same entity appears in multiple documents
+> (e.g. two JSON files about the same opportunity), use a **field-based** or
+> **lambda** key to ensure cross-document deduplication.  `"AUTO_ID"` creates
+> a new node for every extraction — use it only for inherently unique objects
+> like `TechnicalApproach`.
+
+```python
+# ✅ Good: opportunity_id is unique per opportunity
+GraphNode(node_class=Opportunity, key_from="opportunity_id", …)
+
+# ✅ Good: person name used for merging across documents
+GraphNode(node_class=Person, key_from="name", …)
+
+# ✅ Good: computed key for conditional dedup
+GraphNode(
+    node_class=RiskAnalysis,
+    key_from=lambda data, _: (
+        getattr(data.get("risk_category"), "name", None)
+        or None   # Return None to skip this item entirely
+    ),
+)
+
+# ❌ Avoid: AUTO_ID prevents dedup across documents
+GraphNode(node_class=Customer, key_from="AUTO_ID", …)
+```
+
+**Returning `None` from a callable `key_from`** signals "skip this item" —
+no node is created. This is useful for filtering out incomplete data (e.g.
+risk entries without a valid category).
+
+#### Unicode normalisation
+
+All key values and display names pass through `_normalize_key()`, which
+applies NFKC Unicode normalisation and replaces variant
+dash/hyphen characters (U+2011 NON-BREAKING HYPHEN, U+2013 EN DASH, etc.)
+with a plain ASCII hyphen-minus. This ensures that `"Gérard Lassalle‑Valier"`
+(non-breaking hyphen) and `"Gérard Lassalle-Valier"` (regular hyphen)
+merge as the same node.
+
+#### Enum values in `name_from` / `key_from`
+
+When working with enums, `model_dump()` keeps enum objects — it does **not**
+serialise them to strings. Use `getattr(…, "name", …)` to get the member
+name:
+
+```python
+GraphNode(
+    node_class=RiskAnalysis,
+    # ✅ Correct: getattr extracts the enum member name
+    name_from=lambda data, _: (
+        getattr(data.get("risk_category"), "name", None)
+        or str(data.get("risk_category", "other_risk"))
+    ),
+    # ❌ Wrong: str(enum) gives "SWProjectRisks.ScheduleRisk"
+    #   name_from=lambda data, _: str(data.get("risk_category")),
+)
+```
 
 #### Embedding Structs in Parent Nodes
 
@@ -165,8 +229,10 @@ To avoid creating separate nodes for simple structs, use `extra_classes`:
 GraphNode(
     node_class=ReviewedOpportunity,
     extra_classes=[FinancialMetrics, KeyStatementOfWorkElement],
-    name_from=lambda data, _: "Rainbow:" + str(data.get("start_date")),
-    key_from="AUTO_ID",
+    name_from=lambda data, _: "Review:" + str(data.get("start_date")),
+    key_from=lambda data, _: str(
+        data.get("opportunity", {}).get("opportunity_id", "unknown")
+    ),
 )
 ```
 
@@ -178,13 +244,106 @@ Properties from `FinancialMetrics` and `KeyStatementOfWorkElement` will be embed
 GraphRelation(
     from_node=Opportunity,      # Source node class
     to_node=Customer,           # Target node class
-    name="HAS_CUSTOMER",        # Relationship type
+    name="HAS_CUSTOMER",        # Relationship type name
     description="Opportunity belongs to customer",
-    field_paths=["opportunity.customer"],  # Optional: explicit path
 )
 ```
 
-The system auto-deduces relationship paths by traversing the Pydantic model structure.
+#### Automatic Path Deduction
+
+The system auto-deduces relationship paths by traversing the Pydantic model
+structure from the root class. The algorithm:
+
+1. Collects all field paths where each node class appears in the model tree.
+2. For each relationship, finds `(from_path, to_path)` candidate pairs.
+3. Selects the **best** pair using a scoring heuristic that **prefers
+   containment** (target nested inside source) over lateral/sibling paths.
+
+For example, given this model structure:
+
+```
+ReviewedOpportunity          # root
+  ├─ opportunity             # Opportunity
+  │   └─ customer            # Customer
+  │       └─ employees[]     # list[Person]
+  └─ team[]                  # list[Person]
+```
+
+The deduction produces:
+
+| Relationship | from_path | to_path | Why |
+|---|---|---|---|
+| `REVIEWS` (Root → Opportunity) | `""` | `opportunity` | Direct child of root |
+| `HAS_CUSTOMER` (Opportunity → Customer) | `opportunity` | `opportunity.customer` | Customer is nested inside Opportunity |
+| `HAS_CONTACT` (Customer → Person) | `opportunity.customer` | `opportunity.customer.employees` | `employees` is nested inside `customer` (containment wins) |
+| `HAS_TEAM_MEMBER` (Root → Person) | `""` | `team` | Explicit `field_paths` overrides |
+
+#### When to Use Explicit `field_paths`
+
+Use `field_paths` when:
+- The target type appears under **multiple** parents (e.g. `Person` appears
+  as both `team` and `customer.employees`).
+- The auto-deduced path is wrong (check the "Multiple valid paths" warning).
+- The path goes through a non-standard structure (e.g. `delivery_info.locations`).
+
+```python
+GraphRelation(
+    from_node=ReviewedOpportunity,
+    to_node=Person,
+    name="HAS_TEAM_MEMBER",
+    # Tuple: (from_path, to_path) — "" means root
+    field_paths=[("", "team")],
+)
+
+GraphRelation(
+    from_node=ReviewedOpportunity,
+    to_node=Geo,
+    name="DELIVERED_IN",
+    field_paths=[("", "delivery_info.locations")],
+)
+```
+
+#### `explicitly_defined` Nodes
+
+Some nodes are reachable only via multi-hop paths (e.g.
+Root → Opportunity → Customer). If the auto-deduction can't
+find a field path (because the node class differs from the one in the model),
+set `explicitly_defined=True` to suppress the "orphan node" warning:
+
+```python
+GraphNode(
+    node_class=Customer,
+    name_from="name",
+    key_from="name",
+    explicitly_defined=True,  # Reached via Opportunity → Customer
+)
+```
+
+> **Note:** `explicitly_defined` is set automatically for nodes coming from
+> Neo4j import mappings.
+
+### Relationship Properties (Edge Properties)
+
+Properties stored on relationships rather than nodes use the `p_*_` naming
+convention:
+
+```python
+class Partner(BaseModel):
+    name: str
+    p_role_: str | None = None   # → becomes "role" edge property
+```
+
+Fields prefixed with `p_` and suffixed with `_` are:
+1. **Excluded** from the node table (not stored on the Partner node).
+2. **Extracted** as properties on the relationship that connects to this node.
+3. **Stripped** of the `p_` prefix and `_` suffix in the graph (e.g. `p_role_` → `role`).
+
+```python
+# In the graph, the Partner node has only 'name'.
+# The HAS_PARTNER relationship has a 'role' property.
+# MATCH (ro:ReviewedOpportunity)-[r:HAS_PARTNER]->(p:Partner)
+# RETURN p.name, r.role
+```
 
 ## Step 3: Configure KG Creation
 
@@ -197,13 +356,32 @@ kg_configs:
       - factory: genai_graph.ekg.schema.rainbow_review:ReviewedOpportunityGraph
         data_root: ${paths.rainbow_json}
         include: 
-          - "*CNES*TMA*VENUS*"  # File pattern
+          - "*CNES*TMA*VENUS*"  # File glob pattern
         exclude: 
-          - "fake/*"
-        recursive: true
+          - "fake/*"            # Exclude test/fake data
+        recursive: true         # Search subdirectories
         file_embedding:
           metadata: ["Opportunity.opportunity_id", "Customer.name"]
 ```
+
+### File Pattern Matching
+
+The `include` patterns are **glob patterns** matched against filenames
+(not full paths). Common pitfalls:
+
+```yaml
+# ✅ Correct: matches "03.RESM-SOL-9000559500 CNES TMA VENUS…"
+include: ["*CNES*"]
+
+# ❌ Wrong: underscores don't match spaces in filenames
+include: ["*_CNES_*"]
+
+# ✅ Match everything
+include: ["*.json"]
+```
+
+Always add `exclude: ["fake/*"]` when test/fake data exists in the data
+directory. Set `recursive: true` when files are in subdirectories.
 
 ### Import from Other KGs
 
@@ -211,11 +389,17 @@ kg_configs:
 kg_configs:
   combined_kg:
     import:
-      - base_kg              # Import nodes/rels from another KG
+      - crm_export           # Import nodes/rels from another KG config
     graphs:
       - factory: genai_graph.ekg.schema.my_factory:MyGraph
         data_root: ${paths.my_data}
+        include: ["*CNES*"]
+        exclude: ["fake/*"]
+        recursive: true
 ```
+
+Imported KG data is loaded from parquet cache — the imported KG must have
+been created first (either earlier in `--all-graphs` or manually).
 
 ## Step 4: Extract Data from Documents
 
@@ -235,13 +419,17 @@ This runs LLM extraction on markdown files and generates JSON.
 
 ```bash
 # Build single KG
-cli kg create --kg my_kg
+export KG_CONFIG=my_kg
+cli kg create
 
 # Build all KGs
 cli kg create --all-graphs
 
-# Rebuild from scratch
-cli kg create --kg my_kg --delete-first
+# Or specify directly
+cli kg create --kg my_kg
+
+# View in browser
+cli kg view
 ```
 
 ## Common Patterns
@@ -267,7 +455,9 @@ class FinancialMetrics {
 GraphNode(
     node_class=ReviewedOpportunity,
     extra_classes=[FinancialMetrics],  # Embed into parent
-    key_from="AUTO_ID",
+    key_from=lambda data, _: str(
+        data.get("opportunity", {}).get("opportunity_id", "unknown")
+    ),
 )
 ```
 
@@ -285,15 +475,19 @@ class ReviewedOpportunity {
 
 class Partner {
   name string
-  p_role_ string?
+  p_role_ string?    // Edge property (not on the node)
 }
 ```
 
 **Factory**:
 ```python
 nodes = [
-    GraphNode(node_class=ReviewedOpportunity, ...),
-    GraphNode(node_class=Partner, key_from="AUTO_ID"),  # Separate node
+    GraphNode(node_class=ReviewedOpportunity, …),
+    GraphNode(
+        node_class=Partner,
+        name_from="name",
+        key_from="name",  # Dedup by name
+    ),
 ]
 
 relations = [
@@ -305,7 +499,8 @@ relations = [
 ]
 ```
 
-**Result**: Separate `Partner` nodes with `HAS_PARTNER` relationships.
+**Result**: Separate `Partner` nodes with `HAS_PARTNER` relationships. The
+`p_role_` field becomes a `role` property on the `HAS_PARTNER` edge.
 
 ### Pattern 3: Relationship Properties
 
@@ -315,83 +510,111 @@ For storing properties on relationships (edge properties):
 ```baml
 class Competitor {
   name KnownCompetitor
-  p_name_ string    // Properties with p_*_ prefix become edge properties
+  p_name_ string    // "p_" prefix + "_" suffix → edge property
   p_comment_ string?
 }
 ```
 
-**Factory**: Properties starting with `p_` are automatically extracted as relationship properties.
+**Factory**: Properties matching `p_*_` are automatically excluded from the
+node and stored as properties on the inbound relationship.
+
+**Result**:
+```cypher
+-- The Competitor node has only 'name'.
+-- HAS_COMPETITOR relationship has 'name_' and 'comment' properties.
+MATCH (ro)-[r:HAS_COMPETITOR]->(c:Competitor)
+RETURN c.name, r.name_, r.comment
+```
 
 ### Pattern 4: Cross-Factory Node Unification (Canonical Types)
 
-To ensure nodes from different factories merge into the same table, use canonical types from `common_nodes.py`.
+To ensure nodes from different factories merge into the same Kuzu table, use
+canonical types from `common_nodes.py`.
 
 **When to use**: 
-- Entity types that appear in multiple data sources (Customer, Geo, Person, etc.)
-- Need deduplication across factories (e.g., same customer from BAML and Neo4j exports)
+- Entity types that appear in multiple data sources (Customer, Geo, Person, …)
+- Need deduplication across factories (e.g. same customer from BAML and CRM)
 
-**⚠️ CRITICAL**: The canonical wrapper class must have the **same `__name__`** as the BAML type for table deduplication to work!
+**Important**: The canonical wrapper class must have the **same `__name__`** as
+the BAML type. The system matches node classes by `__name__`, not by Python
+class identity — this allows `common_nodes.Customer` (which extends
+`BamlCustomer`) and `BamlCustomer` to map to the same `Customer` table.
 
-**Step 1**: Define canonical type in `common_nodes.py` with matching name:
+**Step 1**: Define canonical type in `common_nodes.py`:
 ```python
 from genai_graph.ekg.baml_client.types import Customer as BamlCustomer
-from genai_graph.ekg.baml_client.types import Geo as BamlGeo
 
 class Customer(BamlCustomer):
     """Extended Customer with fields from multiple sources."""
-    iris_code: str | None = None      # From Neo4j
-    country: str | None = None         # From Neo4j
+    iris_code: str | None = None      # From Neo4j / CRM
+    country: str | None = None
 
-class Geo(BamlGeo):  # ✅ Name matches BamlGeo.__name__ = "Geo"
+class Geo(BamlGeo):
     """Canonical geographic location type."""
-    # Wraps BAML Geo for consistency across factories
+    # __name__ == "Geo" matches BamlGeo.__name__ — same table
 ```
 
 **❌ WRONG**: Naming it differently breaks deduplication:
 ```python
-class GeoLocation(BamlGeo):  # ❌ GeoLocation.__name__ ≠ "Geo"
-    """This will create a DIFFERENT table than Geo!"""
+class GeoLocation(BamlGeo):  # ❌ __name__ = "GeoLocation" ≠ "Geo"
+    pass
 ```
 
-**Step 2**: Import canonical types in ALL factories that use them:
+**Step 2**: Import canonical types in factories that need cross-source dedup:
 ```python
-# In rainbow_review.py (BAML factory)
+# In rainbow_review.py
 from genai_graph.ekg.schema.common_nodes import Customer, Geo
 
-# In stratnav.py (Neo4j factory) 
-from genai_graph.ekg.schema.common_nodes import Customer, Geo
-
-# Use canonical types in GraphNode configurations
-GraphNode(node_class=Geo, ...)  # ✅ Uses canonical type
+# In crm_export.py
+from genai_graph.ekg.schema.common_nodes import Customer
 ```
 
-**Why this matters**: Table names are derived from `node_class.__name__`. If `Geo.__name__` = "Geo" in one factory and `GeoLocation.__name__` = "GeoLocation" in another, they create separate tables even though they represent the same entity!
+**Result**: All factories create nodes in the same table; Kuzu MERGE
+deduplicates by primary key.
 
-**Result**: All factories create nodes in the same table (e.g., all geo data goes to `Geo` table).
+### Pattern 5: Filtering Items via `key_from` Returning None
+
+When source data contains items that should not become nodes (e.g. incomplete
+or invalid entries), return `None` from a callable `key_from`:
+
+```python
+GraphNode(
+    node_class=RiskAnalysis,
+    key_from=lambda data, _: (
+        getattr(data.get("risk_category"), "name", None)
+        if data.get("risk_category")
+        else None  # ← Skip: no valid risk category
+    ),
+)
+```
+
+Items for which `key_from` returns `None` are silently omitted — no node is
+created and no relationship endpoints reference them.
 
 ## Workflow Summary
 
 ### Initial Setup
 1. Define BAML schema (`*.baml`)
 2. Run `baml-cli generate`
-3. Create factory class (`*_review.py`)
+3. Create factory class in `ekg/schema/`
 4. Configure in `ekg.yaml`
 
 ### Iteration
-1. **Modify extraction**: Edit BAML → regenerate → re-extract
-2. **Modify graph**: Edit factory → rebuild KG
+1. **Modify extraction**: Edit BAML → regenerate → re-extract with `--force`
+2. **Modify graph schema**: Edit factory → `cli kg create`
 3. **Add fields**: Update BAML → regenerate → update factory → re-extract → rebuild
 
 ### Testing
 ```bash
-# Extract sample
-cli baml extract SOURCE DEST --function ExtractRainbow --include "test*.md"
-
 # Build test KG
-cli kg create --kg test_kg
+export KG_CONFIG=my_kg
+cli kg create
 
-# Query
-cli kg cypher "MATCH (n) RETURN labels(n)[0], count(n)"
+# View in browser
+cli kg view
+
+# Build all KGs (regression test)
+cli kg create --all-graphs
 ```
 
 ## Troubleshooting
@@ -405,7 +628,7 @@ cli kg cypher "MATCH (n) RETURN labels(n)[0], count(n)"
 **Solution**: Re-run extraction with `--force` to regenerate all JSON files
 
 ### Issue: "Cannot import name 'GEO' from baml_client.types"
-**Cause**: Case mismatch - BAML generates `Geo` not `GEO`  
+**Cause**: Case mismatch — BAML generates `Geo` not `GEO`  
 **Solution**: Fix imports to match generated class names (check `baml_client/types.py`)
 
 ### Issue: "Cannot find property X for n"
@@ -416,20 +639,68 @@ rm -rf /home/tcl/kg_outputs/*/parquet
 cli kg create --all-graphs
 ```
 
-### Issue: Warning about multiple paths
-**Cause**: Relationship can be inferred from multiple field paths  
-**Solution**: This is informational. Specify `field_paths=[...]` explicitly if needed.
+### Issue: "No graphs are registered in the GraphRegistry"
+**Cause**: Factory import failed (syntax error, missing dependency, etc.)  
+**Solution**: The error message now shows which factories failed and why. Check the listed module paths and fix the import errors.
+
+### Issue: "No files matched include patterns in …"
+**Cause**: Glob pattern doesn't match any files in the data directory.  
+**Solution**: Check actual filenames — common mistakes:
+- Using underscores `*_CNES_*` when filenames have spaces `* CNES *`
+- Missing `recursive: true` when files are in subdirectories
+- Missing or wrong `data_root` path
+
+### Issue: "Multiple valid paths found for RELATION_NAME"
+**Cause**: A relationship can be inferred from multiple field paths.  
+**Solution**: The system now prefers **containment** paths (target nested inside
+source) over lateral/sibling paths. If the auto-chosen path is still wrong,
+specify `field_paths` explicitly:
+```python
+GraphRelation(
+    from_node=Customer,
+    to_node=Person,
+    name="HAS_CONTACT",
+    field_paths=[("customer", "customer.employees")],
+)
+```
+
+### Issue: Duplicate nodes despite same name
+**Cause**: Unicode variants of the same character (e.g. regular hyphen `-` vs
+non-breaking hyphen `‑`) produce different keys.  
+**Solution**: This is now handled automatically — all keys pass through
+Unicode normalisation. If you still see duplicates, check for other whitespace
+or encoding differences in the source data.
+
+### Issue: Orphan nodes (no relationships)
+**Cause**: Typically a `key_from` mismatch between how the node was created
+and how the relationship looks it up. For example, node created with
+`key_from="AUTO_ID"` but the relationship tries to match by `name`.  
+**Solution**: Use the same key strategy consistently. For entities that should
+deduplicate, use `key_from="name"` or `key_from="some_id_field"`.
+
+### Issue: `p_*_` fields not appearing as edge properties
+**Cause**: The `merge_relationships_batch` function must handle edge properties
+via row-by-row MERGE + SET (not batch LOAD FROM).  
+**Solution**: This is now implemented correctly. Verify that the `p_*_` fields
+are defined on the **target** node class of the relationship (the `to_node`).
 
 ## Best Practices
 
-1. **Start small**: Extract a few fields, verify, then expand
-2. **Use descriptions**: Help LLM understand what to extract
-3. **Test extraction**: Process 1-2 documents before full batch
-4. **Check JSON output**: Verify extracted data before building graph
-5. **Use common_nodes**: Define canonical types for cross-factory deduplication
-6. **Version BAML schemas**: Track extraction schema evolution
-7. **Consistent naming**: Use `p_*_` prefix for relationship properties
-8. **Document schemas**: Add descriptions to all nodes and relationships
+1. **Choose `key_from` carefully** — it determines deduplication. Use a stable
+   business identifier (`opportunity_id`, `name`, `iris_code`) rather than
+   `AUTO_ID` whenever possible.
+2. **Use canonical types** from `common_nodes.py` for entities shared across
+   factories (Customer, Opportunity, Person, Geo).
+3. **Use `p_*_` prefix** for fields that belong on the relationship, not the node.
+4. **Add `exclude: ["fake/*"]`** in `ekg.yaml` to skip test data.
+5. **Start small**: Extract a few fields, verify, then expand.
+6. **Use descriptions**: Help LLM understand what to extract.
+7. **Specify `field_paths`** on relationships when the same target type appears
+   under multiple parents.
+8. **Run `cli kg create --all-graphs`** after any schema change as a regression
+   test.
+9. **Check warnings**: The warnings report (displayed in CLI output and saved
+   to `*-warnings.md`) highlights schema issues.
 
 ## Reference Commands
 
@@ -441,11 +712,15 @@ cd genai_graph/ekg && baml-cli generate
 cli baml extract SOURCE DEST --function ExtractRainbow --force
 
 # Build graphs
-cli kg create --kg my_kg
+export KG_CONFIG=my_kg && cli kg create
 cli kg create --all-graphs
-cli kg create --kg my_kg --delete-first
+
+# View graph
+cli kg view
 
 # Query graphs
 cli kg cypher "MATCH (n:Customer) RETURN n.name LIMIT 10"
-cli kg schema
+
+# Rebuild from scratch
+cli kg create --kg my_kg --delete-first
 ```

@@ -419,15 +419,21 @@ def create_schema(
         backend.execute(create_sql)
         created_tables.add(table_name)
 
-    # Create relationship tables with properties from p_*_ fields
+    # Create relationship tables with properties from p_*_ fields or relation.properties
     for relation in relations:
         from_table = relation.from_node.__name__
         to_table = relation.to_node.__name__
         rel_name = relation.name
 
-        # Find p_*_ properties from the to_node class
+        # Check if properties are explicitly defined (e.g., from Neo4j mappings)
         rel_properties = []
-        if hasattr(relation.to_node, "model_fields"):
+        if hasattr(relation, "properties") and relation.properties:
+            # Use properties from GraphRelation (Fix 2: Support Neo4j property mappings)
+            for prop_name, prop_type in relation.properties.items():
+                kuzu_type = _get_kuzu_type(prop_type)
+                rel_properties.append(f"{prop_name} {kuzu_type}")
+        elif hasattr(relation.to_node, "model_fields"):
+            # Fallback: Find p_*_ properties from the to_node class
             for field_name, field_info in relation.to_node.model_fields.items():
                 if field_name.startswith("p_") and field_name.endswith("_"):
                     # Extract the property name without p_ prefix and _ suffix
@@ -549,6 +555,8 @@ def extract_graph_data(
                     # AUTO_ID generates UUID, callable computes key - both stored in 'id' field
                     primary_key_field = "id"
                     key_value = node_info.get_key_value(item_data, node_type)
+                    if key_value is None:
+                        continue  # key_from returned None — skip this item
                     item_data[primary_key_field] = key_value
                 else:
                     # Use the specified field as primary key

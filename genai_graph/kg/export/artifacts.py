@@ -266,6 +266,12 @@ def export_info(config_name: str, backend: KgBackend) -> UPath:
             warn_info = outcome_info["warnings"]
             lines.append(f"- **Logged Warnings**: **{warn_info['count']}** warnings")
 
+        if outcome_info.get("warnings_report"):
+            report_info = outcome_info["warnings_report"]
+            report_path = UPath(report_info["file"])
+            report_name = report_path.name
+            lines.append(f"- **Warnings Report**: [📊 {report_name}]({report_name})")
+
         lines.append("")
         lines.append("---")
         lines.append("")
@@ -824,6 +830,19 @@ def import_from_parquet(
                 # Try to find a suitable key
                 pk_field = "id" if "id" in df.columns else df.columns[0]
 
+            # Filter out nodes with NULL or empty primary keys (Fix 1: BAML extraction issue)
+            initial_count = len(df)
+            df = df[df[pk_field].notna() & (df[pk_field] != "")]
+            filtered_count = initial_count - len(df)
+            if filtered_count > 0:
+                logger.warning(
+                    f"Filtered out {filtered_count} {node_type} node(s) with NULL or empty primary key '{pk_field}'"
+                )
+
+            if df.empty:
+                logger.debug(f"No valid {node_type} nodes to import after filtering")
+                continue
+
             # Build MERGE query - merge on primary key, set all other fields
             other_cols = [c for c in df.columns if c != pk_field]
             on_create_set = ", ".join([f"n.{c} = {c}" for c in other_cols]) if other_cols else ""
@@ -913,3 +932,30 @@ def import_from_parquet(
     logger.info(f"Imported from parquet '{config_name}': {nodes_imported} nodes, {rels_imported} rels")
 
     return nodes_imported, rels_imported
+
+
+def export_warnings(config_name: str, warnings: list[str]) -> UPath:
+    """Export warnings to a structured Markdown report.
+
+    Args:
+        config_name: Name of the KG configuration
+        warnings: List of warning messages collected during KG creation
+
+    Returns:
+        Path to the exported warnings markdown file
+    """
+    from genai_graph.kg.export.warnings_report import generate_warnings_markdown
+
+    manager = get_kg_manager()
+    manager.ensure_directories_for(config_name)
+
+    # Generate markdown report
+    markdown_content = generate_warnings_markdown(warnings)
+
+    # Write to file
+    destination = manager.get_warnings_md_path_for(config_name)
+    destination.write_text(markdown_content, encoding="utf-8")
+
+    logger.info("Exported warnings report to '%s'", destination)
+
+    return destination

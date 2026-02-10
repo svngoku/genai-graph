@@ -57,6 +57,33 @@ GraphNode(
 **Result:** `CREATE NODE TABLE Architecture(id STRING, name STRING, ..., PRIMARY KEY(id))`
 - The lambda computes a composite key value stored in the `id` field
 
+#### 5. Conditional Key (Lambda Returning None)
+```python
+GraphNode(
+    node_class=RiskAnalysis,
+    name_from=lambda data, _: getattr(data.get("risk_category"), "name", "other_risk"),
+    key_from=lambda data, _: (
+        getattr(data.get("risk_category"), "name", None)
+        if data.get("risk_category")
+        else None  # Skip — no node created for this item
+    ),
+)
+```
+**Behaviour:** When `key_from` returns `None`, the item is silently skipped — no node is created
+and no relationship endpoints reference it. Use this to filter out incomplete or invalid data.
+
+## Unicode Normalisation
+
+All key values pass through `_normalize_key()` before being used as primary keys or for
+MERGE matching. The function:
+
+1. Applies **NFKC** Unicode normalisation (e.g. `\u00e9` → `é`)
+2. Replaces variant dash/hyphen characters (U+2011 NON-BREAKING HYPHEN, U+2013 EN DASH,
+   U+2014 EM DASH, etc.) with plain ASCII hyphen-minus (`-`)
+
+This ensures that `"Gérard Lassalle‑Valier"` (non-breaking hyphen) and
+`"Gérard Lassalle-Valier"` (regular hyphen) merge as the same node.
+
 ## Implementation Details
 
 ### Schema Generation (`graph_core.py`)
@@ -170,11 +197,12 @@ All tests verify:
 
 ## Benefits
 
-1. **Flexibility**: Support for SERIAL, custom fields, and computed keys
+1. **Flexibility**: Support for SERIAL, custom fields, computed keys, and conditional keys
 2. **Simplicity**: Single parameter (`key_from`) replaces multiple concepts
 3. **Consistency**: Follows same pattern as `name_from`
 4. **Correctness**: Proper PRIMARY KEY constraints in Kuzu database
 5. **Deduplication**: Natural deduplication on custom keys (e.g., CRM IDs)
+6. **Unicode safety**: Automatic normalisation prevents duplicate nodes from encoding differences
 
 ## Future Enhancements
 

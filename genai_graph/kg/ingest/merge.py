@@ -576,6 +576,30 @@ def merge_nodes_batch(
             result.stats[node_type] = type_stats
             continue
 
+        # Filter DataFrame to only include fields that are in the node schema
+        # This prevents errors when data contains extra fields not in the schema
+        valid_fields = set(config.field_types.keys()) | {
+            primary_key_field,
+            "name",
+            "_created_at",
+            "_updated_at",
+            "_original_name",
+        }
+        # Also include struct field names from extra_classes
+        valid_fields.update(config.struct_field_types.keys())
+
+        # Filter columns to only valid fields
+        df_columns_to_keep = [col for col in df.columns if col in valid_fields]
+        filtered_out = [col for col in df.columns if col not in valid_fields]
+
+        if filtered_out:
+            logger.debug(
+                f"Filtering out {len(filtered_out)} extra columns from {node_type} data "
+                f"not in schema: {', '.join(filtered_out[:5])}{'...' if len(filtered_out) > 5 else ''}"
+            )
+
+        df = df[df_columns_to_keep]
+
         # Get columns for SET clauses
         on_create_cols, on_match_cols = _get_columns_for_set_clause(df, primary_key_field)
 
@@ -629,7 +653,23 @@ def merge_nodes_batch(
                             result.id_mapping.add(node_type, name_value, key_str)
 
         except Exception as e:
-            logger.error(f"Error in batch merge for {node_type}: {e}")
+            error_msg = str(e)
+            # Enhance error message with context
+            if "Cannot find property" in error_msg:
+                # Extract property name from error
+                import re
+
+                match = re.search(r"Cannot find property (\w+)", error_msg)
+                if match:
+                    missing_prop = match.group(1)
+                    schema_fields = list(config.field_types.keys())[:10]
+                    logger.error(
+                        f"Schema mismatch for {node_type}: property '{missing_prop}' not in database schema. "
+                        f"Schema fields: {', '.join(schema_fields)}. "
+                        f"This usually means the field exists in data but wasn't defined in the node's Pydantic model."
+                    )
+            else:
+                logger.error(f"Error in batch merge for {node_type}: {e}")
             raise
 
         result.stats[node_type] = type_stats
@@ -771,31 +811,45 @@ def merge_relationships_batch(
         # Use only non-empty property columns
         property_cols = non_empty_prop_cols
 
-        # Build property assignment for CREATE
-        # Note: Kuzu's LOAD FROM df doesn't currently support inline property assignment
-        # in CREATE clauses for relationships (unlike MERGE for nodes).
-        # See: https://github.com/kuzudb/kuzu/issues/XXXX
-        # TODO: Implement workaround using separate SET operations or row-by-row creation
-        if property_cols:
-            props_str = ""
-            logger.debug(
-                f"Skipping {len(property_cols)} properties for {rel_name} relationships "
-                f"due to Kuzu limitation with LOAD FROM df"
-            )
-        else:
-            props_str = ""
-
         # Use MERGE for relationships to avoid duplicates when the same relationship
         # is created from multiple sources (e.g., both BAML extraction and Neo4j import).
         # This ensures (from)-[r:REL]->(to) is only created once per node pair.
-        merge_rel_query = f"""
-            LOAD FROM df
-            MATCH (from:{from_type} {{{from_key_field}: from_id}}), (to:{to_type} {{{to_key_field}: to_id}})
-            MERGE (from)-[:{rel_name}{props_str}]->(to)
-        """
         try:
-            kuzu_conn.execute(merge_rel_query)
-            total_created += len(df)
+            if property_cols:
+                # Kuzu's LOAD FROM df doesn't support inline property assignment
+                # in MERGE for relationships. Use row-by-row creation with SET.
+                prop_cols_list = sorted(property_cols)
+                for _, row in df.iterrows():
+                    from_id_val = row["from_id"]
+                    to_id_val = row["to_id"]
+                    merge_q = (
+                        f"MATCH (from:{from_type} {{{from_key_field}: $from_id}}), "
+                        f"(to:{to_type} {{{to_key_field}: $to_id}}) "
+                        f"MERGE (from)-[r:{rel_name}]->(to)"
+                    )
+                    set_parts = []
+                    params: dict[str, Any] = {
+                        "from_id": from_id_val,
+                        "to_id": to_id_val,
+                    }
+                    for col in prop_cols_list:
+                        val = row.get(col)
+                        if val is not None and val != "":
+                            param_name = f"p_{col}"
+                            set_parts.append(f"r.{col} = ${param_name}")
+                            params[param_name] = val
+                    if set_parts:
+                        merge_q += " SET " + ", ".join(set_parts)
+                    kuzu_conn.execute(merge_q, parameters=params)
+                total_created += len(df)
+            else:
+                merge_rel_query = f"""
+                    LOAD FROM df
+                    MATCH (from:{from_type} {{{from_key_field}: from_id}}), (to:{to_type} {{{to_key_field}: to_id}})
+                    MERGE (from)-[:{rel_name}]->(to)
+                """
+                kuzu_conn.execute(merge_rel_query)
+                total_created += len(df)
 
             # Collect DataFrame for parquet export if collector is active
             collector = get_parquet_collector()
@@ -810,7 +864,7 @@ def merge_relationships_batch(
 
         except Exception as e:
             logger.error(f"Error in batch relationship creation for {rel_name}: {e}")
-            logger.error(f"Query: {merge_rel_query}")
+            logger.error(f"Query failed for {rel_name} ({from_type} -> {to_type})")
             raise
 
     return total_created

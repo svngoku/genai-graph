@@ -236,6 +236,24 @@ def create_kg_flow(
 
     warnings = summarize_warnings(cfg_name)
 
+    # Export warnings to structured Markdown report
+    from genai_graph.kg.export import export_warnings
+
+    try:
+        warnings_path = export_warnings(cfg_name, warnings)
+        manager.log_outcome(
+            "export_warnings",
+            "success",
+            f"Warnings report exported to {warnings_path}",
+        )
+    except Exception as exc:  # pragma: no cover
+        logger.warning(f"Failed to export warnings report: {exc}")
+        manager.log_outcome(
+            "export_warnings",
+            "warning",
+            f"Failed to export warnings report: {exc}",
+        )
+
     # Log completion outcome
     outcome_status = "warning" if warnings else "success"
     manager.log_outcome(
