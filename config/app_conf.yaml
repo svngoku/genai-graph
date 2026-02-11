@@ -41,13 +41,15 @@ ui:
       - settings/welcome.py
       - settings/configuration.py
       - settings/MCP_servers.py
-    Data Lineage:
+    Data Flows:
       - path: demos/kg_lineage.py
         name: "Markdown Files Lineage"
       - path: demos/kg_tables.py
         name: "Data Tables Imports"
       - path: demos/kg_schema_visualization.py
         name: "Schema Visualization"
+      - path: demos/external_web_page.py
+        name: "Architecuture"
     Knowledge Graph:
       - path: demos/reAct_agent.py
         name: "ReAct Agent"

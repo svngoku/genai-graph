@@ -119,7 +119,7 @@ class ReviewedOpportunityGraph(JsonFileBackedFactory, BaseModel):
             GraphNode(
                 node_class=Geo,
                 name_from=lambda data, base: data.get("geo_code") or data.get("country") or f"{base}_geo",
-                key_from=lambda data, base: data.get("geo_code") or data.get("country") or f"{base}_geo",
+                key_from="name",  # Use computed name as PK (consistent with Stratnav Geo)
                 description="Geographic location for delivery",
                 index_fields=["country", "geo_code"],
                 explicitly_defined=True,  # Connected via explicit field path in DELIVERED_IN relationship

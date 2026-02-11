@@ -246,6 +246,8 @@ class NodeTypeConfig(BaseModel):
     Encapsulates the primary key field and type hints for merge operations.
     """
 
+    model_config = {"extra": "forbid"}
+
     node_type: str
     primary_key_field: str = "id"
     # Maps field name -> kuzu_type for top-level node fields (e.g., {"technical_stack": "STRING[]"})
@@ -304,7 +306,7 @@ class NodeTypeRegistry(BaseModel):
         """Register a node type configuration."""
         self.configs[config.node_type] = config
 
-    def add_type(self, node_type: str, key_field: str = "id", name_field: str = "name") -> None:
+    def add_type(self, node_type: str, key_field: str = "id") -> None:
         """Add a node type with default configuration.
 
         This is a convenience method for dynamic schema creation where
@@ -313,12 +315,10 @@ class NodeTypeRegistry(BaseModel):
         Args:
             node_type: The node type name (table name)
             key_field: The primary key field name (default: "id")
-            name_field: The name/display field name (default: "name")
         """
         config = NodeTypeConfig(
             node_type=node_type,
-            key_field=key_field,
-            name_field=name_field,
+            primary_key_field=key_field,
         )
         self.register(config)
 
@@ -578,27 +578,29 @@ def merge_nodes_batch(
 
         # Filter DataFrame to only include fields that are in the node schema
         # This prevents errors when data contains extra fields not in the schema
-        valid_fields = set(config.field_types.keys()) | {
-            primary_key_field,
-            "name",
-            "_created_at",
-            "_updated_at",
-            "_original_name",
-        }
-        # Also include struct field names from extra_classes
-        valid_fields.update(config.struct_field_types.keys())
+        # When field_types is empty (dynamic Neo4j imports), skip filtering to preserve all data
+        if config.field_types:
+            valid_fields = set(config.field_types.keys()) | {
+                primary_key_field,
+                "name",
+                "_created_at",
+                "_updated_at",
+                "_original_name",
+            }
+            # Also include struct field names from extra_classes
+            valid_fields.update(config.struct_field_types.keys())
 
-        # Filter columns to only valid fields
-        df_columns_to_keep = [col for col in df.columns if col in valid_fields]
-        filtered_out = [col for col in df.columns if col not in valid_fields]
+            # Filter columns to only valid fields
+            df_columns_to_keep = [col for col in df.columns if col in valid_fields]
+            filtered_out = [col for col in df.columns if col not in valid_fields]
 
-        if filtered_out:
-            logger.debug(
-                f"Filtering out {len(filtered_out)} extra columns from {node_type} data "
-                f"not in schema: {', '.join(filtered_out[:5])}{'...' if len(filtered_out) > 5 else ''}"
-            )
+            if filtered_out:
+                logger.debug(
+                    f"Filtering out {len(filtered_out)} extra columns from {node_type} data "
+                    f"not in schema: {', '.join(filtered_out[:5])}{'...' if len(filtered_out) > 5 else ''}"
+                )
 
-        df = df[df_columns_to_keep]
+            df = df[df_columns_to_keep]
 
         # Get columns for SET clauses
         on_create_cols, on_match_cols = _get_columns_for_set_clause(df, primary_key_field)

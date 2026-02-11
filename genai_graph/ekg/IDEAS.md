@@ -39,7 +39,7 @@ Test with cli kg create --kg simple_neo4j
 Refactor 
 
             GraphNode(
-                node_class=L3Service,
+                node_class=L3,
                 name_from="name",
                 key_from="code",
                 description="Level 3 service offering",

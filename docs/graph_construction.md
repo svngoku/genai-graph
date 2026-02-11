@@ -157,7 +157,7 @@ class Customer(BamlCustomer):
     
     # Fields from BAML extraction
     location: Geo | None = None
-    services: list[L3Service] = Field(default_factory=list)
+    services: list[L3] = Field(default_factory=list)
 ```
 
 **Usage in factories**:

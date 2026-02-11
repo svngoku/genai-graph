@@ -760,7 +760,6 @@ def load_graph_data(
 
 
 # Orchestration
-# Orchestration
 
 
 def import_neo4j_data(
@@ -768,6 +767,7 @@ def import_neo4j_data(
     nodes_data: NodeDataCollection,
     relationships: list[RelationshipRecord],
     context: KgManager | None = None,
+    key_fields: dict[str, str] | None = None,
 ) -> tuple[NodeDataCollection, list[RelationshipRecord]]:
     """Import pre-built nodes and relationships directly into the graph database.
 
@@ -780,6 +780,9 @@ def import_neo4j_data(
         nodes_data: Pre-built NodeDataCollection with nodes grouped by type
         relationships: Pre-built list of RelationshipRecord instances
         context: Optional KgManager for collecting warnings
+        key_fields: Optional mapping of node_type -> primary key field name.
+                    Defaults to using the actual key field from existing DB tables,
+                    or 'id' for new tables.
 
     Returns:
         Tuple of (nodes_data, relationships) that were loaded into the graph
@@ -793,13 +796,13 @@ def import_neo4j_data(
     logger.info(f"Importing {nodes_data.total_count()} nodes and {len(relationships)} relationships")
 
     # Create dynamic schema for all node types in the data
-    _create_dynamic_schema_for_nodes(backend, nodes_data, relationships)
+    _create_dynamic_schema_for_nodes(backend, nodes_data, relationships, key_fields=key_fields)
 
-    # Build a minimal registry from the node data (no GraphNode configs needed)
+    # Build registry: use provided key_fields or default to 'id'
     registry = NodeTypeRegistry()
     for node_type in nodes_data.types():
-        # Default: use 'id' as primary key field
-        registry.add_type(node_type, key_field="id", name_field="name")
+        kf = (key_fields or {}).get(node_type, "id")
+        registry.add_type(node_type, key_field=kf)
 
     # Merge nodes using DataFrame-based batch operations
     logger.debug("Merging nodes into graph...")
@@ -827,6 +830,7 @@ def _create_dynamic_schema_for_nodes(
     backend: KgBackend,
     nodes_data: NodeDataCollection,
     relationships: list[RelationshipRecord],
+    key_fields: dict[str, str] | None = None,
 ) -> None:
     """Create Kuzu schema tables dynamically based on node data structure.
 
@@ -837,6 +841,8 @@ def _create_dynamic_schema_for_nodes(
         backend: Graph database backend
         nodes_data: Collection of nodes grouped by type
         relationships: List of relationships (used to determine rel table schema)
+        key_fields: Optional mapping of node_type -> primary key field name.
+                    Defaults to 'id' for each node type.
     """
 
     def _infer_kuzu_type(value: Any) -> str:
@@ -917,9 +923,12 @@ def _create_dynamic_schema_for_nodes(
         # Build field definitions
         fields: list[str] = []
 
-        # Ensure 'id' and 'name' are always present
-        if "id" not in field_types:
-            field_types["id"] = "STRING"
+        # Determine primary key for this node type
+        pk_field = (key_fields or {}).get(node_type, "id")
+
+        # Ensure PK field and 'name' are always present
+        if pk_field not in field_types:
+            field_types[pk_field] = "STRING"
         if "name" not in field_types:
             field_types["name"] = "STRING"
 
@@ -937,7 +946,7 @@ def _create_dynamic_schema_for_nodes(
                 fields.append(f"{field_name} {kuzu_type}")
 
         fields_str = ", ".join(fields)
-        create_sql = f"CREATE NODE TABLE IF NOT EXISTS {node_type}({fields_str}, PRIMARY KEY(id))"
+        create_sql = f"CREATE NODE TABLE IF NOT EXISTS {node_type}({fields_str}, PRIMARY KEY({pk_field}))"
 
         logger.debug(f"Creating dynamic node table: {node_type}")
         try:

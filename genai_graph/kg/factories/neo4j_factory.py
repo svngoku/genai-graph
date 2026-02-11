@@ -369,7 +369,7 @@ class Neo4jImportFactory(Neo4jFactory):
     - Full GraphSchema support with descriptions for LLM documentation
 
     Subclasses should:
-    1. Define Pydantic model classes for each node type (e.g., Customer, L3Service)
+    1. Define Pydantic model classes for each node type (e.g., Customer, L3)
     2. Override get_node_mappings() to return list of Neo4jNodeMapping with node_class
     3. Override get_relation_mappings() to return list of Neo4jRelationMapping with from_node/to_node
     """
@@ -472,13 +472,11 @@ class Neo4jImportFactory(Neo4jFactory):
         # Build GraphNode list from node mappings
         graph_nodes: list[GraphNode] = []
         for mapping in node_mappings:
-            # For Neo4j imports, always use 'id' as the database primary key
-            # The key_field value gets stored in the 'id' column by build_nodes_and_relationships
             graph_nodes.append(
                 GraphNode(
                     node_class=mapping.node_class,
                     name_from=mapping.name_field,
-                    key_from="id",  # Always use 'id' for Neo4j imports
+                    key_from=mapping.key_field,
                     description=mapping.description,
                     index_fields=mapping.index_fields,
                     explicitly_defined=True,  # Neo4j nodes don't need field path validation
@@ -575,30 +573,31 @@ class Neo4jImportFactory(Neo4jFactory):
                     # No mapping - copy all properties except internal ones
                     mapped_props = {k: v for k, v in node.items() if not k.startswith("_")}
 
-                # Ensure 'id' and 'name' fields exist
-                if "id" not in mapped_props:
-                    # Use key_field value or neo4j_id
-                    if key_field in mapped_props:
-                        mapped_props["id"] = str(mapped_props[key_field])
-                    else:
-                        mapped_props["id"] = neo4j_id
+                # Ensure key_field has a value
+                if key_field not in mapped_props:
+                    # Fallback: use neo4j_id as key value
+                    mapped_props[key_field] = neo4j_id
+                else:
+                    # Stringify for consistency
+                    mapped_props[key_field] = str(mapped_props[key_field])
 
                 if "name" not in mapped_props:
                     # Use name_field value or try common name fields
                     if name_field in mapped_props:
                         mapped_props["name"] = str(mapped_props[name_field])
                     else:
-                        for fallback_field in ["name", "title", "label", "id"]:
+                        for fallback_field in ["name", "title", "label", key_field]:
                             if fallback_field in mapped_props:
                                 mapped_props["name"] = str(mapped_props[fallback_field])
                                 break
                         else:
                             mapped_props["name"] = neo4j_id
 
-                # Validate that required fields are not empty (Fix 1: BAML extraction issue)
-                if not mapped_props.get("id") or mapped_props["id"] == "":
+                # Validate that primary key is not empty
+                key_value = mapped_props.get(key_field)
+                if not key_value or key_value == "":
                     logger.warning(
-                        f"Skipping {target_type} node with empty id/key: neo4j_id={neo4j_id}, properties={mapped_props}"
+                        f"Skipping {target_type} node with empty {key_field}: neo4j_id={neo4j_id}, properties={mapped_props}"
                     )
                     continue
 
@@ -607,7 +606,7 @@ class Neo4jImportFactory(Neo4jFactory):
                 mapped_props["_updated_at"] = now
 
                 # Track for relationship resolution
-                id_mapping[neo4j_id] = (target_type, mapped_props["id"])
+                id_mapping[neo4j_id] = (target_type, mapped_props[key_field])
 
                 nodes_data.add(target_type, mapped_props)
 

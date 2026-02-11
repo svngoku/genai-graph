@@ -116,11 +116,18 @@ def add_neo4j_data_to_graph(
             return stats
 
         # Use the direct import function
+        # Pass key_field mapping from the factory so import uses correct PKs
+        key_fields: dict[str, str] = {}
+        if hasattr(graph_impl, "get_node_mappings"):
+            for mapping in graph_impl.get_node_mappings():
+                key_fields[mapping.target_label] = mapping.key_field
+
         nodes_data, relationships = import_neo4j_data(
             backend=backend,
             nodes_data=nodes_data,
             relationships=relationships,
             context=context,
+            key_fields=key_fields if key_fields else None,
         )
 
         stats.nodes_created = nodes_data.total_count()

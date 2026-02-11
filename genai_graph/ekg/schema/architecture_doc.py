@@ -40,6 +40,7 @@ class ArchitectureDocumentGraph(JsonFileBackedFactory, BaseModel):
             SWArchitectureDocument,
             TechnicalComponent,
         )
+        from genai_graph.ekg.schema.common_nodes import L3
         from genai_graph.kg.schema import (
             GraphNode,
             GraphRelation,
@@ -94,6 +95,18 @@ class ArchitectureDocumentGraph(JsonFileBackedFactory, BaseModel):
                 description="Specific product, managed service, or OSS solution used in the architecture",
                 index_fields=["name", "vendor", "type"],
             ),
+            # L3 service nodes from Stratnav catalog
+            # Note: L3 nodes are primarily imported from Stratnav (with code as PK).
+            # In architecture docs, L3 is referenced by name. Using name as key here
+            # ensures deduplication within this factory; cross-factory merging with
+            # Stratnav L3 nodes happens at the graph merge level.
+            GraphNode(
+                node_class=L3,
+                name_from="name",
+                key_from="name",
+                description="Level 3 service offering from service catalog",
+                index_fields=["name", "description"],
+            ),
         ]
 
         # Define relationships with descriptions
@@ -130,6 +143,13 @@ class ArchitectureDocumentGraph(JsonFileBackedFactory, BaseModel):
             GraphRelation(
                 from_node=Customer, to_node=Person, name="HAS_CONTACT", description="Customer contact persons"
             ),
+            # Solution to L3 service catalog mapping
+            GraphRelation(
+                from_node=Solution,
+                to_node=L3,
+                name="MAPS_TO_SERVICE",
+                description="Solution maps to or is delivered by this L3 service offering",
+            ),
             # Component to component relationships (dependencies/integration)
         ]
 
@@ -149,6 +169,11 @@ class ArchitectureDocumentGraph(JsonFileBackedFactory, BaseModel):
             (
                 "MATCH (doc:SWArchitectureDocument)-[r:USED_SOLUTION]->(sol:Solution) "
                 "RETURN sol.name, sol.vendor, sol.type, r.p_purpose_ LIMIT 10"
+            ),
+            # Find L3 services mapped to solutions
+            (
+                "MATCH (sol:Solution)-[r:MAPS_TO_SERVICE]->(l3:L3) "
+                "RETURN sol.name as Solution, l3.name as L3Service, l3.code as ServiceCode LIMIT 10"
             ),
         ]
 

@@ -217,7 +217,7 @@ def _render_source_tab(entry: "MarkdownLineage", data_roots: list[UPath]) -> Non
 
     if entry.source_path.suffix.lower() == ".pdf":
         # Use the new Streamlit PDF widget when available
-        st.pdf(str(entry.source_path))
+        st.pdf(str(entry.source_path), height=800)
     else:
         st.warning(
             "Source document is not a PDF. It cannot be embedded directly, "

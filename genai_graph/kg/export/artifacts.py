@@ -689,6 +689,79 @@ def load_parquet_manifest(config_name: str) -> ParquetManifest | None:
         return None
 
 
+def _parse_struct_field_order(type_str: str) -> list[str]:
+    """Parse field names from a Kuzu STRUCT type string, preserving order.
+    
+    Example:
+        >>> _parse_struct_field_order("STRUCT(objectives STRING[], scope STRING, requirements STRING[])")
+        ['objectives', 'scope', 'requirements']
+    
+    Args:
+        type_str: Kuzu type string like "STRUCT(field1 TYPE1, field2 TYPE2, ...)"
+    
+    Returns:
+        Ordered list of field names
+    """
+    if not type_str.startswith("STRUCT(") or not type_str.endswith(")"):
+        return []
+    
+    # Extract the content between STRUCT( and )
+    inner = type_str[len("STRUCT("):-1]
+    
+    # Parse fields: split on commas but respect nested brackets (e.g., STRING[])
+    fields: list[str] = []
+    depth = 0
+    current = ""
+    for ch in inner:
+        if ch in "([":
+            depth += 1
+            current += ch
+        elif ch in ")]":
+            depth -= 1
+            current += ch
+        elif ch == "," and depth == 0:
+            field_def = current.strip()
+            if field_def:
+                # Field name is the first word before the type
+                field_name = field_def.split()[0]
+                fields.append(field_name)
+            current = ""
+        else:
+            current += ch
+    
+    # Don't forget the last field
+    field_def = current.strip()
+    if field_def:
+        field_name = field_def.split()[0]
+        fields.append(field_name)
+    
+    return fields
+
+
+def _reorder_struct_dict(d: dict[str, Any], expected_fields: list[str]) -> dict[str, Any]:
+    """Reorder dict keys to match expected struct field order.
+    
+    Keys in `expected_fields` come first (in that order), followed by any
+    extra keys not in the expected list (preserving their original order).
+    
+    Args:
+        d: Dictionary with potentially wrong key order
+        expected_fields: Expected field order from Kuzu schema
+    
+    Returns:
+        New dict with keys in correct order
+    """
+    result: dict[str, Any] = {}
+    for field in expected_fields:
+        if field in d:
+            result[field] = d[field]
+    # Add any remaining keys not in expected_fields
+    for key in d:
+        if key not in result:
+            result[key] = d[key]
+    return result
+
+
 def import_from_parquet(
     config_name: str,
     backend: KgBackend,
@@ -762,10 +835,20 @@ def import_from_parquet(
 
             # Check for missing columns in the table schema and add them if needed
             # This handles schema evolution when importing from different sources
+            struct_col_fields: dict[str, list[str]] = {}  # col_name -> expected field order
             try:
                 info_result = kuzu_conn.execute(f"CALL table_info('{node_type}') RETURN *")
                 info_df = info_result.get_as_df() if hasattr(info_result, "get_as_df") else pd.DataFrame()
                 existing_cols = set(info_df["name"].tolist()) if "name" in info_df.columns else set()
+
+                # Parse struct column field order from Kuzu schema types
+                if "type" in info_df.columns and "name" in info_df.columns:
+                    for _, row in info_df.iterrows():
+                        col_type = str(row["type"])
+                        if col_type.startswith("STRUCT("):
+                            expected_fields = _parse_struct_field_order(col_type)
+                            if expected_fields:
+                                struct_col_fields[row["name"]] = expected_fields
 
                 for col in df.columns:
                     if col not in existing_cols:
@@ -819,15 +902,26 @@ def import_from_parquet(
                             # Convert numpy types to Python native types
                             df[col] = df[col].apply(lambda x: convert_numpy_recursive(x) if x is not None else None)
 
+            # Reorder struct column dict keys to match Kuzu's expected field order.
+            # PyArrow may alphabetize struct fields when writing parquet, but Kuzu
+            # requires them in the exact schema order. See docs/cache_invalidation_strategy.md
+            for col, expected_fields in struct_col_fields.items():
+                if col in df.columns and df[col].dtype == "object" and len(df) > 0:
+                    df[col] = df[col].apply(
+                        lambda x: _reorder_struct_dict(x, expected_fields) if isinstance(x, dict) else x
+                    )
+                    logger.debug(f"Reordered struct fields for {node_type}.{col}: {expected_fields}")
+
             # Determine primary key from schema info or fallback to 'id' or first column
-            pk_field = pk_info.get(node_type) or ("id" if "id" in df.columns else df.columns[0])
+            target_pk = pk_info.get(node_type)
+            pk_field = target_pk or ("id" if "id" in df.columns else df.columns[0])
 
             # Verify the pk_field exists in the dataframe
             if pk_field not in df.columns:
                 logger.warning(
-                    f"Primary key '{pk_field}' not found in parquet columns for {node_type}: {list(df.columns)}"
+                    f"Primary key '{pk_field}' not found in parquet columns "
+                    f"for {node_type}: {list(df.columns)}"
                 )
-                # Try to find a suitable key
                 pk_field = "id" if "id" in df.columns else df.columns[0]
 
             # Filter out nodes with NULL or empty primary keys (Fix 1: BAML extraction issue)
@@ -870,7 +964,17 @@ def import_from_parquet(
                 collector.add_nodes(node_type, df)
 
         except Exception as exc:
-            logger.error(f"Failed to import {node_type} nodes: {exc}")
+            # Check for struct field order mismatch error
+            err_msg = str(exc)
+            if "STRUCT" in err_msg and "but expected STRUCT" in err_msg and "Implicit cast is not supported" in err_msg:
+                logger.error(
+                    f"Failed to import {node_type} nodes: Schema mismatch detected. "
+                    f"This usually happens when the BAML schema changed but cached parquet files have the old structure. "
+                    f"\n\n� Solution: Run 'cli kg create --clear-all-caches' to regenerate all caches."
+                )
+                logger.error(f"Technical details: {exc}")
+            else:
+                logger.error(f"Failed to import {node_type} nodes: {exc}")
 
     # Import relationships
     for rel_type in manifest.rel_tables:
@@ -959,3 +1063,36 @@ def export_warnings(config_name: str, warnings: list[str]) -> UPath:
     logger.info("Exported warnings report to '%s'", destination)
 
     return destination
+
+
+def clear_all_parquet_caches() -> int:
+    """Clear all parquet caches from kg_outputs directories.
+    
+    This removes all parquet/ subdirectories to force complete regeneration
+    of cached data. Useful when schema changes cause incompatibilities.
+    
+    Returns:
+        Number of cache directories cleared
+    """
+    import shutil
+    
+    from genai_tk.utils.config_mngr import global_config
+    
+    try:
+        kg_outputs = global_config().get_dir_path("paths.kg_outputs", create_if_not_exists=False)
+    except Exception:
+        return 0
+    
+    if not kg_outputs.exists():
+        return 0
+    
+    cleared = 0
+    for kg_dir in kg_outputs.iterdir():
+        if kg_dir.is_dir():
+            parquet_dir = kg_dir / "parquet"
+            if parquet_dir.exists():
+                shutil.rmtree(str(parquet_dir))
+                cleared += 1
+                logger.info(f"Cleared parquet cache: {parquet_dir}")
+    
+    return cleared

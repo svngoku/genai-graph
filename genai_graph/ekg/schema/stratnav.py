@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from genai_graph.ekg.schema.common_nodes import Customer, Geo, Partner
+from genai_graph.ekg.schema.common_nodes import Customer, Geo, L3, Partner
 from genai_graph.kg.factories import Neo4jImportFactory
 from genai_graph.kg.factories.neo4j_factory import Neo4jNodeMapping, Neo4jRelationMapping
 
@@ -69,31 +69,6 @@ class L2(BaseModel):
     status: str | None = Field(default=None, description="Status (Active/Deprecated)")
     sales_portal_url: str | None = Field(default=None, description="Sales portal link")
     bl: str | None = Field(default=None, description="Parent business line")
-    major_version: int | None = Field(default=None, description="Major version number")
-    minor_version: int | None = Field(default=None, description="Minor version number")
-
-
-class L3(BaseModel):
-    """Level 3 service offering - primary service unit."""
-
-    name: str = Field(description="Service name")
-    code: str | None = Field(default=None, description="Service code")
-    description: str | None = Field(default=None, description="Service details")
-    service_type: str | None = Field(default=None, description="Type (Managed/Consulting)")
-    status: str | None = Field(default=None, description="Status (Active/Deprecated)")
-    maturity_level: str | None = Field(default=None, description="Service maturity (1-5)")
-    plm_stage: str | None = Field(default=None, description="Product lifecycle stage")
-    service_id: int | None = Field(default=None, description="Numeric service ID")
-    available_for_new_deals: bool | None = Field(default=None, description="New deal availability")
-    allow_in_journeys: bool | None = Field(default=None, description="Journey eligibility")
-    show_in_catalog: bool | None = Field(default=None, description="Catalog visibility")
-    pre_sales_url: str | None = Field(default=None, description="Pre-sales portal link")
-    sales_portal_url: str | None = Field(default=None, description="Sales portal link")
-    key_buzz_words: str | None = Field(default=None, description="Related keywords")
-    grd_definition: str | None = Field(default=None, description="GRD definition")
-    deprecated_at: str | None = Field(default=None, description="Deprecation timestamp")
-    deprecation_reason: str | None = Field(default=None, description="Why service deprecated")
-    grace_period_ends: str | None = Field(default=None, description="Grace period end date")
     major_version: int | None = Field(default=None, description="Major version number")
     minor_version: int | None = Field(default=None, description="Minor version number")
 

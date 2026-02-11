@@ -60,6 +60,13 @@ class EkgCommands(CliTopCommand):
                     help="Export HTML visualization after creation",
                 ),
             ] = True,
+            clear_all_caches: Annotated[
+                bool,
+                typer.Option(
+                    "--clear-all-caches",
+                    help="Clear all parquet caches before creation (fixes schema mismatch issues)",
+                ),
+            ] = False,
         ) -> None:
             """Create the KG database and ingest documents using a Prefect flow.
 
@@ -71,6 +78,7 @@ class EkgCommands(CliTopCommand):
                 cli kg create --kg simple            # Create specific KG
                 cli kg create --kg simple --kg test1_with_db  # Create multiple KGs
                 cli kg create --all-graphs           # Create all defined KGs
+                cli kg create --clear-all-caches     # Clear all caches first
             """
 
             # Get the configured KG config name.
@@ -79,6 +87,12 @@ class EkgCommands(CliTopCommand):
 
             from genai_graph.kg.manager import get_kg_manager
             from genai_graph.orchestration.flows import create_kg_flow
+
+            # Clear all caches if requested
+            if clear_all_caches:
+                from genai_graph.kg.export.artifacts import clear_all_parquet_caches
+                cleared_count = clear_all_parquet_caches()
+                console.print(f"[bold green]✓[/bold green] Cleared {cleared_count} parquet cache(s)")
 
             # Determine which KG configs to process
             kg_configs_to_process: list[str] = []
