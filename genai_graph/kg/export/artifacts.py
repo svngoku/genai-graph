@@ -43,7 +43,13 @@ class ParquetExportResult(BaseModel):
 
 
 class ParquetManifest(BaseModel):
-    """Manifest file for parquet export."""
+    """Manifest file for parquet export.
+
+    Fingerprint fields enable smart cache invalidation:
+    - ``schema_fingerprint`` — captures the graph schema structure
+    - ``factory_config_hash`` — captures factory configuration
+    - ``source_content_hash`` — captures actual source file contents
+    """
 
     config_name: str
     exported_at: str
@@ -54,7 +60,53 @@ class ParquetManifest(BaseModel):
     source_files: list[str] = []
     source_files_hash: str | None = None
 
+    # Smart cache fingerprints (Phase 2)
+    schema_fingerprint: str | None = None
+    factory_config_hash: str | None = None
+    source_content_hash: str | None = None
+
     model_config = {"arbitrary_types_allowed": True}
+
+
+class CacheFingerprints(BaseModel):
+    """Current fingerprints computed from live factories/schemas.
+
+    Used to compare against a saved ``ParquetManifest`` to decide
+    whether the cached parquet is still valid.
+    """
+
+    schema_fingerprint: str | None = None
+    factory_config_hash: str | None = None
+    source_content_hash: str | None = None
+
+    def matches(self, manifest: ParquetManifest) -> bool:
+        """Return True if all non-None fingerprints match the manifest.
+
+        A ``None`` value on either side is treated as "unknown" and
+        does not cause a mismatch — this keeps backward compatibility
+        with manifests generated before fingerprints were added.
+        """
+        for field in ("schema_fingerprint", "factory_config_hash", "source_content_hash"):
+            current = getattr(self, field)
+            cached = getattr(manifest, field)
+            if current is not None and cached is not None and current != cached:
+                return False
+        return True
+
+    def mismatch_reasons(self, manifest: ParquetManifest) -> list[str]:
+        """Return human-readable descriptions of fingerprint mismatches."""
+        reasons: list[str] = []
+        labels = {
+            "schema_fingerprint": "schema structure",
+            "factory_config_hash": "factory configuration",
+            "source_content_hash": "source file contents",
+        }
+        for field, label in labels.items():
+            current = getattr(self, field)
+            cached = getattr(manifest, field)
+            if current is not None and cached is not None and current != cached:
+                reasons.append(f"{label} changed ({cached[:8]}… → {current[:8]}…)")
+        return reasons
 
 
 def export_html(
@@ -455,6 +507,7 @@ def export_parquet(
     config_name: str,
     backend: KgBackend,
     source_files: list[str] | None = None,
+    fingerprints: CacheFingerprints | None = None,
 ) -> ParquetExportResult:
     """Export all nodes and relationships from a KG to parquet files.
 
@@ -467,6 +520,7 @@ def export_parquet(
         config_name: Name of the KG configuration
         backend: The graph backend to export from
         source_files: Optional list of source files (for hash-based caching)
+        fingerprints: Optional cache fingerprints to store in the manifest
 
     Returns:
         ParquetExportResult with export details
@@ -547,6 +601,9 @@ def export_parquet(
         rel_count=total_rels,
         source_files=source_files or [],
         source_files_hash=source_hash,
+        schema_fingerprint=fingerprints.schema_fingerprint if fingerprints else None,
+        factory_config_hash=fingerprints.factory_config_hash if fingerprints else None,
+        source_content_hash=fingerprints.source_content_hash if fingerprints else None,
     )
 
     manifest_path = export_dir / "manifest.json"
@@ -568,6 +625,7 @@ def save_parquet_from_collector(
     config_name: str,
     collector: Any,
     source_files: list[str] | None = None,
+    fingerprints: CacheFingerprints | None = None,
 ) -> ParquetExportResult:
     """Save collected DataFrames from merge operations to parquet files.
 
@@ -579,6 +637,7 @@ def save_parquet_from_collector(
         config_name: Name of the KG configuration
         collector: ParquetCollector with accumulated node/relationship DataFrames
         source_files: Optional list of source files (for hash-based caching)
+        fingerprints: Optional cache fingerprints to store in the manifest
 
     Returns:
         ParquetExportResult with export details
@@ -639,7 +698,7 @@ def save_parquet_from_collector(
         combined = "|".join(sorted(source_files))
         source_hash = buffer_digest(combined.encode(), algorithm="sha256")[:16]
 
-    # Write manifest
+    # Write manifest (with optional fingerprints for cache validation)
     manifest = ParquetManifest(
         config_name=config_name,
         exported_at=datetime.now().isoformat(),
@@ -649,6 +708,9 @@ def save_parquet_from_collector(
         rel_count=total_rels,
         source_files=source_files or [],
         source_files_hash=source_hash,
+        schema_fingerprint=fingerprints.schema_fingerprint if fingerprints else None,
+        factory_config_hash=fingerprints.factory_config_hash if fingerprints else None,
+        source_content_hash=fingerprints.source_content_hash if fingerprints else None,
     )
 
     manifest_path = export_dir / "manifest.json"
@@ -689,25 +751,130 @@ def load_parquet_manifest(config_name: str) -> ParquetManifest | None:
         return None
 
 
+def compute_fingerprints_for_config(config_name: str) -> CacheFingerprints:
+    """Compute current cache fingerprints for a KG configuration.
+
+    Loads the factories and schemas for *config_name*, hashes them,
+    and also hashes the discovered source file contents.
+
+    Returns:
+        ``CacheFingerprints`` with all computable fields populated.
+    """
+    from genai_tk.utils.config_mngr import import_from_qualified
+    from genai_tk.utils.hashing import buffer_digest, file_digest
+
+    manager = get_kg_manager()
+
+    if config_name not in manager.ekg_config.kg_configs:
+        return CacheFingerprints()
+
+    kg_cfg = manager.ekg_config.kg_configs[config_name].model_dump()
+    graphs_cfg = kg_cfg.get("graphs", [])
+
+    schema_parts: list[str] = []
+    config_parts: list[str] = []
+    content_parts: list[str] = []
+
+    for graph_cfg in graphs_cfg:
+        if not isinstance(graph_cfg, dict):
+            continue
+        factory_path = graph_cfg.get("factory")
+        if not factory_path:
+            continue
+
+        try:
+            from genai_graph.kg.factories import KgFactory
+
+            imported = import_from_qualified(factory_path)
+            if isinstance(imported, type) and issubclass(imported, KgFactory):
+                constructor_kwargs = {
+                    k: v for k, v in graph_cfg.items() if k not in {"factory", "initial_load", "trigger"}
+                }
+                factory = imported(**constructor_kwargs)
+            elif isinstance(imported, KgFactory):
+                factory = imported
+            else:
+                continue
+
+            # Schema fingerprint
+            schema = factory.build_schema()
+            schema_parts.append(schema.fingerprint())
+
+            # Config fingerprint
+            config_parts.append(factory.config_fingerprint())
+
+            # Source content hash (file-based factories)
+            from genai_graph.kg.factories import JsonFileBackedFactory, Neo4jFactory
+
+            if isinstance(factory, JsonFileBackedFactory):
+                for fp in factory.get_all_file_paths():
+                    try:
+                        content_parts.append(file_digest(fp))
+                    except Exception:
+                        pass
+            elif isinstance(factory, Neo4jFactory):
+                for key in factory.get_all_keys():
+                    content_parts.append(buffer_digest(key.encode()))
+
+        except Exception as exc:
+            logger.debug("Could not compute fingerprint for %s: %s", factory_path, exc)
+
+    # Combine per-factory hashes into single values
+    result = CacheFingerprints()
+    if schema_parts:
+        result.schema_fingerprint = buffer_digest("|".join(schema_parts).encode())
+    if config_parts:
+        result.factory_config_hash = buffer_digest("|".join(config_parts).encode())
+    if content_parts:
+        result.source_content_hash = buffer_digest("|".join(sorted(content_parts)).encode())
+
+    return result
+
+
+def validate_parquet_cache(config_name: str) -> tuple[bool, list[str]]:
+    """Check whether the parquet cache for *config_name* is still valid.
+
+    Loads the manifest, recomputes fingerprints, and compares.
+
+    Returns:
+        ``(is_valid, reasons)`` — ``is_valid`` is True when the cache
+        can be reused.  ``reasons`` lists human-readable mismatch
+        descriptions (empty when valid or when no manifest exists).
+    """
+    manifest = load_parquet_manifest(config_name)
+    if manifest is None:
+        return False, ["no parquet cache exists"]
+
+    # If manifest has no fingerprints (legacy), treat as valid
+    if manifest.schema_fingerprint is None and manifest.factory_config_hash is None:
+        return True, []
+
+    current = compute_fingerprints_for_config(config_name)
+    if current.matches(manifest):
+        return True, []
+
+    return False, current.mismatch_reasons(manifest)
+
+
 def _parse_struct_field_order(type_str: str) -> list[str]:
     """Parse field names from a Kuzu STRUCT type string, preserving order.
-    
+
     Example:
         >>> _parse_struct_field_order("STRUCT(objectives STRING[], scope STRING, requirements STRING[])")
         ['objectives', 'scope', 'requirements']
-    
+
     Args:
         type_str: Kuzu type string like "STRUCT(field1 TYPE1, field2 TYPE2, ...)"
-    
+
     Returns:
         Ordered list of field names
     """
     if not type_str.startswith("STRUCT(") or not type_str.endswith(")"):
         return []
-    
+
     # Extract the content between STRUCT( and )
-    inner = type_str[len("STRUCT("):-1]
-    
+    inner = type_str[len("STRUCT(") : -1]
+
     # Parse fields: split on commas but respect nested brackets (e.g., STRING[])
     fields: list[str] = []
     depth = 0
@@ -728,26 +895,26 @@ def _parse_struct_field_order(type_str: str) -> list[str]:
             current = ""
         else:
             current += ch
-    
+
     # Don't forget the last field
     field_def = current.strip()
     if field_def:
         field_name = field_def.split()[0]
         fields.append(field_name)
-    
+
     return fields
 
 
 def _reorder_struct_dict(d: dict[str, Any], expected_fields: list[str]) -> dict[str, Any]:
     """Reorder dict keys to match expected struct field order.
-    
+
     Keys in `expected_fields` come first (in that order), followed by any
     extra keys not in the expected list (preserving their original order).
-    
+
     Args:
         d: Dictionary with potentially wrong key order
         expected_fields: Expected field order from Kuzu schema
-    
+
     Returns:
         New dict with keys in correct order
     """
@@ -919,8 +1086,7 @@ def import_from_parquet(
             # Verify the pk_field exists in the dataframe
             if pk_field not in df.columns:
                 logger.warning(
-                    f"Primary key '{pk_field}' not found in parquet columns "
-                    f"for {node_type}: {list(df.columns)}"
+                    f"Primary key '{pk_field}' not found in parquet columns for {node_type}: {list(df.columns)}"
                 )
                 pk_field = "id" if "id" in df.columns else df.columns[0]
 
@@ -1067,25 +1233,25 @@ def export_warnings(config_name: str, warnings: list[str]) -> UPath:
 
 def clear_all_parquet_caches() -> int:
     """Clear all parquet caches from kg_outputs directories.
-    
+
     This removes all parquet/ subdirectories to force complete regeneration
     of cached data. Useful when schema changes cause incompatibilities.
-    
+
     Returns:
         Number of cache directories cleared
     """
     import shutil
-    
+
     from genai_tk.utils.config_mngr import global_config
-    
+
     try:
         kg_outputs = global_config().get_dir_path("paths.kg_outputs", create_if_not_exists=False)
     except Exception:
         return 0
-    
+
     if not kg_outputs.exists():
         return 0
-    
+
     cleared = 0
     for kg_dir in kg_outputs.iterdir():
         if kg_dir.is_dir():
@@ -1094,5 +1260,5 @@ def clear_all_parquet_caches() -> int:
                 shutil.rmtree(str(parquet_dir))
                 cleared += 1
                 logger.info(f"Cleared parquet cache: {parquet_dir}")
-    
+
     return cleared

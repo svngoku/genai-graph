@@ -122,6 +122,9 @@ class ParquetCollector(BaseModel):
 
     This allows capturing the exact data being merged into the graph,
     avoiding the need to query it back out (which can hit Kuzu bugs).
+
+    Thread-safe: all mutations are protected by a lock so that
+    concurrent bundle preparation tasks can safely append data.
     """
 
     nodes: dict[str, pd.DataFrame] = Field(default_factory=dict)
@@ -129,19 +132,30 @@ class ParquetCollector(BaseModel):
 
     model_config = {"arbitrary_types_allowed": True}
 
+    _lock: Any = None  # threading.Lock, lazily initialised
+
+    def model_post_init(self, _context: Any) -> None:
+        import threading
+
+        object.__setattr__(self, "_lock", threading.Lock())
+
     def add_nodes(self, node_type: str, df: pd.DataFrame) -> None:
-        """Add or append node data for a node type."""
-        if node_type in self.nodes:
-            self.nodes[node_type] = pd.concat([self.nodes[node_type], df], ignore_index=True)
-        else:
-            self.nodes[node_type] = df.copy()
+        """Add or append node data for a node type (thread-safe)."""
+        lock = object.__getattribute__(self, "_lock")
+        with lock:
+            if node_type in self.nodes:
+                self.nodes[node_type] = pd.concat([self.nodes[node_type], df], ignore_index=True)
+            else:
+                self.nodes[node_type] = df.copy()
 
     def add_relationships(self, rel_type: str, df: pd.DataFrame) -> None:
-        """Add or append relationship data for a relationship type."""
-        if rel_type in self.relationships:
-            self.relationships[rel_type] = pd.concat([self.relationships[rel_type], df], ignore_index=True)
-        else:
-            self.relationships[rel_type] = df.copy()
+        """Add or append relationship data for a relationship type (thread-safe)."""
+        lock = object.__getattribute__(self, "_lock")
+        with lock:
+            if rel_type in self.relationships:
+                self.relationships[rel_type] = pd.concat([self.relationships[rel_type], df], ignore_index=True)
+            else:
+                self.relationships[rel_type] = df.copy()
 
     def get_node_count(self) -> int:
         """Get total node count across all types."""

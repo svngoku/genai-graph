@@ -1,4 +1,15 @@
-"""Prefect flows for orchestrating knowledge graph creation."""
+"""Prefect flows for orchestrating knowledge graph creation.
+
+The main ``create_kg_flow`` is structured as a DAG:
+
+1. **Config resolution** — resolve KG profile, detect imports.
+2. **Backend init** — create or delete the Kuzu database.
+3. **Import phase** — for each import dependency (topologically sorted),
+   ensure its parquet exists, create its schema, and load data.
+4. **Schema phase** — load factories and create schemas for all bundles.
+5. **Ingestion phase** — ingest documents per-bundle (each a separate Prefect task).
+6. **Export phase** — schema, info, HTML, parquet, warnings (independent tasks).
+"""
 
 from __future__ import annotations
 
@@ -7,174 +18,53 @@ from prefect.artifacts import create_markdown_artifact
 from prefect.task_runners import ThreadPoolTaskRunner
 
 from genai_graph.kg.backend import get_backend_storage_path_from_config
-from genai_graph.kg.export import (
-    export_html as export_html_file,
-)
-from genai_graph.kg.export import (
-    export_info,
-    export_schema,
-    export_schema_html,
-    export_schema_json,
-)
-from genai_graph.kg.export.artifacts import (
-    import_from_parquet,
-    load_parquet_manifest,
-    save_parquet_from_collector,
-)
-from genai_graph.kg.ingest import ParquetCollector, set_parquet_collector
-from genai_graph.orchestration.models import KgRunResult
+from genai_graph.kg.ingest import DocumentStats, ParquetCollector, set_parquet_collector
+from genai_graph.orchestration.dag import resolve_import_dag
+from genai_graph.orchestration.models import BundleResult, ImportResult, KgRunResult, WarningsCollector
 from genai_graph.orchestration.tasks import (
-    create_schema,
+    create_schema_task,
     delete_backend_task,
-    ingest_subgraphs_task,
+    export_html_task,
+    export_info_task,
+    export_parquet_task,
+    export_schema_task,
+    export_warnings_task,
+    import_kg_task,
+    ingest_bundle_task,
     initialize_backend_task,
     load_factories_task,
     resolve_config_task,
-    summarize_warnings,
+    summarize_warnings_task,
 )
 
 # Kuzu is an embedded database; we must avoid multi-process execution.
-# A single-worker thread pool keeps all access in one process while still
-# going through Prefect's task infrastructure.
-# TODO : Revisit !!
+# A thread pool with workers > 1 allows parallel export tasks while
+# ingestion tasks remain serial (submitted one at a time in the flow).
+_DEFAULT_MAX_WORKERS = 4
 
 
-def _ensure_kg_exists(import_name: str, logger: any) -> None:
-    """Ensure a KG exists by creating it if needed.
-
-    Args:
-        import_name: Name of the KG config to ensure exists
-        logger: Logger instance
-    """
-    from genai_tk.extra.prefect.runtime import ephemeral_prefect_settings
-
-    manifest = load_parquet_manifest(import_name)
-    if manifest is not None:
-        logger.info(f"Found existing parquet export for '{import_name}' (exported at {manifest.exported_at})")
-        return
-
-    logger.info(f"No parquet export found for '{import_name}', creating KG first...")
-
-    # Recursively create the KG - use ephemeral settings to avoid nested flow issues
-    with ephemeral_prefect_settings():
-        create_kg_flow(
-            config_name=import_name,
-            delete_first=True,
-            export_html=False,
-        )
-
-
-def _process_imports(
-    imports: list[str],
-    backend: any,
-    logger: any,
-) -> tuple[int, int]:
-    """Process KG imports by loading from parquet.
-
-    For each import, this function:
-    1. Ensures the KG exists (creates it if needed)
-    2. Loads and creates the schema from the imported KG
-    3. Imports nodes from parquet files
-
-    Args:
-        imports: List of KG config names to import
-        backend: Graph backend instance
-        logger: Logger instance
-
-    Returns:
-        Tuple of (total_nodes_imported, total_rels_imported)
-    """
-    total_nodes = 0
-    total_rels = 0
-
-    for import_name in imports:
-        logger.info(f"Processing import: {import_name}")
-
-        # Ensure the KG exists (create if needed)
-        _ensure_kg_exists(import_name, logger)
-
-        # Load and create schema from the imported KG configuration
-        logger.info(f"Creating schema from imported KG '{import_name}'")
-        _create_schema_for_import(import_name, backend, logger)
-
-        # Load from parquet
-        try:
-            nodes, rels = import_from_parquet(import_name, backend)
-            total_nodes += nodes
-            total_rels += rels
-            logger.info(f"Imported {nodes} nodes, {rels} rels from '{import_name}'")
-        except FileNotFoundError as exc:
-            logger.error(f"Failed to import '{import_name}': {exc}")
-            raise
-
-    return total_nodes, total_rels
-
-
-def _create_schema_for_import(import_name: str, backend: any, logger: any, visited: set | None = None) -> None:
-    """Create schema from an imported KG's configuration.
-
-    This loads the factories from the imported KG and creates their schemas
-    in the current backend so that nodes can be imported. It recursively
-    processes nested imports.
-
-    Args:
-        import_name: Name of the KG config to import schema from
-        backend: Graph backend instance
-        logger: Logger instance
-        visited: Set of already visited imports (to prevent cycles)
-    """
-    from genai_graph.kg.manager import get_kg_manager
-
-    # Track visited imports to prevent infinite cycles
-    if visited is None:
-        visited = set()
-    if import_name in visited:
-        return
-    visited.add(import_name)
-
-    manager = get_kg_manager()
-
-    # Get the config for the imported KG
-    if import_name not in manager.ekg_config.kg_configs:
-        raise ValueError(f"Imported KG config '{import_name}' not found")
-
-    import_cfg = manager.ekg_config.kg_configs[import_name].model_dump()
-
-    # Recursively process nested imports first
-    nested_imports = import_cfg.get("imports", []) or import_cfg.get("import", [])
-    if nested_imports:
-        logger.info(f"Processing {len(nested_imports)} nested import(s) for '{import_name}': {nested_imports}")
-    for nested_import in nested_imports:
-        _create_schema_for_import(nested_import, backend, logger, visited)
-
-    # Load factories and create schemas
-    bundles = load_factories_task.submit(import_cfg).result()
-    bundles = create_schema(bundles, backend)
-
-    logger.info(f"Created schema from '{import_name}' with {len(bundles)} subgraph(s)")
-
-
-@flow(name="create_kg_flow", task_runner=ThreadPoolTaskRunner(max_workers=1))  # type: ignore[call-overload]
+@flow(name="create_kg_flow", task_runner=ThreadPoolTaskRunner(max_workers=_DEFAULT_MAX_WORKERS))  # type: ignore[call-overload]
 def create_kg_flow(
     config_name: str | None = None,
     delete_first: bool = False,
     export_html: bool = True,
+    force_rebuild: bool = False,
 ) -> KgRunResult:
     """Create the knowledge graph and ingest documents using Prefect.
 
-    The high-level steps are:
-    1. Optional backend deletion (fresh start).
-    2. Resolve KG configuration name and load configuration.
-    3. Initialize graph backend (Kuzu or other).
-    4. Process imports (load from parquet, creating KG if needed).
-    5. Pass 1: load subgraph factories and create schemas.
-    6. Pass 2: ingest documents into the graph.
-    7. Collect warnings and create Prefect artifacts.
-    8. Export parquet for future imports.
-    9. Optionally export an HTML visualization of the KG.
-    """
+    The flow is organized as a proper DAG:
 
-    logger = get_run_logger()
+    1. Optional backend deletion (fresh start).
+    2. Resolve KG configuration and build import dependency graph.
+    3. Initialize graph backend (Kuzu).
+    4. Import phase — process each import dependency as a distinct task.
+       Smart cache validation checks fingerprints before rebuilding.
+    5. Schema phase — load factories and create schemas (Pass 1).
+    6. Ingestion phase — ingest per-bundle, each as a separate task (Pass 2).
+    7. Warning aggregation (including cross-import warnings).
+    8. Export phase — schema, info, HTML, parquet, warnings (parallel-ready).
+    """
+    pf_logger = get_run_logger()
 
     # Clear subgraph factory caches to ensure fresh file/data discovery
     from genai_graph.kg.factories import (
@@ -186,21 +76,38 @@ def create_kg_flow(
     JsonFileBackedFactory.clear_cache()
     TableBackedFactory.clear_cache()
     Neo4jFactory.clear_cache()
-    logger.info("Cleared subgraph factory caches for fresh discovery")
+    pf_logger.info("Cleared subgraph factory caches for fresh discovery")
 
+    # ------------------------------------------------------------------
+    # 1. Optional delete
+    # ------------------------------------------------------------------
     if delete_first:
-        logger.info("Deleting existing backend before KG creation")
+        pf_logger.info("Deleting existing backend before KG creation")
         delete_backend_task.submit("default", config_name).result()
 
+    # ------------------------------------------------------------------
+    # 2. Resolve config and build import DAG
+    # ------------------------------------------------------------------
     cfg_name, kg_cfg = resolve_config_task.submit(config_name).result()
 
-    # Initialize KG manager and log start
     from genai_graph.kg.manager import get_kg_manager
 
     manager = get_kg_manager()
     manager.activate()
     manager.log_outcome("create_kg", "started", "Starting KG creation flow")
 
+    # Build the import dependency graph upfront (flat, topologically sorted)
+    import_dag = resolve_import_dag(cfg_name, manager.ekg_config.kg_configs)
+    if import_dag.execution_order:
+        pf_logger.info(
+            "Import DAG for '%s': %s",
+            cfg_name,
+            [n.config_name for n in import_dag.execution_order],
+        )
+
+    # ------------------------------------------------------------------
+    # 3. Initialize backend
+    # ------------------------------------------------------------------
     backend = initialize_backend_task.submit("default", cfg_name).result()
     db_path = get_backend_storage_path_from_config("default", cfg_name)
 
@@ -208,81 +115,200 @@ def create_kg_flow(
     collector = ParquetCollector()
     set_parquet_collector(collector)
 
+    # Accumulate warnings from all phases
+    all_warnings = WarningsCollector(source=cfg_name)
+    import_results: list[ImportResult] = []
+    bundle_results: list[BundleResult] = []
+
     try:
-        # Process imports before loading own subgraphs
-        imports = kg_cfg.get("imports", []) or kg_cfg.get("import", []) or []
-        imported_nodes = 0
-        imported_rels = 0
+        # ------------------------------------------------------------------
+        # 4. Import phase — each import is a separate Prefect task
+        # ------------------------------------------------------------------
+        if import_dag.execution_order:
+            for import_node in import_dag.execution_order:
+                imp_result = import_kg_task.submit(import_node.config_name, backend, force_rebuild).result()
+                import_results.append(imp_result)
+                all_warnings.merge(imp_result.warnings)
 
-        if imports:
-            logger.info(f"Processing {len(imports)} import(s): {imports}")
-            imported_nodes, imported_rels = _process_imports(imports, backend, logger)
-            logger.info(f"Imports complete: {imported_nodes} nodes, {imported_rels} rels total")
+            pf_logger.info(
+                "Imports complete: %d nodes, %d rels from %d import(s)",
+                sum(r.nodes_imported for r in import_results),
+                sum(r.rels_imported for r in import_results),
+                len(import_results),
+            )
 
-            # Clear caches again after imports - the import schema creation may have
-            # triggered factory initialization that pollutes the cache for main subgraphs
+            # Clear caches after imports — import schema creation may have
+            # triggered factory init that pollutes the cache for main subgraphs
             JsonFileBackedFactory.clear_cache()
             TableBackedFactory.clear_cache()
             Neo4jFactory.clear_cache()
-            logger.info("Re-cleared subgraph factory caches after import processing")
+            pf_logger.info("Re-cleared subgraph factory caches after import processing")
 
+        # ------------------------------------------------------------------
+        # 5. Schema phase — load factories + create schemas
+        # ------------------------------------------------------------------
         bundles = load_factories_task.submit(kg_cfg).result()
-        bundles = create_schema(bundles, backend)
+        bundles = create_schema_task.submit(bundles, backend).result()
 
-        stats = ingest_subgraphs_task.submit(bundles, backend).result()
+        # ------------------------------------------------------------------
+        # 6. Ingestion phase — per-bundle tasks
+        # ------------------------------------------------------------------
+        for bundle in bundles:
+            result = ingest_bundle_task.submit(bundle, backend).result()
+            bundle_results.append(result)
+            all_warnings.merge(result.warnings)
+
     finally:
         # Clear collector reference after ingestion
         set_parquet_collector(None)
 
-    warnings = summarize_warnings(cfg_name)
+    # Aggregate stats from all bundles
+    total_stats = DocumentStats()
+    for br in bundle_results:
+        total_stats.total_processed += br.stats.total_processed
+        total_stats.total_failed += br.stats.total_failed
+        total_stats.nodes_created += br.stats.nodes_created
+        total_stats.relationships_created += br.stats.relationships_created
 
-    # Export warnings to structured Markdown report
-    from genai_graph.kg.export import export_warnings
+    # ------------------------------------------------------------------
+    # 7. Warning aggregation
+    # ------------------------------------------------------------------
+    # Merge task-level warnings into the KgManager (for backward compat)
+    for w in all_warnings.warnings:
+        manager.add_warning(w)
 
-    try:
-        warnings_path = export_warnings(cfg_name, warnings)
-        manager.log_outcome(
-            "export_warnings",
-            "success",
-            f"Warnings report exported to {warnings_path}",
-        )
-    except Exception as exc:  # pragma: no cover
-        logger.warning(f"Failed to export warnings report: {exc}")
-        manager.log_outcome(
-            "export_warnings",
-            "warning",
-            f"Failed to export warnings report: {exc}",
-        )
+    warnings = summarize_warnings_task.submit(cfg_name).result()
+
+    # ------------------------------------------------------------------
+    # 8. Export phase — independent tasks (parallel-ready)
+    # ------------------------------------------------------------------
+    _run_export_phase(cfg_name, backend, collector, warnings, export_html, manager)
 
     # Log completion outcome
     outcome_status = "warning" if warnings else "success"
     manager.log_outcome(
         "create_kg",
         outcome_status,
-        f"KG creation completed with {stats.total_processed} docs processed",
+        f"KG creation completed with {total_stats.total_processed} docs processed",
         details={
-            "processed": stats.total_processed,
-            "failed": stats.total_failed,
-            "nodes_created": stats.nodes_created,
-            "relationships_created": stats.relationships_created,
+            "processed": total_stats.total_processed,
+            "failed": total_stats.total_failed,
+            "nodes_created": total_stats.nodes_created,
+            "relationships_created": total_stats.relationships_created,
             "warning_count": len(warnings),
+            "imports": len(import_results),
         },
     )
 
     # Create a markdown artifact summarizing the run
+    _create_summary_artifact(cfg_name, db_path, total_stats, warnings, import_results, bundle_results)
+
+    return KgRunResult(
+        config_name=cfg_name,
+        db_path=db_path,
+        stats=total_stats,
+        warnings=warnings,
+        import_results=import_results,
+        bundle_results=bundle_results,
+        html_export=None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _run_export_phase(
+    cfg_name: str,
+    backend: object,
+    collector: ParquetCollector,
+    warnings: list[str],
+    do_export_html: bool,
+    manager: object,
+) -> None:
+    """Run all export tasks concurrently.
+
+    Export tasks are read-only (they don't mutate the Kuzu DB or shared
+    state), so they can safely run in parallel when ``max_workers > 1``.
+    We submit them all, then collect results to ensure any exceptions
+    are captured.
+    """
+    futures = []
+
+    # Warnings report
+    futures.append(export_warnings_task.submit(cfg_name, warnings))
+
+    # Schema artifacts (txt + JSON + HTML)
+    futures.append(export_schema_task.submit(cfg_name))
+
+    # Info markdown
+    futures.append(export_info_task.submit(cfg_name, backend))
+
+    # Parquet from collected DataFrames
+    futures.append(export_parquet_task.submit(cfg_name, collector))
+
+    # HTML visualization
+    if do_export_html:
+        futures.append(export_html_task.submit(cfg_name, backend))
+
+    # Wait for all exports to finish
+    for future in futures:
+        future.result()
+
+    manager.log_outcome("export_schema", "success", "Schema exported")
+    manager.log_outcome("export_info", "success", "Info exported")
+    if do_export_html:
+        manager.log_outcome("export_html", "success", "HTML exported")
+
+
+def _create_summary_artifact(
+    cfg_name: str,
+    db_path: object,
+    stats: DocumentStats,
+    warnings: list[str],
+    import_results: list[ImportResult],
+    bundle_results: list[BundleResult],
+) -> None:
+    """Best-effort creation of a Prefect markdown artifact."""
+
     summary_lines: list[str] = [
         "# KG Creation Summary",
         "",
         f"**Config name:** `{cfg_name}`",
         f"**DB path:** `{db_path}`",
         "",
-        "## Document statistics",
-        f"- Processed: {stats.total_processed}",
-        f"- Failed: {stats.total_failed}",
-        f"- Nodes created: {stats.nodes_created}",
-        f"- Relationships created: {stats.relationships_created}",
-        "",
     ]
+
+    # Import summary
+    if import_results:
+        summary_lines.append("## Imports")
+        for ir in import_results:
+            status = "⏭️ cached (fingerprints valid)" if ir.skipped else "🔨 rebuilt"
+            summary_lines.append(f"- **{ir.config_name}**: {ir.nodes_imported} nodes, {ir.rels_imported} rels {status}")
+        summary_lines.append("")
+
+    # Bundle summary
+    if bundle_results:
+        summary_lines.append("## Bundles")
+        for br in bundle_results:
+            summary_lines.append(
+                f"- **{br.factory_path}**: {br.stats.nodes_created} nodes, "
+                f"{br.stats.relationships_created} rels, {br.stats.total_failed} failed"
+            )
+        summary_lines.append("")
+
+    # Totals
+    summary_lines.extend(
+        [
+            "## Document statistics",
+            f"- Processed: {stats.total_processed}",
+            f"- Failed: {stats.total_failed}",
+            f"- Nodes created: {stats.nodes_created}",
+            f"- Relationships created: {stats.relationships_created}",
+            "",
+        ]
+    )
 
     if warnings:
         summary_lines.append("## Warnings")
@@ -291,77 +317,7 @@ def create_kg_flow(
         summary_lines.append("## Warnings")
         summary_lines.append("- None")
 
-    # Creating artifacts requires a running Prefect server; treat this as
-    # best-effort so local CLI invocations and tests do not fail if no
-    # server is available.
     try:  # pragma: no cover - network / environment dependent
         create_markdown_artifact("\n".join(summary_lines), key="kg-create-summary")
     except Exception as exc:  # pragma: no cover - defensive
-        logger.warning(
-            "Failed to create Prefect artifact for KG summary: %s",
-            exc,
-        )
-
-    # Export schema artifacts
-    export_schema(cfg_name)
-    manager.log_outcome(
-        "export_schema",
-        "success",
-        f"Schema exported to {manager.schema_path}",
-    )
-
-    export_schema_json(cfg_name)
-    manager.log_outcome(
-        "export_schema_json",
-        "success",
-        f"Schema JSON exported to {manager.schema_json_path}",
-    )
-
-    export_schema_html(cfg_name)
-    manager.log_outcome(
-        "export_schema_html",
-        "success",
-        f"Schema HTML exported to {manager.schema_html_path}",
-    )
-
-    # Export info to markdown file
-    export_info(cfg_name, backend)
-    manager.log_outcome(
-        "export_info",
-        "success",
-        f"Info exported to {manager.info_path}",
-    )
-
-    # Save parquet from collected DataFrames (avoids Kuzu query bugs)
-    try:
-        parquet_result = save_parquet_from_collector(cfg_name, collector)
-        manager.log_outcome(
-            "export_parquet",
-            "success",
-            f"Parquet saved: {parquet_result.node_count} nodes, {parquet_result.rel_count} rels",
-        )
-        logger.info(f"Saved parquet from collector: {parquet_result.node_count} nodes, {parquet_result.rel_count} rels")
-    except Exception as exc:
-        logger.warning(f"Failed to save parquet: {exc}")
-        manager.log_outcome(
-            "export_parquet",
-            "warning",
-            f"Failed to save parquet: {exc}",
-        )
-
-    html_result = None
-    if export_html:
-        html_result = export_html_file(cfg_name, backend)
-        manager.log_outcome(
-            "export_html",
-            "success",
-            f"HTML exported to {html_result.output_path}",
-        )
-
-    return KgRunResult(
-        config_name=cfg_name,
-        db_path=db_path,
-        stats=stats,
-        warnings=warnings,
-        html_export=html_result,
-    )
+        get_run_logger().warning("Failed to create Prefect artifact: %s", exc)

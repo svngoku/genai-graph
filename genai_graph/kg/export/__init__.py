@@ -8,15 +8,18 @@ This package provides:
 """
 
 from genai_graph.kg.export.artifacts import (
+    CacheFingerprints,
     HtmlExportResult,
     ParquetExportResult,
     ParquetManifest,
+    compute_fingerprints_for_config,
     export_html,
     export_info,
     export_schema,
     export_schema_html,
     export_schema_json,
     export_warnings,
+    validate_parquet_cache,
 )
 from genai_graph.kg.export.html import generate_html
 
@@ -31,4 +34,7 @@ __all__ = [
     "HtmlExportResult",
     "ParquetExportResult",
     "ParquetManifest",
+    "CacheFingerprints",
+    "compute_fingerprints_for_config",
+    "validate_parquet_cache",
 ]

@@ -15,7 +15,7 @@ import streamlit.components.v1 as components
 def main() -> None:
     """Display external web page with JavaScript support."""
     st.set_page_config(
-        page_title="External Web Page",
+        page_title="Architecture Diagram",
         page_icon="🌐",
         layout="wide",
     )

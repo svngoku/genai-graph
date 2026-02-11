@@ -1,3 +1,20 @@
+
+
+Evaluate the feasibility of that idea: 
+Today we have  caching issues when constructing a KG, it's mostly sequential, there's no depencies management, traceability is limited (some manifests.json projects), error reporting is weak.  
+
+On the other side, we use Prefect, but just as limited flows called from CLI commands.
+
+My idea is the following : 
+1/ create a full Prefect flow from the description of the KG, by combining the different tasks as a DAG. Use existing caching mechanism whenever possible (Parquet files), and possibly create or use new one, with additional Manifests. 
+2/ Move to async version of Kuzu calls to allow parallel processing
+3/ Use prompt_fingerprint function to detect changes in BAML schema
+4/ Improve warning and error reporting to have a full picture at the end (including warnings of imported KG).
+
+Analyse that ideas, evaluate alternative, ask questions, and possibly propose a detailed plan.
+
+
+
 # New
 
 Helo me to adress node and relationship duplication issues in a KG. There are likely several causes...  

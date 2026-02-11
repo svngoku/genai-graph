@@ -76,6 +76,27 @@ class KgFactory(ABC, BaseModel):
         """Get list of sample Cypher queries for this graph."""
         return []
 
+    def config_fingerprint(self) -> str:
+        """Compute a hex digest of this factory's configuration.
+
+        Hashes all Pydantic-serialisable fields (excluding private attrs
+        and the schema itself) so that changes in factory configuration
+        (e.g. ``data_root``, ``include``/``exclude`` patterns) invalidate
+        cached outputs.
+
+        Returns:
+            Hex string (xxh3_64).
+        """
+        from genai_tk.utils.hashing import buffer_digest
+
+        # Dump only the config fields (not the schema or model methods)
+        config_data = self.model_dump(mode="json", exclude_none=True)
+        # Sort keys for determinism
+        import json
+
+        payload = json.dumps(config_data, sort_keys=True, default=str)
+        return buffer_digest(payload.encode())
+
     def register(self, registry: Any = None) -> None:
         """Register this graph factory.
 

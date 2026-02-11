@@ -67,6 +67,13 @@ class EkgCommands(CliTopCommand):
                     help="Clear all parquet caches before creation (fixes schema mismatch issues)",
                 ),
             ] = False,
+            force_rebuild: Annotated[
+                bool,
+                typer.Option(
+                    "--force-rebuild",
+                    help="Force rebuild of imported KG dependencies even if cache fingerprints match",
+                ),
+            ] = False,
         ) -> None:
             """Create the KG database and ingest documents using a Prefect flow.
 
@@ -91,6 +98,7 @@ class EkgCommands(CliTopCommand):
             # Clear all caches if requested
             if clear_all_caches:
                 from genai_graph.kg.export.artifacts import clear_all_parquet_caches
+
                 cleared_count = clear_all_parquet_caches()
                 console.print(f"[bold green]✓[/bold green] Cleared {cleared_count} parquet cache(s)")
 
@@ -155,6 +163,7 @@ class EkgCommands(CliTopCommand):
                             config_name=cfg_name,
                             delete_first=delete_first,
                             export_html=export_html,
+                            force_rebuild=force_rebuild,
                         )
 
                     all_results.append((cfg_name, result))

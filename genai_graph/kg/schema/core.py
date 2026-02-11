@@ -858,6 +858,46 @@ class GraphSchema(BaseModel):
         """Get all validation warnings."""
         return self._warnings.copy()
 
+    def fingerprint(self) -> str:
+        """Compute a stable hex digest of this schema's structure.
+
+        Captures node types, key fields, extra classes, relationship
+        endpoints and properties — i.e. everything that would change the
+        shape of the Kuzu tables.  The digest is deterministic for the
+        same logical schema, independent of Python object identity.
+
+        Returns:
+            Hex string (xxh3_64) of the schema structure.
+        """
+        from genai_tk.utils.hashing import buffer_digest
+
+        parts: list[str] = []
+
+        # Root model class
+        if self.root_model_class is not None:
+            parts.append(f"root:{self.root_model_class.__name__}")
+
+        # Nodes — sorted by class name for determinism
+        for node in sorted(self.nodes, key=lambda n: n.node_class.__name__):
+            name_from = node.name_from if isinstance(node.name_from, str) else "<callable>"
+            key_from = node.key_from if isinstance(node.key_from, str) else "<callable>"
+            extras = ",".join(sorted(c.__name__ for c in node.extra_classes))
+            idx = ",".join(sorted(node.index_fields))
+            parts.append(
+                f"node:{node.node_class.__name__}|name={name_from}|key={key_from}"
+                f"|extras={extras}|idx={idx}|desc={node.description}"
+            )
+
+        # Relations — sorted by (from, name, to)
+        for rel in sorted(self.relations, key=lambda r: (r.from_node.__name__, r.name, r.to_node.__name__)):
+            props = ",".join(sorted(rel.properties.keys())) if rel.properties else ""
+            parts.append(
+                f"rel:{rel.from_node.__name__}->{rel.name}->{rel.to_node.__name__}|props={props}|desc={rel.description}"
+            )
+
+        combined = "\n".join(parts)
+        return buffer_digest(combined.encode())
+
     def validate_with_context(self, context: KgManager) -> None:
         """Re-run coherence validation and collect warnings into a KgManager.
 
