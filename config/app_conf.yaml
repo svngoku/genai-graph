@@ -57,6 +57,8 @@ ui:
         name: "Cypher/NL Query "
       - path: demos/kg_visualization.py
         name: "Graph Visualization"
+      - path: demos/kg_warnings.py
+        name: "Creation Warnings"
 
 
 

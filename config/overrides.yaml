@@ -23,11 +23,11 @@ ekg_local:
 
   llm:
     models:
-      default: kimi_k2_openrouter
+      default: kimi_k2@openrouter
   
   embeddings:
     models:
-      default: qwen3_06b_deepinfra
+      default: qwen3_06b@deepinfra
 
   embeddings_store:
     chroma_simple: &default_store

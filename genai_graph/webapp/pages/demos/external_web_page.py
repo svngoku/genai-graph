@@ -30,7 +30,6 @@ def main() -> None:
 
     # Display options
     height = st.sidebar.slider("Frame Height (px)", 400, 1200, 800, 50)
-    
 
     # Display the embedded content
     components.iframe(embed_url, height=height, scrolling=True)

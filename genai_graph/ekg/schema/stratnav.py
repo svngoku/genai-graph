@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from genai_graph.ekg.schema.common_nodes import Customer, Geo, L3, Partner
+from genai_graph.ekg.schema.common_nodes import L3, Customer, Geo, Partner
 from genai_graph.kg.factories import Neo4jImportFactory
 from genai_graph.kg.factories.neo4j_factory import Neo4jNodeMapping, Neo4jRelationMapping
 

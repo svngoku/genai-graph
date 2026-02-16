@@ -1,53 +1,29 @@
+###  Markdown loader
+Refactor /extra/loaders/markdown_loader.py with improvement from /extra/rag/markdown_chunking.py.
+Keep a LangChain interface (ie Document + metadata instead of ChunkInfo - as TypedDict if possible - and inheritnoig BaseLoader ).
+Replace code in genai-graph that uses markdown_chunking with the LangChain compatible loader/splitter. 
+Add test cases.
 
-
-Evaluate the feasibility of that idea: 
-Today we have  caching issues when constructing a KG, it's mostly sequential, there's no depencies management, traceability is limited (some manifests.json projects), error reporting is weak.  
-
-On the other side, we use Prefect, but just as limited flows called from CLI commands.
-
-My idea is the following : 
-1/ create a full Prefect flow from the description of the KG, by combining the different tasks as a DAG. Use existing caching mechanism whenever possible (Parquet files), and possibly create or use new one, with additional Manifests. 
-2/ Move to async version of Kuzu calls to allow parallel processing
-3/ Use prompt_fingerprint function to detect changes in BAML schema
-4/ Improve warning and error reporting to have a full picture at the end (including warnings of imported KG).
-
-Analyse that ideas, evaluate alternative, ask questions, and possibly propose a detailed plan.
+### Deer-flow CLI
 
 
 
-# New
-
-Helo me to adress node and relationship duplication issues in a KG. There are likely several causes...  
-
-When running cli kg create --kg stratnav_subset_rainbow_crm, we observe : 
-- There are several "Opportunity" nodes (comming from different sources)
-- There are several "HAS_CONTACT" between Customer and Person (and other duplicated relationships "HAS_PARTNER", )
-- "Account" and "Customer" are actually the same entities.   "Account" node from the neo4j should be renamed as "Customer" .
-That's not unexpected - The creation of a graph from different subgraphs comming from very differnet data source (BAML, DB, neo4j, ) is a quite recent.
-The issue can be adressed at several levels:
-- We can modify the factories in genai_graph/ekg/schema and their base classes.  The "common nodes" package can notably be reworked. Python is quite flexible so we can likely merge stuff at that level.  For example  the "Account" nodes/classe from the neo4j import can likely be renamed "Customer" at that level, and different 'Opportunity"  classes might be signified to be identical there (with multi-inheritance or python statements). BAML Pydantic classes are generated, but they can be extended, and the description can be overriden. 
 
 
-- Merge can also be done by extending the Kuzu node and relationships MERGE capabilities.  We have recently introduces  the use of the powerful MERGE from dataframe - it can likely be further extended. (https://kuzudb.github.io/docs/import/merge/#merge-from-dataframes) .
+# Add embeddings in Kuzu
 
-Plan  a solution to adress these problems, and implement it. Focus on model and code maintenance. Propose another approaches if needed  if better design seems possible.. 
+- Ask Paul for latest version
+- to Claude:  
+we want to use embeddings stored in the Kuzu graph nodes.  
+There are 2 situation : 
+  -
+the imported JSON 
 
-Note that the "normal" way the KG will be created is the start from the neo4j import, then merge some database / excel import, then unstructured texts (through BAML import). The first data source are considered as more trustfull than the BAML one.
+https://kuzudb.github.io/docs/extensions/vector/
 
-Take care of caching. You mighy need to rebuiltd imported graphs.
-Don't care about legacy code 
+...
 
-
-
-Today the mapping to create a Kuzu KG from a Neo4j import is simply done with  dicts. That works, but miss some functionnalities that can have for example in the TableBackedFactory, to define descriptions, name node or index (with GraphNode class).
-This is notably important to generate a detailed schema usable by LLM.
-
-Try to refactor using GraphNode and GraphRelation, that you can modify or specialize if needed. 
-
-
-Ensure that the generated schema is correct.
-Test with cli kg create --kg simple_neo4j 
-
+# Connect BL
 
 
 
