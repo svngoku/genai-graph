@@ -25,10 +25,10 @@ from typing import Any
 
 import streamlit as st
 from genai_tk.core.llm_factory import get_llm
-from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.prebuilt import create_react_agent as create_agent
 from loguru import logger
 from streamlit import session_state as sss
 
