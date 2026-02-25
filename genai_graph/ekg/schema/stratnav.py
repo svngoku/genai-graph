@@ -220,10 +220,12 @@ class StratnavGraph(Neo4jImportFactory):
                     "gracePeriodEnds": "grace_period_ends",
                     "majorVersion": "major_version",
                     "minorVersion": "minor_version",
+                    "descriptionEmbedding": "description_embedding",
                 },
                 name_field="name",
                 key_field="code",
-                index_fields=["name", "description"],
+                index_fields=["name"],
+                embedding_models={"description_embedding": "ada_002@openai"},
             ),
             # L4: Level 4 component
             Neo4jNodeMapping(

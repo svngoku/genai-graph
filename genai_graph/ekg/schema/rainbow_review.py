@@ -54,7 +54,7 @@ class ReviewedOpportunityGraph(JsonFileBackedFactory, BaseModel):
                 name_from="name",
                 key_from="opportunity_id",
                 description="Core opportunity information",
-                index_fields=["name", "status"],
+                index_fields=["name"],
             ),
             GraphNode(
                 node_class=Customer,
@@ -74,27 +74,30 @@ class ReviewedOpportunityGraph(JsonFileBackedFactory, BaseModel):
             GraphNode(
                 node_class=ReviewedOpportunity,
                 extra_classes=[FinancialMetrics, CompetitiveLandscape, KeyStatementOfWorkElement],
-                name_from=lambda data, _: "Review:"
-                + str(data.get("opportunity", {}).get("opportunity_id", ""))
-                + ":"
-                + str(data.get("start_date", "")),
+                name_from=lambda data, _: (
+                    "Review:"
+                    + str(data.get("opportunity", {}).get("opportunity_id", ""))
+                    + ":"
+                    + str(data.get("start_date", ""))
+                ),
                 key_from=lambda data, _: str(data.get("opportunity", {}).get("opportunity_id", "unknown")),
                 description="Root node containing the complete reviewed opportunity",
             ),
             # Regular nodes - field paths auto-deduced
             GraphNode(
                 node_class=RiskAnalysis,
-                name_from=lambda data, _: getattr(data.get("risk_category"), "name", None)
-                or str(data.get("risk_category", "other_risk")),
+                name_from=lambda data, _: (
+                    getattr(data.get("risk_category"), "name", None) or str(data.get("risk_category", "other_risk"))
+                ),
                 key_from=lambda data, _: str(getattr(data.get("risk_category"), "name", None) or "Other Risks"),
                 description="Risk assessment and mitigation details",
                 index_fields=["risk_description"],
             ),
             GraphNode(
                 node_class=TechnicalApproach,
-                name_from=lambda data, base: data.get("technical_stack")
-                or data.get("architecture")
-                or f"{base}_default",
+                name_from=lambda data, base: (
+                    data.get("technical_stack") or data.get("architecture") or f"{base}_default"
+                ),
                 key_from="AUTO_ID",  # Use auto-generated SERIAL id
                 description="Technical implementation approach and stack",
                 index_fields=["architecture", "technical_stack"],
@@ -121,7 +124,6 @@ class ReviewedOpportunityGraph(JsonFileBackedFactory, BaseModel):
                 name_from=lambda data, base: data.get("geo_code") or data.get("country") or f"{base}_geo",
                 key_from="name",  # Use computed name as PK (consistent with Stratnav Geo)
                 description="Geographic location for delivery",
-                index_fields=["country", "geo_code"],
                 explicitly_defined=True,  # Connected via explicit field path in DELIVERED_IN relationship
             ),
         ]

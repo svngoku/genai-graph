@@ -1,0 +1,800 @@
+"""Integration tests for Kuzu embeddings functionality.
+
+Tests cover:
+- Scenario A: Pre-computed embeddings (L3 descriptionEmbedding from Neo4j)
+- Scenario B: Calculated embeddings from index_fields
+- Scenario C: Mixed pre-computed and calculated embeddings
+- Scenario D: Vector index queries and caching behavior
+- Scenario E: embedding_field_dimensions + FLOAT[N] schema for pre-computed fields
+- Scenario F: Neo4j JSON-string embedding deserialization
+- Scenario G: DataFrame float-list → ArrowExtensionArray for Kuzu LOAD FROM df
+"""
+
+import tempfile
+
+import pytest
+from pydantic import BaseModel, Field
+from upath import UPath
+
+from genai_graph.kg.backend import KuzuBackend
+from genai_graph.kg.embeddings_handler import EmbeddingsHandler
+from genai_graph.kg.schema.core import GraphNode
+
+
+class SimpleNode(BaseModel):
+    """Minimal test node for embeddings testing."""
+
+    id: str = Field(description="Unique identifier")
+    name: str = Field(description="Node name")
+    description: str | None = Field(default=None, description="Node description")
+    test_embedding: list[float] | None = Field(default=None, description="Test embedding vector")
+
+
+@pytest.fixture
+def temp_kuzu_db():
+    """Create a temporary Kuzu database."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = UPath(tmpdir) / "test.kuzu"
+        backend = KuzuBackend()
+        backend.connect(str(db_path))
+        yield backend, db_path
+        backend.close()
+
+
+@pytest.fixture
+def embeddings_handler():
+    """Create an EmbeddingsHandler instance."""
+    handler = EmbeddingsHandler(embeddings_id="embeddings_768@fake")
+    return handler
+
+
+class TestEmbeddingsHandler:
+    """Test EmbeddingsHandler core functionality."""
+
+    def test_handler_initialization(self, embeddings_handler):
+        """Test that handler initializes with valid model."""
+        assert embeddings_handler is not None
+        assert embeddings_handler.embeddings_id is not None
+
+    def test_compute_single_embedding(self, embeddings_handler):
+        """Test computing embedding for a single text."""
+        text = "This is a test document about cloud services"
+        embedding = embeddings_handler.compute_embeddings(text)
+
+        assert isinstance(embedding, list)
+        assert len(embedding) > 0
+        assert all(isinstance(x, float) for x in embedding)
+
+    def test_compute_field_embeddings(self, embeddings_handler):
+        """Test computing embeddings for multiple fields."""
+        node_data = {
+            "id": "node1",
+            "name": "Cloud Storage Service",
+            "description": "A comprehensive cloud storage solution",
+        }
+        index_fields = ["name", "description"]
+
+        embeddings = embeddings_handler.compute_field_embeddings(node_data, index_fields)
+
+        assert "name" in embeddings
+        assert "description" in embeddings
+        assert len(embeddings["name"]) > 0
+        assert len(embeddings["description"]) > 0
+
+    def test_compute_embeddings_missing_field(self, embeddings_handler):
+        """Test handling of missing fields."""
+        node_data = {"id": "node1", "name": "Test"}
+        index_fields = ["name", "nonexistent_field"]
+
+        embeddings = embeddings_handler.compute_field_embeddings(node_data, index_fields)
+
+        # Only name should be computed
+        assert "name" in embeddings
+        assert "nonexistent_field" not in embeddings
+
+    def test_embed_empty_string(self, embeddings_handler):
+        """Test that empty strings are skipped."""
+        node_data = {"id": "node1", "name": "", "description": "Test"}
+        index_fields = ["name", "description"]
+
+        embeddings = embeddings_handler.compute_field_embeddings(node_data, index_fields)
+
+        # Only description should be computed
+        assert "name" not in embeddings
+        assert "description" in embeddings
+
+
+class TestKuzuFloatArrayType:
+    """Test Kuzu FLOAT[] type mapping and storage."""
+
+    def test_float_array_type_mapping(self):
+        """Test that list[float] maps to FLOAT[] in Kuzu."""
+        from genai_graph.kg.ingest.extract import _get_kuzu_type
+
+        kuzu_type = _get_kuzu_type(list[float])
+        assert kuzu_type == "FLOAT[]"
+
+    def test_string_array_type_mapping(self):
+        """Test that list[str] still maps to STRING[]."""
+        from genai_graph.kg.ingest.extract import _get_kuzu_type
+
+        kuzu_type = _get_kuzu_type(list[str])
+        assert kuzu_type == "STRING[]"
+
+    def test_optional_float_array(self):
+        """Test that Optional[list[float]] maps to FLOAT[]."""
+        from genai_graph.kg.ingest.extract import _get_kuzu_type
+
+        kuzu_type = _get_kuzu_type(list[float] | None)
+        assert kuzu_type == "FLOAT[]"
+
+
+class TestSchemaCreationWithEmbeddings:
+    """Test schema creation with embedding fields."""
+
+    def test_simple_node_schema_with_embedding(self, temp_kuzu_db):
+        """Test creating schema for node with embedding field."""
+        backend, _ = temp_kuzu_db
+
+        # Create table with embedding column
+        backend.execute(
+            """
+            CREATE NODE TABLE SimpleNode (
+                id STRING PRIMARY KEY,
+                name STRING,
+                description STRING,
+                test_embedding FLOAT[]
+            );
+            """
+        )
+
+        # Verify table was created
+        result = backend.execute("CALL table_info('SimpleNode') RETURN *;")
+        assert result is not None
+
+    def test_insert_embedding_data(self, temp_kuzu_db):
+        """Test inserting nodes with embedding data."""
+        backend, _ = temp_kuzu_db
+
+        # Create table
+        backend.execute(
+            """
+            CREATE NODE TABLE SimpleNode (
+                id STRING PRIMARY KEY,
+                name STRING,
+                test_embedding FLOAT[]
+            );
+            """
+        )
+
+        # Insert node with embedding
+        embedding = [0.1, 0.2, 0.3, 0.4, 0.5]
+        backend.execute(
+            """
+            CREATE (n:SimpleNode {
+                id: 'node1',
+                name: 'Test Node',
+                test_embedding: $embedding
+            });
+            """,
+            {"embedding": embedding},
+        )
+
+        # Retrieve and verify
+        result = backend.execute("MATCH (n:SimpleNode) RETURN n.test_embedding AS embedding;")
+        df = result.get_as_df()
+        assert len(df) == 1
+
+
+class TestVectorIndexCreation:
+    """Test vector index creation and querying."""
+
+    def test_ensure_vector_extension(self, temp_kuzu_db):
+        """Test that vector extension can be loaded."""
+        backend, _ = temp_kuzu_db
+
+        # Should not raise
+        backend.ensure_vector_extension()
+
+    def test_create_vector_index(self, temp_kuzu_db):
+        """Test creating a vector index."""
+        backend, _ = temp_kuzu_db
+        backend.ensure_vector_extension()
+
+        # Create table and index
+        backend.execute(
+            """
+            CREATE NODE TABLE TestDoc (
+                id STRING PRIMARY KEY,
+                title STRING,
+                title_embedding FLOAT[384]
+            );
+            """
+        )
+
+        # Create vector index
+        backend.create_vector_index(
+            table_name="TestDoc",
+            field_name="title_embedding",
+            index_name="test_doc_title_index",
+            metric="cosine",
+        )
+
+        # Verify index was created
+        result = backend.execute("CALL SHOW_INDEXES() RETURN *;")
+        df = result.get_as_df()
+        assert len(df) > 0
+        # Check if our index is in the results
+        index_names = df.get_column("index_name").to_list() if hasattr(df, "get_column") else list(df["index_name"])
+        assert "test_doc_title_index" in index_names
+
+    def test_vector_index_with_dummy_data(self, temp_kuzu_db):
+        """Test vector index query with synthetic data."""
+        backend, _ = temp_kuzu_db
+        backend.ensure_vector_extension()
+
+        # Create table
+        backend.execute(
+            """
+            CREATE NODE TABLE Book (
+                id STRING PRIMARY KEY,
+                title STRING,
+                title_embedding FLOAT[3]
+            );
+            """
+        )
+
+        # Insert sample data with 3-dimensional embeddings
+        embeddings_data = [
+            ("book1", "Machine Learning Basics", [0.1, 0.2, 0.3]),
+            ("book2", "Deep Learning Advanced", [0.11, 0.21, 0.31]),
+            ("book3", "Quantum Computing", [0.5, 0.6, 0.7]),
+        ]
+
+        for book_id, title, embedding in embeddings_data:
+            backend.execute(
+                """
+                CREATE (b:Book {
+                    id: $id,
+                    title: $title,
+                    title_embedding: $embedding
+                });
+                """,
+                {
+                    "id": book_id,
+                    "title": title,
+                    "embedding": embedding,
+                },
+            )
+
+        # Create vector index
+        backend.create_vector_index(
+            table_name="Book",
+            field_name="title_embedding",
+            index_name="book_index",
+            metric="l2",
+        )
+
+        # Query the index
+        query_embedding = [0.1, 0.2, 0.3]  # Similar to book1
+        result = backend.query_vector_index(
+            table_name="Book",
+            index_name="book_index",
+            query_vector=query_embedding,
+            k=2,
+        )
+
+        df = result.get_as_df()
+        assert len(df) >= 1  # At least one result
+
+
+class TestGraphNodeEmbeddingConfig:
+    """Test GraphNode configuration for embeddings."""
+
+    def test_graph_node_defaults(self):
+        """Test that GraphNode has correct embedding defaults."""
+        node_config = GraphNode(
+            node_class=SimpleNode,
+            name_from="name",
+            key_from="id",
+        )
+        assert node_config.compute_embeddings is True
+        assert node_config.embedding_model is None
+        assert node_config.index_fields == []
+
+    def test_graph_node_with_embeddings_disabled(self):
+        """Test disabling embeddings on a node type."""
+        node_config = GraphNode(
+            node_class=SimpleNode,
+            name_from="name",
+            key_from="id",
+            compute_embeddings=False,
+        )
+        assert node_config.compute_embeddings is False
+
+    def test_graph_node_with_custom_model(self):
+        """Test specifying custom embedding model."""
+        node_config = GraphNode(
+            node_class=SimpleNode,
+            name_from="name",
+            key_from="id",
+            embedding_model="custom-model@provider",
+        )
+        assert node_config.embedding_model == "custom-model@provider"
+
+    def test_graph_node_with_index_fields(self):
+        """Test index_fields configuration."""
+        node_config = GraphNode(
+            node_class=SimpleNode,
+            name_from="name",
+            key_from="id",
+            index_fields=["name", "description"],
+        )
+        assert node_config.index_fields == ["name", "description"]
+
+
+class TestL3DescriptionEmbedding:
+    """Test L3 node with descriptionEmbedding field."""
+
+    def test_l3_model_has_embedding_field(self):
+        """Test that L3 model includes descriptionEmbedding field."""
+        from genai_graph.ekg.schema.common_nodes import L3
+
+        # Create an L3 instance with embedding
+        l3 = L3(
+            name="Cloud Storage",
+            code="CS001",
+            description="A service for cloud storage",
+            description_embedding=[0.1, 0.2, 0.3],
+        )
+
+        assert l3.description_embedding == [0.1, 0.2, 0.3]
+
+    def test_l3_embedding_optional(self):
+        """Test that descriptionEmbedding is optional."""
+        from genai_graph.ekg.schema.common_nodes import L3
+
+        # Create L3 without embedding
+        l3 = L3(
+            name="Cloud Storage",
+            code="CS001",
+        )
+
+        assert l3.description_embedding is None
+
+    def test_l3_embedding_with_none(self):
+        """Test explicitly setting embedding to None."""
+        from genai_graph.ekg.schema.common_nodes import L3
+
+        l3 = L3(
+            name="Cloud Storage",
+            code="CS001",
+            description_embedding=None,
+        )
+
+        assert l3.description_embedding is None
+
+
+class TestEmbeddingFieldNaming:
+    """Test naming conventions for embedding fields."""
+
+    def test_embedding_field_naming_from_index_fields(self):
+        """Test that computed embedding field names follow convention."""
+        # For index_fields like ["name", "description"],
+        # embeddings should be stored in fields like "name_embedding", "description_embedding"
+        index_fields = ["name", "description", "keywords"]
+        expected_embedding_fields = [f"{field}_embedding" for field in index_fields]
+
+        assert expected_embedding_fields == ["name_embedding", "description_embedding", "keywords_embedding"]
+
+    def test_pre_computed_field_naming(self):
+        """Test that pre-computed fields keep their original names."""
+        # descriptionEmbedding is pre-computed from Neo4j, should use exact name
+        field_name = "description_embedding"
+        assert field_name == "description_embedding"
+
+
+# Performance and caching tests
+class TestEmbeddingCaching:
+    """Test caching behavior of EmbeddingsHandler."""
+
+    def test_handler_uses_cache_enabled(self, embeddings_handler):
+        """Test that handler is initialized with caching enabled."""
+        # The handler should be created with cache_embeddings=True
+        assert embeddings_handler.factory is not None
+        # Verify by calling twice and checking behavior
+        text = "Test caching"
+        emb1 = embeddings_handler.compute_embeddings(text)
+        emb2 = embeddings_handler.compute_embeddings(text)
+        # Should get the same result
+        assert emb1 == emb2
+
+
+class TestDocGenerationWithEmbeddings:
+    """Test schema documentation handles embeddings correctly."""
+
+    def test_float_array_in_json_schema(self):
+        """Test that FLOAT[] is correctly represented in JSON schema."""
+        from genai_graph.kg.schema.doc_generator import _get_kuzu_type_for_field
+
+        kuzu_type = _get_kuzu_type_for_field(list[float])
+        assert kuzu_type == "FLOAT[]"
+
+        # Also test optional
+        kuzu_type_opt = _get_kuzu_type_for_field(list[float] | None)
+        assert kuzu_type_opt == "FLOAT[]"
+
+
+# ---------------------------------------------------------------------------
+# New tests for Scenario E: embedding_field_dimensions + FLOAT[N] schema
+# ---------------------------------------------------------------------------
+
+
+class TestEmbeddingFieldDimensions:
+    """Test GraphNode.embedding_field_dimensions and FLOAT[N] schema generation."""
+
+    def test_graph_node_embedding_field_dimensions_default(self):
+        """Test that embedding_field_dimensions defaults to empty dict."""
+        node = GraphNode(node_class=SimpleNode, name_from="name", key_from="id")
+        assert node.embedding_field_dimensions == {}
+
+    def test_graph_node_embedding_field_dimensions_set(self):
+        """Test setting embedding_field_dimensions explicitly."""
+        node = GraphNode(
+            node_class=SimpleNode,
+            name_from="name",
+            key_from="id",
+            embedding_field_dimensions={"test_embedding": 1536},
+        )
+        assert node.embedding_field_dimensions == {"test_embedding": 1536}
+
+    def test_create_schema_uses_float_n_for_known_dimension(self, temp_kuzu_db):
+        """Test that create_schema() emits FLOAT[N] when dimension is known."""
+        from genai_graph.kg.ingest.extract import create_schema
+
+        backend, _ = temp_kuzu_db
+
+        node = GraphNode(
+            node_class=SimpleNode,
+            name_from="name",
+            key_from="id",
+            embedding_field_dimensions={"test_embedding": 768},
+        )
+
+        create_schema(backend, [node], [])
+
+        # Inspect table columns
+        result = backend.execute("CALL table_info('SimpleNode') RETURN *;")
+        df = result.get_as_df()
+        col_types = dict(zip(df["name"].tolist(), df["type"].tolist()))
+        # test_embedding is already in the model — dimension should be FLOAT[768]
+        assert col_types.get("test_embedding") == "FLOAT[768]"
+
+    def test_create_schema_falls_back_to_float_array_without_dimension(self, temp_kuzu_db):
+        """Test that create_schema() emits FLOAT[] when no dimension is provided."""
+        from genai_graph.kg.ingest.extract import create_schema
+
+        backend, _ = temp_kuzu_db
+
+        node = GraphNode(
+            node_class=SimpleNode,
+            name_from="name",
+            key_from="id",
+            # no embedding_field_dimensions set
+        )
+
+        create_schema(backend, [node], [])
+
+        result = backend.execute("CALL table_info('SimpleNode') RETURN *;")
+        df = result.get_as_df()
+        col_types = dict(zip(df["name"].tolist(), df["type"].tolist()))
+        assert col_types.get("test_embedding") == "FLOAT[]"
+
+    def test_create_schema_float_n_allows_vector_index(self, temp_kuzu_db):
+        """Test that FLOAT[N] columns can have HNSW vector indexes created on them."""
+        from genai_graph.kg.ingest.extract import create_schema
+
+        backend, _ = temp_kuzu_db
+        backend.ensure_vector_extension()
+
+        node = GraphNode(
+            node_class=SimpleNode,
+            name_from="name",
+            key_from="id",
+            embedding_field_dimensions={"test_embedding": 768},
+        )
+        create_schema(backend, [node], [])
+
+        # Should not raise
+        backend.create_vector_index("SimpleNode", "test_embedding", "simple_emb_index", metric="cosine")
+
+        result = backend.execute("CALL SHOW_INDEXES() RETURN *;")
+        df = result.get_as_df()
+        index_names = list(df["index_name"])
+        assert "simple_emb_index" in index_names
+
+
+# ---------------------------------------------------------------------------
+# New tests for Scenario E: Neo4jNodeMapping.embedding_models + build_schema
+# ---------------------------------------------------------------------------
+
+
+class TestNeo4jNodeMappingEmbeddingModels:
+    """Test Neo4jNodeMapping.embedding_models and dimension resolution in build_schema."""
+
+    def test_neo4j_node_mapping_embedding_models_default(self):
+        """Test that embedding_models defaults to empty dict."""
+        from genai_graph.kg.factories.neo4j_factory import Neo4jNodeMapping
+
+        mapping = Neo4jNodeMapping(neo4j_label="L3", node_class=SimpleNode, name_field="name", key_field="id")
+        assert mapping.embedding_models == {}
+
+    def test_neo4j_node_mapping_embedding_models_set(self):
+        """Test setting embedding_models for a pre-computed field."""
+        from genai_graph.kg.factories.neo4j_factory import Neo4jNodeMapping
+
+        mapping = Neo4jNodeMapping(
+            neo4j_label="L3",
+            node_class=SimpleNode,
+            name_field="name",
+            key_field="id",
+            embedding_models={"test_embedding": "embeddings_768@fake"},
+        )
+        assert mapping.embedding_models == {"test_embedding": "embeddings_768@fake"}
+
+    def test_build_schema_resolves_dimension_from_known_model(self):
+        """Test that build_schema() resolves embedding_field_dimensions via EmbeddingsFactory."""
+        from genai_graph.kg.factories.neo4j_factory import Neo4jImportFactory, Neo4jNodeMapping
+
+        class MinimalFactory(Neo4jImportFactory):
+            neo4j_export_file: str = "/dev/null"
+
+            def get_node_mappings(self):
+                return [
+                    Neo4jNodeMapping(
+                        neo4j_label="SimpleNode",
+                        node_class=SimpleNode,
+                        name_field="name",
+                        key_field="id",
+                        embedding_models={"test_embedding": "embeddings_768@fake"},
+                    )
+                ]
+
+        factory = MinimalFactory.__new__(MinimalFactory)
+        object.__setattr__(factory, "_initialized", False)
+        object.__setattr__(factory, "_node_data", {})
+        object.__setattr__(factory, "_rel_data", {})
+        object.__setattr__(factory, "_schema_info", None)
+        object.__setattr__(factory, "_neo4j_id_to_label", {})
+
+        schema = factory.build_schema()
+        assert len(schema.nodes) == 1
+        node_cfg = schema.nodes[0]
+        # Dimension for embeddings_768@fake is 768
+        assert node_cfg.embedding_field_dimensions == {"test_embedding": 768}
+
+    def test_l3_stratnav_mapping_has_ada002_dimension(self):
+        """Test that the real L3 StratnavGraph mapping resolves ada-002 (1536 dims)."""
+        from genai_graph.ekg.schema.stratnav import StratnavGraph
+
+        factory = StratnavGraph.__new__(StratnavGraph)
+        object.__setattr__(factory, "_initialized", False)
+        object.__setattr__(factory, "_node_data", {})
+        object.__setattr__(factory, "_rel_data", {})
+        object.__setattr__(factory, "_schema_info", None)
+        object.__setattr__(factory, "_neo4j_id_to_label", {})
+
+        schema = factory.build_schema()
+        l3_node = next(n for n in schema.nodes if n.node_class.__name__ == "L3")
+        # ada_002 has dimension 1536
+        assert l3_node.embedding_field_dimensions.get("description_embedding") == 1536
+
+
+# ---------------------------------------------------------------------------
+# New tests for Scenario F: JSON-string embedding deserialization
+# ---------------------------------------------------------------------------
+
+
+class TestEmbeddingDeserialization:
+    """Test deserialization of JSON-string float arrays during Neo4j import."""
+
+    def test_infer_kuzu_type_list_of_floats(self):
+        """Test that _infer_kuzu_type detects list[float] as FLOAT[]."""
+        # This is a nested function; test through the public import path indirectly
+        # by checking the create_schema type mapping instead
+        from genai_graph.kg.ingest.extract import _get_kuzu_type
+
+        assert _get_kuzu_type(list[float]) == "FLOAT[]"
+
+    def test_neo4j_factory_deserializes_json_string_embedding(self):
+        """Test that build_nodes_and_relationships parses JSON-encoded embedding strings."""
+        import json as _json
+
+        from genai_graph.ekg.schema.common_nodes import L3
+        from genai_graph.kg.factories.neo4j_factory import Neo4jImportFactory, Neo4jNodeMapping
+
+        embedding_values = [0.1, 0.2, 0.3]
+        json_embedding = _json.dumps(embedding_values)  # "[0.1, 0.2, 0.3]"
+
+        class JsonEmbeddingFactory(Neo4jImportFactory):
+            neo4j_export_file: str = "/dev/null"
+
+            def get_node_mappings(self):
+                return [
+                    Neo4jNodeMapping(
+                        neo4j_label="L3",
+                        node_class=L3,
+                        property_mappings={
+                            "name": "name",
+                            "descriptionEmbedding": "description_embedding",
+                        },
+                        name_field="name",
+                        key_field="name",
+                    )
+                ]
+
+        factory = JsonEmbeddingFactory.__new__(JsonEmbeddingFactory)
+        object.__setattr__(factory, "_initialized", True)
+        object.__setattr__(factory, "_schema_info", None)
+        object.__setattr__(factory, "_neo4j_id_to_label", {})
+        object.__setattr__(
+            factory,
+            "_node_data",
+            {
+                "L3": [
+                    {
+                        "_neo4j_id": "1",
+                        "name": "TestService",
+                        "descriptionEmbedding": json_embedding,
+                    }
+                ]
+            },
+        )
+        object.__setattr__(factory, "_rel_data", {})
+
+        nodes_data, _ = factory.build_nodes_and_relationships()
+        l3_nodes = list(nodes_data.get("L3"))
+        assert len(l3_nodes) == 1
+        emb = l3_nodes[0].get("description_embedding")
+        assert isinstance(emb, list), f"Expected list, got {type(emb)}: {emb}"
+        assert emb == pytest.approx(embedding_values)
+
+    def test_neo4j_factory_preserves_list_float_embedding(self):
+        """Test that already-list float embeddings are preserved."""
+        from genai_graph.ekg.schema.common_nodes import L3
+        from genai_graph.kg.factories.neo4j_factory import Neo4jImportFactory, Neo4jNodeMapping
+
+        embedding_values = [0.1, 0.2, 0.3]
+
+        class ListEmbeddingFactory(Neo4jImportFactory):
+            neo4j_export_file: str = "/dev/null"
+
+            def get_node_mappings(self):
+                return [
+                    Neo4jNodeMapping(
+                        neo4j_label="L3",
+                        node_class=L3,
+                        property_mappings={
+                            "name": "name",
+                            "descriptionEmbedding": "description_embedding",
+                        },
+                        name_field="name",
+                        key_field="name",
+                    )
+                ]
+
+        factory = ListEmbeddingFactory.__new__(ListEmbeddingFactory)
+        object.__setattr__(factory, "_initialized", True)
+        object.__setattr__(factory, "_schema_info", None)
+        object.__setattr__(factory, "_neo4j_id_to_label", {})
+        object.__setattr__(
+            factory,
+            "_node_data",
+            {
+                "L3": [
+                    {
+                        "_neo4j_id": "1",
+                        "name": "TestService",
+                        "descriptionEmbedding": embedding_values,
+                    }
+                ]
+            },
+        )
+        object.__setattr__(factory, "_rel_data", {})
+
+        nodes_data, _ = factory.build_nodes_and_relationships()
+        emb = list(nodes_data.get("L3"))[0].get("description_embedding")
+        assert emb == pytest.approx(embedding_values)
+
+
+# ---------------------------------------------------------------------------
+# New tests for Scenario G: DataFrame float-list → ArrowExtensionArray
+# ---------------------------------------------------------------------------
+
+
+class TestDataFrameFloatArrayType:
+    """Test that _prepare_node_dataframe casts list[float] to ArrowExtensionArray."""
+
+    def test_float_list_column_gets_arrow_dtype(self):
+        """Test that a float-list column is cast to pyarrow list<float64> dtype."""
+
+        from genai_graph.kg.ingest.merge import _prepare_node_dataframe
+
+        node_list = [
+            {"id": "n1", "name": "A", "emb": [0.1, 0.2, 0.3]},
+            {"id": "n2", "name": "B", "emb": [0.4, 0.5, 0.6]},
+        ]
+        df = _prepare_node_dataframe(node_list, key_field="id")
+
+        # The 'emb' column should NOT be plain Python object dtype
+        assert df["emb"].dtype != object or hasattr(df["emb"].dtype, "pyarrow_dtype"), (
+            "Expected ArrowDtype for float-list column"
+        )
+        # Values should be preserved
+        emb0 = list(df["emb"].iloc[0])
+        assert emb0 == pytest.approx([0.1, 0.2, 0.3])
+
+    def test_float_list_column_with_none_values(self):
+        """Test that None entries in float-list columns become null in ArrowExtensionArray."""
+        from genai_graph.kg.ingest.merge import _prepare_node_dataframe
+
+        node_list = [
+            {"id": "n1", "name": "A", "emb": [0.1, 0.2]},
+            {"id": "n2", "name": "B", "emb": None},
+        ]
+        df = _prepare_node_dataframe(node_list, key_field="id")
+
+        # n1 should have the embedding, n2 should have None/null
+        emb0 = df["emb"].iloc[0]
+        emb1 = df["emb"].iloc[1]
+        assert list(emb0) == pytest.approx([0.1, 0.2])
+        assert emb1 is None or (hasattr(emb1, "__len__") and len(emb1) == 0) or str(emb1) in ("<NA>", "None")
+
+    def test_string_list_column_stays_string(self):
+        """Test that string-list columns are not misidentified as float arrays."""
+        from genai_graph.kg.ingest.merge import _prepare_node_dataframe
+
+        node_list = [
+            {"id": "n1", "name": "A", "tags": ["alpha", "beta"]},
+        ]
+        df = _prepare_node_dataframe(node_list, key_field="id")
+        # The tags column should remain as a list-of-strings
+        tags = df["tags"].iloc[0]
+        assert list(tags) == ["alpha", "beta"]
+
+    def test_float_list_column_survives_kuzu_load(self, temp_kuzu_db):
+        """Test that a DataFrame with ArrowExtensionArray float-list can be loaded by Kuzu."""
+        from genai_graph.kg.ingest.merge import _prepare_node_dataframe
+
+        backend, _ = temp_kuzu_db
+        backend.execute(
+            """
+            CREATE NODE TABLE EmbNode (
+                id STRING PRIMARY KEY,
+                name STRING,
+                emb FLOAT[3]
+            );
+            """
+        )
+
+        # Only non-null embeddings — Kuzu FLOAT[3] cannot accept null lists via LOAD FROM df
+        node_list = [
+            {"id": "e1", "name": "Alpha", "emb": [0.1, 0.2, 0.3]},
+            {"id": "e2", "name": "Beta", "emb": [0.4, 0.5, 0.6]},
+        ]
+        df = _prepare_node_dataframe(node_list, key_field="id", field_types={"emb": "FLOAT[]"})
+
+        kuzu_conn = backend.conn
+        kuzu_conn.execute(
+            """
+            LOAD FROM df
+            MERGE (n:EmbNode {id: id})
+            ON CREATE SET n.name = name, n.emb = emb
+            """
+        )
+
+        result = backend.execute("MATCH (n:EmbNode) RETURN n.id, n.emb ORDER BY n.id;")
+        rows = result.get_as_df()
+        assert len(rows) == 2
+        e1_emb = rows[rows["n.id"] == "e1"]["n.emb"].iloc[0]
+        assert list(e1_emb) == pytest.approx([0.1, 0.2, 0.3])

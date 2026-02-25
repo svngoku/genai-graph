@@ -1,4 +1,4 @@
-"""Streamlit page for Knowledge Graph database table exploration.
+"""Streamlit page for Knowledge Graph table exploration.
 
 This page lets users:
 - Select a KG configuration/profile.
@@ -16,7 +16,6 @@ from genai_tk.utils.config_mngr import global_config, import_from_qualified
 from genai_tk.utils.file_patterns import resolve_config_path
 from loguru import logger
 from pydantic import BaseModel
-from sqlalchemy import create_engine, text
 from streamlit import session_state as sss
 from upath import UPath
 
@@ -25,15 +24,375 @@ from genai_graph.kg.manager import get_kg_manager
 
 
 class TableInfo(BaseModel):
-    """Information about a database table from a subgraph."""
+    """Information about a Parquet-cached table from a subgraph."""
 
     subgraph_name: str
     table_name: str
-    db_dsn: str
+    cache_dir: str
     source_files: list[str]
     row_count: int = 0
 
     model_config = {"arbitrary_types_allowed": True}
+
+
+def _get_data_roots() -> list[Path]:
+    """Get resolved data root paths for relative path display."""
+    roots = []
+    try:
+        cfg = global_config()
+        ekg_data = cfg.get_dir_path("paths.ekg_data")
+        if ekg_data:
+            roots.append(Path(ekg_data))
+    except Exception as exc:
+        logger.warning("Could not extract data_roots: %s", exc)
+    return roots
+
+
+def _make_relative_path(full_path: Path | str, data_roots: list[Path]) -> str:
+    """Convert a full path to a relative path based on data_root."""
+    full_path = Path(full_path)
+    for root in data_roots:
+        try:
+            if full_path.is_relative_to(root):
+                return str(full_path.relative_to(root))
+        except (ValueError, TypeError):
+            continue
+    return str(full_path)
+
+
+def _get_available_kg_configs() -> list[str]:
+    """Return list of available KG configurations from ekg.yaml."""
+    try:
+        manager = get_kg_manager()
+        return sorted(manager.ekg_config.kg_configs.keys())
+    except Exception as exc:
+        logger.warning("Could not load KG configurations: %s", exc)
+        return ["default"]
+
+
+def _initialize_session_state() -> None:
+    """Initialize session state variables for this page."""
+    if "kg_config_selected" not in sss:
+        try:
+            manager = get_kg_manager()
+            sss.kg_config_selected = manager.ekg_config.kg_config
+        except Exception:
+            sss.kg_config_selected = "default"
+
+    if "tables_selected_table" not in sss:
+        sss.tables_selected_table = None
+
+
+def _select_configuration() -> None:
+    """Render KG configuration selector in the sidebar and apply changes."""
+    available_configs = _get_available_kg_configs()
+
+    with st.sidebar:
+        selected_config = st.selectbox(
+            "⚙️ KG Configuration",
+            options=available_configs,
+            index=available_configs.index(sss.kg_config_selected) if sss.kg_config_selected in available_configs else 0,
+            help="Select the Knowledge Graph configuration whose tables you want to inspect.",
+        )
+
+        if selected_config != sss.kg_config_selected:
+            sss.kg_config_selected = selected_config
+
+            cfg = global_config()
+            cfg.set("kg_config", selected_config)
+
+            get_kg_manager.invalidate()  # pyright: ignore[reportFunctionMemberAccess]
+
+            st.rerun()
+
+
+def _discover_table_subgraphs() -> list[TableInfo]:
+    """Discover all TableBackedFactory instances in the current configuration."""
+    tables: list[TableInfo] = []
+
+    try:
+        manager = get_kg_manager()
+        profile_cfg = manager.get_profile_dict()
+        graphs_cfg = profile_cfg.get("graphs", []) or []
+
+        for graph_cfg in graphs_cfg:
+            if not isinstance(graph_cfg, dict):
+                continue
+
+            factory_path = graph_cfg.get("factory")
+            files = graph_cfg.get("files", [])
+
+            if not factory_path or not files:
+                continue
+
+            # Try to import and check if it's a TableBackedFactory
+            try:
+                imported = import_from_qualified(factory_path)
+                if not isinstance(imported, type) or not issubclass(imported, TableBackedFactory):
+                    continue
+
+                # Build constructor kwargs (strip orchestration-only keys)
+                constructor_kwargs = {
+                    k: v for k, v in graph_cfg.items() if k not in {"factory", "initial_load", "trigger", "pull"}
+                }
+
+                # Resolve file paths to UPath
+                if "files" in constructor_kwargs:
+                    constructor_kwargs["files"] = [
+                        UPath(resolve_config_path(str(f))) for f in constructor_kwargs["files"]
+                    ]
+
+                resolved_files = [str(f) for f in constructor_kwargs["files"]]
+
+                # Instantiate to get table_name and cache_dir
+                # (also warms up the in-memory DataFrame if not already loaded)
+                subgraph_instance: TableBackedFactory = imported(**constructor_kwargs)
+                table_name = subgraph_instance.table_name
+                cache_dir = subgraph_instance._get_cache_dir()
+
+                # Row count: from loaded DataFrame
+                try:
+                    df = subgraph_instance._get_df()
+                    row_count = len(df)
+                except Exception:
+                    # Fall back to summing meta.json files if DataFrame not ready
+                    row_count = _row_count_from_meta(cache_dir)
+
+                tables.append(
+                    TableInfo(
+                        subgraph_name=factory_path.split(":")[-1],
+                        table_name=table_name,
+                        cache_dir=str(cache_dir),
+                        source_files=resolved_files,
+                        row_count=row_count,
+                    )
+                )
+
+            except Exception as exc:
+                logger.warning("Could not process subgraph %s: %s", factory_path, exc)
+                continue
+
+    except Exception as exc:
+        logger.error("Failed to discover table subgraphs: %s", exc)
+
+    return tables
+
+
+def _row_count_from_meta(cache_dir: UPath) -> int:
+    """Sum row_count values from all .meta.json sidecars in a cache directory."""
+    from genai_graph.kg.factories.table_factory import TableFileCacheMeta
+
+    total = 0
+    try:
+        for meta_path in cache_dir.glob("*.meta.json"):
+            try:
+                meta = TableFileCacheMeta.model_validate_json(meta_path.read_text())
+                total += meta.row_count
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return total
+
+
+def _load_table_data(table_info: TableInfo) -> pd.DataFrame:
+    """Load all data from the Parquet cache for this table."""
+    cache_dir = UPath(table_info.cache_dir)
+    try:
+        parquet_files = sorted(cache_dir.glob("*.parquet"))
+        if not parquet_files:
+            return pd.DataFrame()
+        frames = [pd.read_parquet(str(p)) for p in parquet_files]
+        return pd.concat(frames, ignore_index=True)
+    except Exception as exc:
+        logger.error("Failed to load table %s: %s", table_info.table_name, exc)
+        return pd.DataFrame()
+
+
+def _select_table(tables: list[TableInfo], data_roots: list[Path]) -> TableInfo | None:
+    """Render table selector in the sidebar and return the chosen table."""
+    if not tables:
+        return None
+
+    with st.sidebar:
+        st.markdown("---")
+        st.markdown("### 📊 Tables")
+
+        labels = []
+        for t in tables:
+            if t.source_files:
+                relative_files = [_make_relative_path(f, data_roots) for f in t.source_files]
+                file_names = [Path(f).name for f in relative_files]
+                labels.append(f"{', '.join(file_names)} ({t.row_count} rows)")
+            else:
+                labels.append(f"{t.table_name} ({t.row_count} rows)")
+
+        default_index = 0
+        if sss.tables_selected_table:
+            for i, t in enumerate(tables):
+                if t.table_name == sss.tables_selected_table:
+                    default_index = i
+                    break
+
+        selected_label = st.selectbox(
+            "Source File",
+            options=labels,
+            index=default_index,
+        )
+
+        selected_index = labels.index(selected_label)
+        sss.tables_selected_table = tables[selected_index].table_name
+
+        return tables[selected_index]
+
+
+def _render_table_info(table_info: TableInfo, data_roots: list[Path]) -> None:
+    """Render table metadata information."""
+    st.subheader("📋 Table Information")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Table Name", table_info.table_name)
+    with col2:
+        st.metric("Row Count", table_info.row_count)
+
+    st.markdown(f"**Cache Directory:** `{table_info.cache_dir}`")
+
+    if table_info.source_files:
+        st.markdown("**Source Files:**")
+        for f in table_info.source_files:
+            relative = _make_relative_path(f, data_roots)
+            st.caption(f"📄 {relative}")
+
+
+def _render_table_data(table_info: TableInfo) -> None:
+    """Render the table data with search and filtering."""
+    st.subheader("📊 Table Data")
+
+    df = _load_table_data(table_info)
+
+    if df.empty:
+        st.warning("No data found in this table. Run `cli kg create` to populate the cache.")
+        return
+
+    search_term = st.text_input("🔍 Search", placeholder="Filter rows containing...")
+
+    if search_term:
+        mask = df.astype(str).apply(lambda row: row.str.contains(search_term, case=False, na=False).any(), axis=1)
+        df_filtered = df[mask]
+        st.caption(f"Showing {len(df_filtered)} of {len(df)} rows matching '{search_term}'")
+    else:
+        df_filtered = df
+        st.caption(f"Showing all {len(df)} rows")
+
+    with st.expander("🔧 Column Selection", expanded=False):
+        all_columns = df.columns.tolist()
+        selected_columns = st.multiselect(
+            "Select columns to display",
+            options=all_columns,
+            default=all_columns,
+        )
+        if selected_columns:
+            df_filtered = df_filtered[selected_columns]
+
+    st.dataframe(
+        df_filtered,
+        width="stretch",
+        hide_index=True,
+    )
+
+
+def _render_import_history(table_info: TableInfo, data_roots: list[Path]) -> None:
+    """Render the import history from .meta.json sidecar files."""
+    from genai_graph.kg.factories.table_factory import TableFileCacheMeta
+
+    st.subheader("📜 Import History")
+
+    cache_dir = UPath(table_info.cache_dir)
+    meta_files = sorted(cache_dir.glob("*.meta.json")) if cache_dir.exists() else []
+
+    if not meta_files:
+        st.info("No import history found. Run `cli kg create` to populate the cache.")
+        return
+
+    history_data = []
+    for meta_path in meta_files:
+        try:
+            meta = TableFileCacheMeta.model_validate_json(meta_path.read_text())
+            relative_path = _make_relative_path(meta.source_path, data_roots)
+            history_data.append(
+                {
+                    "File": relative_path,
+                    "Checksum": meta.checksum[:12] + "..." if len(meta.checksum) > 12 else meta.checksum,
+                    "Import Date": meta.import_date,
+                    "Row Count": meta.row_count,
+                    "Parquet": meta_path.stem.replace(".meta", "") + ".parquet",
+                }
+            )
+        except Exception as exc:
+            logger.warning("Could not read meta file %s: %s", meta_path, exc)
+
+    if history_data:
+        df = pd.DataFrame(history_data)
+        st.dataframe(df, width="stretch", hide_index=True)
+    else:
+        st.warning("Could not parse import history.")
+
+
+def main() -> None:
+    """Main Streamlit app for KG table exploration."""
+    st.set_page_config(
+        page_title="Knowledge Graph Tables",
+        page_icon="📊",
+        layout="wide",
+    )
+
+    _initialize_session_state()
+
+    st.title("📊 Knowledge Graph Tables")
+    st.markdown(
+        """Explore data loaded from Excel and CSV files into the Knowledge Graph.""",
+    )
+
+    _select_configuration()
+
+    data_roots = _get_data_roots()
+
+    tables = _discover_table_subgraphs()
+
+    if not tables:
+        st.info(
+            "No table-backed subgraphs found for this configuration. "
+            "Ensure you have TableBackedFactory subgraphs configured with `files` parameters."
+        )
+        return
+
+    selected_table = _select_table(tables, data_roots)
+
+    if not selected_table:
+        st.info("Select a table from the sidebar to view its contents.")
+        return
+
+    tab_data, tab_info, tab_history = st.tabs(
+        [
+            "📊 Table Data",
+            "📋 Table Info",
+            "📜 Import History",
+        ]
+    )
+
+    with tab_data:
+        _render_table_data(selected_table)
+
+    with tab_info:
+        _render_table_info(selected_table, data_roots)
+
+    with tab_history:
+        _render_import_history(selected_table, data_roots)
+
+
+if __name__ == "__main__":  # pragma: no cover - manual execution
+    main()
 
 
 def _get_data_roots() -> list[Path]:

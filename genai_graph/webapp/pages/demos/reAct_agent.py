@@ -24,7 +24,7 @@ import uuid
 from typing import Any
 
 import streamlit as st
-from genai_tk.core.llm_factory import get_llm
+from genai_tk.core.llm_factory import LlmFactory, get_llm
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
@@ -48,6 +48,34 @@ EXAMPLE_QUERIES = [
 
 # Backend configuration (database type)
 GRAPH_DB_CONFIG = "default"
+
+
+def get_available_llms() -> list[str]:
+    """Get list of available LLM IDs.
+
+    Returns:
+        Sorted list of available LLM identifiers
+    """
+    try:
+        return LlmFactory.known_items()
+    except Exception as e:
+        logger.warning(f"Could not load available LLMs: {e}")
+        return []
+
+
+def get_default_llm() -> str:
+    """Get the default LLM ID from configuration.
+
+    Returns:
+        Default LLM identifier
+    """
+    try:
+        from genai_tk.utils.config_mngr import global_config
+
+        return global_config().get_str("llm.models.default")
+    except Exception as e:
+        logger.warning(f"Could not load default LLM: {e}")
+        return ""
 
 
 def get_available_kg_configs() -> list[str]:
@@ -81,6 +109,10 @@ def initialize_session_state() -> None:
             sss.kg_config_selected = manager.profile
         except Exception:
             sss.kg_config_selected = "default"
+    if "llm_selected" not in sss:
+        # Get default LLM from configuration
+        default_llm = get_default_llm()
+        sss.llm_selected = default_llm or (get_available_llms()[0] if get_available_llms() else "")
 
 
 def clear_chat_history() -> None:
@@ -96,6 +128,16 @@ def handle_kg_config_change() -> None:
     get_kg_manager.invalidate()  # pyright: ignore[reportFunctionMemberAccess]
 
     # Reset agent to force recreation with new config
+    sss.agent = None
+    sss.agent_config = None
+
+    # Clear chat history
+    clear_chat_history()
+
+
+def handle_llm_change() -> None:
+    """Handle LLM selection change by resetting the agent."""
+    # Reset agent to force recreation with new LLM
     sss.agent = None
     sss.agent_config = None
 
@@ -255,13 +297,26 @@ def display_sidebar() -> None:
     with st.sidebar:
         st.header("⚙️ Configuration")
 
-        # Display LLM info (read-only)
-        try:
-            llm = get_llm()
-            llm_name = getattr(llm, "model_name", None) or getattr(llm, "model", "Unknown")
-            st.info(f"**LLM:** {llm_name}")
-        except Exception as e:
-            st.warning(f"LLM: Not configured ({e})")
+        # LLM selector
+        st.subheader("Language Model")
+        available_llms = get_available_llms()
+
+        if available_llms:
+            # Find current selection index
+            current_index = 0
+            if sss.llm_selected in available_llms:
+                current_index = available_llms.index(sss.llm_selected)
+
+            selected_llm = st.selectbox(
+                "Select LLM:",
+                options=available_llms,
+                index=current_index,
+                key="llm_selector",
+                on_change=handle_llm_change,
+            )
+            sss.llm_selected = selected_llm
+        else:
+            st.warning("No LLMs available")
 
         # Display tools info
         st.caption("**Tools:** EKG Cypher Query")
@@ -318,8 +373,8 @@ async def setup_agent_if_needed() -> Any:
     """
     if sss.agent is None:
         with st.spinner("Setting up EKG agent..."):
-            # Get LLM
-            llm = get_llm()
+            # Get LLM with selected LLM ID
+            llm = get_llm(llm=sss.llm_selected)
 
             # Get current KG manager
             manager = get_kg_manager()

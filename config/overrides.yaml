@@ -23,7 +23,7 @@ ekg_local:
 
   llm:
     models:
-      default: kimi_k2@openrouter
+      default: minimax_m25@openrouter
   
   embeddings:
     models:
@@ -54,7 +54,7 @@ ekg_local:
     - genai_tk.core.commands_info:InfoCommands
     - genai_tk.extra.commands_extra:ExtraCommands
     - genai_tk.extra.rag.commands_rag:RagCommands
-    - genai_tk.extra.agents.commands_agents:AgentCommands
+    - genai_tk.agents.commands_agents:AgentCommands
     - genai_tk.extra.structured.commands_baml:BamlCommands
     - genai_graph.core.commands_ekg:EkgCommands
     - genai_graph.neo4j_import.commands:Neo4jCommands

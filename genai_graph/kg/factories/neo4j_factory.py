@@ -14,6 +14,7 @@ Features:
 import json
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from genai_tk.core.embeddings_factory import EmbeddingsFactory
 from loguru import logger
 from pydantic import BaseModel, Field
 from upath import UPath
@@ -51,6 +52,12 @@ class Neo4jNodeMapping(BaseModel):
     name_field: str = Field(default="name", description="Field to use as node display name")
     key_field: str = Field(default="id", description="Field to use as primary key")
     index_fields: list[str] = Field(default_factory=list, description="Fields to index for vector search")
+    embedding_models: dict[str, str] = Field(
+        default_factory=dict,
+        description="Map of target_field_name -> embeddings_id for pre-computed list[float] fields. "
+        "Used to determine the FLOAT[N] column dimension. "
+        "Example: {'description_embedding': 'ada_002@openai'}",
+    )
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -469,9 +476,24 @@ class Neo4jImportFactory(Neo4jFactory):
         node_mappings = self.get_node_mappings()
         relation_mappings = self.get_relation_mappings()
 
+        # Pre-build a dimension lookup from all registered embedding models (no API key needed)
+        all_embedding_models = {item.id: item for item in EmbeddingsFactory.known_list()}
+
         # Build GraphNode list from node mappings
         graph_nodes: list[GraphNode] = []
         for mapping in node_mappings:
+            # Resolve embedding_field_dimensions from embedding_models
+            embedding_field_dims: dict[str, int] = {}
+            for field_name, model_id in mapping.embedding_models.items():
+                info = all_embedding_models.get(model_id)
+                if info and info.dimension:
+                    embedding_field_dims[field_name] = info.dimension
+                else:
+                    logger.warning(
+                        f"Cannot resolve dimension for embedding model '{model_id}' "
+                        f"on field '{field_name}' of {mapping.target_label}"
+                    )
+
             graph_nodes.append(
                 GraphNode(
                     node_class=mapping.node_class,
@@ -479,6 +501,7 @@ class Neo4jImportFactory(Neo4jFactory):
                     key_from=mapping.key_field,
                     description=mapping.description,
                     index_fields=mapping.index_fields,
+                    embedding_field_dimensions=embedding_field_dims,
                     explicitly_defined=True,  # Neo4j nodes don't need field path validation
                 )
             )
@@ -566,9 +589,33 @@ class Neo4jImportFactory(Neo4jFactory):
                 if prop_mapping:
                     # Only include mapped properties
                     mapped_props = {}
+                    model_fields = getattr(mapping.node_class, "model_fields", {}) if mapping else {}
                     for neo4j_prop, target_prop in prop_mapping.items():
-                        if neo4j_prop in node:
-                            mapped_props[target_prop] = node[neo4j_prop]
+                        if neo4j_prop not in node:
+                            continue
+                        value = node[neo4j_prop]
+                        # Deserialize JSON-string embeddings (list[float] fields stored as strings in JSONL)
+                        if isinstance(value, str) and target_prop in model_fields:
+                            ann = model_fields[target_prop].annotation
+                            # Unwrap Optional
+                            if hasattr(ann, "__args__"):
+                                inner_args = [a for a in ann.__args__ if a is not type(None)]
+                                if inner_args:
+                                    ann = inner_args[0]
+                            if (
+                                hasattr(ann, "__origin__")
+                                and ann.__origin__ is list
+                                and hasattr(ann, "__args__")
+                                and ann.__args__
+                                and ann.__args__[0] is float
+                            ):
+                                try:
+                                    parsed = json.loads(value)
+                                    if isinstance(parsed, list):
+                                        value = [float(v) for v in parsed]
+                                except (json.JSONDecodeError, ValueError, TypeError):
+                                    logger.debug(f"Could not parse embedding string for {target_prop}")
+                        mapped_props[target_prop] = value
                 else:
                     # No mapping - copy all properties except internal ones
                     mapped_props = {k: v for k, v in node.items() if not k.startswith("_")}

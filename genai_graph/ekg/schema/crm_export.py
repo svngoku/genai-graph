@@ -118,18 +118,18 @@ if __name__ == "__main__":
 
     console = Console()
 
-    TEST_FILE = "misc/report1750429630460_SHORTEN.xlsx"
+    TEST_FILE = "crm_export/report1750429630460_SHORTEN.xlsx"
 
     root = global_config().get_dir_path("paths.ekg_data")
     test_file = root / TEST_FILE
     assert test_file.exists(), f"File not found: {test_file}"
 
-    console.print(Panel.fit("[bold cyan]Testing CrmExtractSubGraph[/bold cyan]", border_style="cyan"))
+    console.print(Panel.fit("[bold cyan]Testing CrmExtractGraph[/bold cyan]", border_style="cyan"))
 
-    # Test 1: Create subgraph and load data
-    console.print("\n[bold blue]Test 1:[/bold blue] Creating CrmExtractSubGraph and loading data...")
-    sg = CrmExtractSubGraph(db_dsn="sqlite:////tmp/mydatabase2.db", files=[test_file])
-    console.print("[green]✓[/green] CrmExtractSubGraph created successfully")
+    # Test 1: Create graph and load data
+    console.print("\n[bold blue]Test 1:[/bold blue] Creating CrmExtractGraph and loading data...")
+    sg = CrmExtractGraph(files=[test_file])
+    console.print("[green]✓[/green] CrmExtractGraph created successfully")
 
     # Test 2: Query existing data
     test_key = "9000559500"
@@ -139,7 +139,6 @@ if __name__ == "__main__":
     if result:
         console.print(f"[green]✓[/green] Found data for key {test_key}")
 
-        # Type narrow for IDE support
         assert isinstance(result, Opportunity)
 
         table = Table(show_header=True, header_style="bold magenta", show_lines=True)
@@ -164,17 +163,10 @@ if __name__ == "__main__":
     else:
         console.print("[red]✗[/red] Expected None but got a result")
 
-    # Test 4: Re-run to verify deduplication (should skip already imported file)
-    console.print("\n[bold blue]Test 4:[/bold blue] Creating new instance to test import tracking...")
-    sg2 = CrmExtractSubGraph(db_dsn="sqlite:////tmp/mydatabase.db", files=[test_file])
-    console.print("[green]✓[/green] Second instance created - file was skipped (check logs above)")
-
-    # Test 5: Test with custom pandas parameters (if user uncomments)
-    # console.print("\n[bold blue]Test 5:[/bold blue] Testing with custom pandas parameters...")
-    # sg3 = CrmExtractSubGraph(
-    #     db_dsn="sqlite:///temp/mydatabase.db",
-    #     files=[test_file],
-    #     pd_read_parameters={"sheet_name": 0, "skiprows": 1}
-    # )
+    # Test 4: Re-run to verify cache hit (second init should skip loading)
+    console.print("\n[bold blue]Test 4:[/bold blue] Creating second instance to test cache hit...")
+    CrmExtractGraph.clear_cache()
+    sg2 = CrmExtractGraph(files=[test_file])
+    console.print("[green]✓[/green] Second instance created - Parquet cache was used (check logs above)")
 
     console.print(Panel.fit("[bold green]All tests completed successfully! ✓[/bold green]", border_style="green"))

@@ -27,6 +27,7 @@ from typing import (
     no_type_check,
 )
 
+from genai_tk.utils.hashing import buffer_digest
 from loguru import logger
 from pydantic import BaseModel, PrivateAttr, model_validator
 
@@ -146,6 +147,11 @@ class GraphNode(BaseModel):
     key_from: str | Callable[[dict[str, Any], str], str] = "AUTO_ID"
     description: str = ""
     index_fields: list[str] = []
+    compute_embeddings: bool = True  # Whether to compute embeddings for index_fields
+    embedding_model: str | None = None  # Override default model for this node type; None uses config default
+    # Dimensions for pre-computed list[float] fields (e.g. {"description_embedding": 1536})
+    # Populated automatically from embedding_models in Neo4jNodeMapping.build_schema()
+    embedding_field_dimensions: dict[str, int] = {}
 
     # Set to True for nodes from explicit mappings (Neo4j, etc.) to skip orphan warnings
     explicitly_defined: bool = False
@@ -797,6 +803,7 @@ class GraphSchema(BaseModel):
         #         )
 
         # Validate embedded field configurations (MAP/STRUCT support)
+        import types
         from typing import get_args, get_origin
 
         for node in self.nodes:
@@ -832,7 +839,7 @@ class GraphSchema(BaseModel):
                     inner = args[0] if args else None
                     if inner is not None:
                         candidate_types = [inner]
-                elif origin is Union:
+                elif origin is Union or origin is types.UnionType:
                     candidate_types = [t for t in args if t is not type(None)]  # noqa: E721
 
                 if embedded_class not in candidate_types:
@@ -869,8 +876,6 @@ class GraphSchema(BaseModel):
         Returns:
             Hex string (xxh3_64) of the schema structure.
         """
-        from genai_tk.utils.hashing import buffer_digest
-
         parts: list[str] = []
 
         # Root model class

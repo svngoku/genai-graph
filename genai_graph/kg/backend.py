@@ -214,7 +214,7 @@ class KuzuBackend(KgBackend):
         """Execute a Cypher query on Kuzu."""
         if not self.conn:
             raise RuntimeError("Not connected to database")
-        return self.conn.execute(query)
+        return self.conn.execute(query, parameters)
 
     def create_node_table(
         self,
@@ -348,6 +348,122 @@ class KuzuBackend(KgBackend):
         # Return tuple of (was_created, node_id)
         # Note: Simplified return - actual was_created status would require checking result
         return (True, str(merge_value))
+
+    def ensure_vector_extension(self) -> None:
+        """Install and load the Kuzu vector extension."""
+        try:
+            self.execute("INSTALL VECTOR;")
+            self.execute("LOAD VECTOR;")
+        except Exception as e:
+            # Vector extension may already be loaded
+            from loguru import logger
+
+            logger.debug(f"Vector extension status: {e}")
+
+    def create_vector_index(
+        self,
+        table_name: str,
+        field_name: str,
+        index_name: str,
+        metric: str = "cosine",
+        mu: int = 30,
+        ml: int = 60,
+        pu: float = 0.05,
+        efc: int = 200,
+    ) -> None:
+        """Create a vector index on a FLOAT[] field in Kuzu.
+
+        Args:
+            table_name: Table containing the vector field
+            field_name: FLOAT[] field to index
+            index_name: Name for the created index
+            metric: Distance metric (cosine, l2, l2sq, dotproduct). Default: cosine
+            mu: Max degree of nodes in upper graph. Default: 30
+            ml: Max degree of nodes in lower graph. Default: 60
+            pu: Percentage of nodes sampled into upper graph. Default: 0.05
+            efc: Number of candidate vertices during construction. Default: 200
+
+        Raises:
+            Exception: If vector extension is not available or index creation fails
+        """
+        from loguru import logger
+
+        # Ensure vector extension is loaded
+        self.ensure_vector_extension()
+
+        try:
+            cypher = (
+                f"CALL CREATE_VECTOR_INDEX("
+                f"    '{table_name}',"
+                f"    '{index_name}',"
+                f"    '{field_name}',"
+                f"    mu := {mu},"
+                f"    ml := {ml},"
+                f"    pu := {pu},"
+                f"    metric := '{metric}',"
+                f"    efc := {efc},"
+                f"    cache_embeddings := true"
+                f");"
+            )
+            self.execute(cypher)
+            logger.info(f"Created vector index {index_name} on {table_name}.{field_name}")
+        except Exception as e:
+            logger.error(f"Failed to create vector index {index_name}: {e}")
+            raise
+
+    def drop_vector_index(self, table_name: str, index_name: str) -> None:
+        """Drop a vector index from Kuzu.
+
+        Args:
+            table_name: Table containing the index
+            index_name: Name of the index to drop
+        """
+        from loguru import logger
+
+        try:
+            self.execute(f"CALL DROP_VECTOR_INDEX('{table_name}', '{index_name}');")
+            logger.info(f"Dropped vector index {index_name}")
+        except Exception as e:
+            logger.debug(f"Failed to drop vector index {index_name}: {e}")
+
+    def query_vector_index(
+        self,
+        table_name: str,
+        index_name: str,
+        query_vector: list[float],
+        k: int,
+        efs: int = 200,
+    ) -> Any:
+        """Query a vector index for k nearest neighbors.
+
+        Args:
+            table_name: Table containing the index
+            index_name: Name of the vector index
+            query_vector: Query embedding vector
+            k: Number of nearest neighbors to return
+            efs: Number of candidate vertices to consider during search. Default: 200
+
+        Returns:
+            Kuzu query result with node and distance columns
+        """
+        from loguru import logger
+
+        try:
+            cypher = (
+                f"CALL QUERY_VECTOR_INDEX("
+                f"    '{table_name}',"
+                f"    '{index_name}',"
+                f"    $query_vector,"
+                f"    {k},"
+                f"    efs := {efs}"
+                f") RETURN node, distance;"
+            )
+            result = self.execute(cypher, {"query_vector": query_vector})
+            logger.debug("Vector index query returned results")
+            return result
+        except Exception as e:
+            logger.error(f"Vector index query failed: {e}")
+            raise
 
     def close(self) -> None:
         """Close Kuzu connection."""

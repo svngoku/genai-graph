@@ -385,11 +385,11 @@ class EkgCommands(CliTopCommand):
             import asyncio
             import sys
 
+            from genai_tk.agents.langchain_setup import setup_langchain
             from genai_tk.cli.langchain_agent import (
                 run_langchain_agent_direct,
                 run_langchain_agent_shell,
             )
-            from genai_tk.extra.agents.langchain_setup import setup_langchain
 
             from genai_graph.kg.manager import get_kg_manager
             from genai_graph.kg.query import (

@@ -9,6 +9,12 @@ paths:
   add_json : ${paths.ekg_data}/arch_doc/json/
   stratnav_db : ${paths.ekg_data}/stratnav
 
+kg_build:
+  llms:
+    default: gpt_oss120@openrouter   
+  embeddings:
+    default: qwen3_06b@deepinfra
+
 kg_configs:
   one_rainbow:
     graphs:
@@ -25,7 +31,6 @@ kg_configs:
   crm_export:  
     graphs:
       - factory: "${schemas_root}.crm_export:CrmExtractGraph"
-        db_dsn: sqlite:///${paths.data_root}/ekg/crm_extract.db
         files:
           - ${paths.ekg_data}/crm_export/report1750429630460_SHORTEN.xlsx
         pd_read_parameters: {} 
@@ -73,6 +78,9 @@ kg_configs:
     graphs:
       - factory: genai_graph.ekg.schema.stratnav:StratnavGraph 
         neo4j_export_file: ${paths.stratnav_db}/subset/sn-subset200.jsonl
+        embeddings:
+          - field: L3.descriptionEmbedding
+            model: ada_002@openai
 
   stratnav_subset_rainbow_crm:
     import:

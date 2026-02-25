@@ -518,7 +518,39 @@ def _prepare_node_dataframe(
 
         cleaned_nodes.append(cleaned)
 
-    return pd.DataFrame(cleaned_nodes)
+    df = pd.DataFrame(cleaned_nodes)
+
+    # Cast float-list (embedding) columns to a pyarrow-backed dtype so Kuzu's
+    # LOAD FROM df scanner identifies them as list<float64> rather than STRING.
+    # This is necessary because pandas uses dtype=object for Python list cells,
+    # which Kuzu would otherwise infer as STRING.
+    try:
+        import pyarrow as pa
+
+        for col in list(df.columns):
+            if df[col].dtype != object:
+                continue
+            # Sample the first non-null value
+            non_null = df[col].dropna()
+            if non_null.empty:
+                continue
+            sample = non_null.iloc[0]
+            if (
+                isinstance(sample, list)
+                and sample
+                and isinstance(sample[0], (int, float))
+                and not isinstance(sample[0], bool)
+            ):
+                # Cast to an Arrow-backed dtype so Kuzu's LOAD FROM df scanner
+                # identifies the column as list<float64> instead of STRING.
+                # None/NaN → null (preserved by from_pandas=True in pa.array).
+                raw = [v if isinstance(v, list) else None for v in df[col]]
+                arrow_arr = pa.array(raw, type=pa.list_(pa.float64()), from_pandas=True)
+                df[col] = pd.Series(pd.arrays.ArrowExtensionArray(arrow_arr), index=df.index)
+    except Exception:
+        pass  # Non-critical: fall back to object dtype if arrow not available
+
+    return df
 
 
 def _get_columns_for_set_clause(

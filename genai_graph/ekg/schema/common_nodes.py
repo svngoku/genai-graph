@@ -44,6 +44,9 @@ class L3(BaseModel):
     grace_period_ends: str | None = Field(default=None, description="Grace period end date")
     major_version: int | None = Field(default=None, description="Major version number")
     minor_version: int | None = Field(default=None, description="Minor version number")
+    description_embedding: list[float] | None = Field(
+        default=None, description="Embedding of L3 description (OpenAI ada-002)"
+    )
 
 
 class Geo(BamlGeo):

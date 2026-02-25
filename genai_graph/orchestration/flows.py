@@ -23,6 +23,7 @@ from genai_graph.orchestration.dag import resolve_import_dag
 from genai_graph.orchestration.models import BundleResult, ImportResult, KgRunResult, WarningsCollector
 from genai_graph.orchestration.tasks import (
     create_schema_task,
+    create_vector_indexes_task,
     delete_backend_task,
     export_html_task,
     export_info_task,
@@ -161,6 +162,11 @@ def create_kg_flow(
     finally:
         # Clear collector reference after ingestion
         set_parquet_collector(None)
+
+    # ------------------------------------------------------------------
+    # 6b. Create vector indexes for embedding fields
+    # ------------------------------------------------------------------
+    create_vector_indexes_task.submit(bundles, backend).result()
 
     # Aggregate stats from all bundles
     total_stats = DocumentStats()

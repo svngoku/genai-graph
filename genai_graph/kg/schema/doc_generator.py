@@ -474,6 +474,8 @@ def _get_kuzu_type_for_field(annotation: Any) -> str:
     if origin is list:
         inner_args = get_args(actual_type)
         if inner_args:
+            if inner_args[0] is float:
+                return "FLOAT[]"
             inner_type = _get_kuzu_type_for_field(inner_args[0])
             # Remove trailing [] if present to avoid double array notation
             inner_base = inner_type.rstrip("[]")

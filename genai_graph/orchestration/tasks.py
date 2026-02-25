@@ -60,7 +60,7 @@ def resolve_config_task(config_name: str | None) -> tuple[str, dict[str, Any]]:
     logger_pf = _get_prefect_logger_or_default()
 
     manager = get_kg_manager()
-    effective = config_name if config_name else manager.profile
+    effective = config_name or manager.profile
 
     if effective not in manager.ekg_config.kg_configs:
         raise ValueError(
@@ -500,6 +500,77 @@ def _create_schema_for_import(import_name: str, backend: Any, log: Any, visited:
     bundles = create_schema_task.fn(bundles, backend)
 
     log.info(f"Created schema from '{import_name}' with {len(bundles)} subgraph(s)")
+
+
+@task(cache_policy=NO_CACHE)
+def create_vector_indexes_task(bundles: list[GraphBundle], backend: KgBackend) -> None:
+    """Create vector indexes for embedding fields in the knowledge graph.
+
+    After all nodes are ingested, create HNSW vector indexes on fields
+    marked as embeddings in the node configurations.
+
+    Args:
+        bundles: List of GraphBundles with node configurations
+        backend: KgBackend instance (Kuzu)
+    """
+    log = _get_prefect_logger_or_default()
+
+    if not isinstance(backend, type(backend).__bases__[0]) and not hasattr(backend, "create_vector_index"):
+        log.warning("Backend does not support vector indexes, skipping")
+        return
+
+    from genai_graph.kg.backend import KuzuBackend
+
+    if not isinstance(backend, KuzuBackend):
+        log.debug("Skipping vector index creation for non-Kuzu backend")
+        return
+
+    index_count = 0
+    for bundle in bundles:
+        if bundle.schema_obj is None:
+            log.debug("Skipping vector index creation; bundle schema is missing")
+            continue
+        for config in bundle.schema_obj.nodes:
+            # Skip if not computing embeddings or no index fields
+            if not config.compute_embeddings or not config.index_fields:
+                continue
+
+            table_name = config.node_class.__name__
+            try:
+                table_info = backend.execute(f"CALL table_info('{table_name}') RETURN *;")
+                existing_columns = {row[1] for row in table_info}
+            except Exception as e:
+                log.warning(f"Failed to inspect table {table_name}: {e}")
+                continue
+            for field in config.index_fields:
+                index_name = f"{field}_index"
+                embedding_field = f"{field}_embedding"
+                if embedding_field not in existing_columns:
+                    log.debug(f"Skipping vector index {index_name}; column {embedding_field} not found in {table_name}")
+                    continue
+                try:
+                    backend.create_vector_index(table_name, embedding_field, index_name, metric="cosine")
+                    index_count += 1
+                except Exception as e:
+                    log.warning(f"Failed to create vector index {index_name}: {e}")
+
+            # Also create indexes for pre-computed list[float] fields (not generated from index_fields)
+            generated_embedding_fields = {f"{f}_embedding" for f in config.index_fields}
+            for emb_field in config.embedding_field_dimensions:
+                if emb_field in generated_embedding_fields:
+                    continue  # Already handled above
+                if emb_field not in existing_columns:
+                    log.debug(f"Skipping vector index; column {emb_field} not found in {table_name}")
+                    continue
+                index_name = f"{emb_field.removesuffix('_embedding')}_index"
+                try:
+                    backend.create_vector_index(table_name, emb_field, index_name, metric="cosine")
+                    index_count += 1
+                except Exception as e:
+                    log.warning(f"Failed to create vector index {index_name}: {e}")
+
+    if index_count > 0:
+        log.info(f"Created {index_count} vector index(es)")
 
 
 # ---------------------------------------------------------------------------

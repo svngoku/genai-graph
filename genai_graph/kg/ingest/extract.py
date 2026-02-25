@@ -4,14 +4,18 @@ This module provides functions for extracting graph data from Pydantic models
 and creating the graph schema and nodes/relationships in the database.
 """
 
+import json
 from datetime import datetime
 from typing import Any, Dict, NamedTuple, Union
 
+from genai_tk.core.embeddings_factory import EmbeddingsFactory
+from genai_tk.utils.config_mngr import global_config
 from loguru import logger
 from pydantic import BaseModel
 from rich.console import Console
 
 from genai_graph.kg.backend import KgBackend, create_in_memory_backend
+from genai_graph.kg.embeddings_handler import EmbeddingsHandler
 from genai_graph.kg.ingest.extra_fields import apply_extra_fields
 from genai_graph.kg.ingest.merge import (
     NodeDataCollection,
@@ -107,6 +111,10 @@ def _get_kuzu_type(annotation: Any) -> str:
 
     # Check if it's a list type (after unwrapping Optional)
     if origin is list:
+        # Check element type for list[float] -> FLOAT[]
+        args = typing.get_args(actual_type)
+        if args and args[0] is float:
+            return "FLOAT[]"
         return "STRING[]"
     elif actual_type is int:
         return "INT64"
@@ -374,6 +382,7 @@ def create_schema(
             key_field = "id"
 
         fields: list[str] = []
+        field_names: set[str] = set()
         model_fields = node.node_class.model_fields
 
         # Add primary key field first if needed
@@ -381,6 +390,7 @@ def create_schema(
             # AUTO_ID generates UUID, callable computes key, or explicit 'id' field
             # - all stored as STRING in the 'id' column
             fields.append("id STRING")
+            field_names.add("id")
         # If key_from is a different field name, that field will be added from model_fields
 
         # Add other metadata fields
@@ -388,6 +398,7 @@ def create_schema(
         fields.append("_original_name STRING")  # Original Pydantic 'name' field if it existed
         fields.append("_created_at STRING")  # ISO timestamp
         fields.append("_updated_at STRING")  # ISO timestamp
+        field_names.update({"name", "_original_name", "_created_at", "_updated_at"})
 
         # Resolve embedded struct field types for this table, if any
         embedded_struct_fields = dict(embedded_struct_fields_by_parent.get(table_name, []))
@@ -410,7 +421,48 @@ def create_schema(
                     kuzu_type = "STRING"
                 else:
                     kuzu_type = _get_kuzu_type(field_info.annotation)
+                    # For pre-computed list[float] fields with a known embedding dimension,
+                    # use FLOAT[N] so Kuzu can build a vector index on them.
+                    if kuzu_type == "FLOAT[]" and field_name in node.embedding_field_dimensions:
+                        kuzu_type = f"FLOAT[{node.embedding_field_dimensions[field_name]}]"
                 fields.append(f"{field_name} {kuzu_type}")
+                field_names.add(field_name)
+
+        # Add embedding columns for index_fields when embeddings are enabled.
+        if node.compute_embeddings and node.index_fields:
+            # Determine the embeddings model and its dimension for FLOAT[N] type
+            embeddings_id = node.embedding_model
+            if embeddings_id is None:
+                try:
+                    embeddings_id = global_config().get_str("kg_build.embeddings.default")
+                except Exception:
+                    embeddings_id = None
+
+            embedding_dim: int | None = None
+            if embeddings_id:
+                try:
+                    # Use known_list() (not known_items_dict) to get dimension without
+                    # requiring the API key to be set in the environment.
+                    all_models = {item.id: item for item in EmbeddingsFactory.known_list()}
+                    info = all_models.get(embeddings_id)
+                    if info:
+                        embedding_dim = info.dimension
+                except Exception as e:
+                    logger.debug(f"Could not look up embedding dimension for {embeddings_id}: {e}")
+
+            if embedding_dim is None:
+                logger.warning(
+                    f"Cannot determine embedding dimension for {table_name} "
+                    f"(model={embeddings_id}); skipping embedding columns"
+                )
+            else:
+                kuzu_embedding_type = f"FLOAT[{embedding_dim}]"
+                for field_name in node.index_fields:
+                    embedding_field = f"{field_name}_embedding"
+                    if embedding_field in field_names:
+                        continue
+                    fields.append(f"{embedding_field} {kuzu_embedding_type}")
+                    field_names.add(embedding_field)
 
         fields_str = ", ".join(fields)
         create_sql = f"CREATE NODE TABLE IF NOT EXISTS {table_name}({fields_str}, PRIMARY KEY({key_field}))"
@@ -511,11 +563,12 @@ def extract_graph_data(
         id_registry[node_type] = {}
 
     # Nodes
+    embeddings_handlers: dict[str, EmbeddingsHandler] = {}
     for node_info in nodes:
         node_type = node_info.node_class.__name__
 
         # Process ALL field paths for this node type, not just the first one
-        field_paths_to_process = node_info.field_paths if node_info.field_paths else [None]
+        field_paths_to_process = node_info.field_paths or [None]
 
         for field_path in field_paths_to_process:
             field_data = get_field_by_path(model, field_path) if field_path else model
@@ -584,8 +637,6 @@ def extract_graph_data(
                 # evolution on the Kuzu side.
                 try:
                     if "metadata" in item_data and isinstance(item_data["metadata"], dict):
-                        import json
-
                         item_data["metadata"] = json.dumps(item_data["metadata"])
                 except Exception:
                     # Best-effort only; falling back to the original value is fine.
@@ -595,6 +646,40 @@ def extract_graph_data(
                 now = datetime.utcnow().isoformat() + "Z"
                 item_data["_created_at"] = now
                 item_data["_updated_at"] = now
+
+                # Compute embeddings for index_fields when enabled.
+                if node_info.compute_embeddings and node_info.index_fields:
+                    embeddings_id = node_info.embedding_model
+                    if embeddings_id is None:
+                        try:
+                            embeddings_id = global_config().get_str("kg_build.embeddings.default")
+                        except Exception:
+                            embeddings_id = None
+
+                    if embeddings_id:
+                        handler = embeddings_handlers.get(embeddings_id)
+                        if handler is None:
+                            try:
+                                handler = EmbeddingsHandler(embeddings_id=embeddings_id)
+                                embeddings_handlers[embeddings_id] = handler
+                            except Exception as e:
+                                logger.warning(f"Failed to initialize embeddings handler for {embeddings_id}: {e}")
+                                handler = None
+
+                        if handler is not None:
+                            for field_name in node_info.index_fields:
+                                embedding_field = f"{field_name}_embedding"
+                                if embedding_field in item_data:
+                                    continue
+                                field_value = item_data.get(field_name)
+                                if not field_value or not isinstance(field_value, str):
+                                    continue
+                                try:
+                                    item_data[embedding_field] = handler.compute_embeddings(field_value)
+                                except Exception as e:
+                                    logger.warning(f"Failed to compute embedding for {node_type}.{field_name}: {e}")
+                    else:
+                        logger.debug(f"Skipping embeddings for {node_type}; no model configured and no default found")
 
                 # Use primary key for deduplication
                 if key_value not in node_registry[node_type]:
@@ -856,12 +941,24 @@ def _create_dynamic_schema_for_nodes(
         if isinstance(value, float):
             return "DOUBLE"
         if isinstance(value, list):
+            # Peek at first element to distinguish float arrays from string arrays
+            if value and isinstance(value[0], (int, float)) and not isinstance(value[0], bool):
+                return "FLOAT[]"
             return "STRING[]"
         # Check for string boolean values from Neo4j exports
         if isinstance(value, str):
             lower_val = value.lower()
             if lower_val in ("true", "false"):
                 return "BOOL"
+            # Check if it's a JSON-encoded float array (e.g. "[0.1, 0.2, ...]")
+            stripped = value.strip()
+            if stripped.startswith("["):
+                try:
+                    parsed = json.loads(stripped)
+                    if isinstance(parsed, list) and parsed and isinstance(parsed[0], (int, float)):
+                        return "FLOAT[]"
+                except (ValueError, AttributeError):
+                    pass
         return "STRING"
 
     def _coerce_value(value: Any, kuzu_type: str) -> Any:
@@ -888,6 +985,22 @@ def _create_dynamic_schema_for_nodes(
                 return float(value)
             except (ValueError, TypeError):
                 return None
+        if kuzu_type == "FLOAT[]":
+            # Deserialize JSON-encoded string arrays (e.g. "[0.1, 0.2, ...]")
+            if isinstance(value, str):
+                try:
+                    parsed = json.loads(value)
+                    if isinstance(parsed, list):
+                        return [float(v) for v in parsed]
+                except (json.JSONDecodeError, ValueError, TypeError):
+                    pass
+                return []
+            if isinstance(value, list):
+                try:
+                    return [float(v) for v in value]
+                except (ValueError, TypeError):
+                    return []
+            return []
         return value
 
     def _get_field_types_from_data(data_list: list[dict[str, Any]]) -> dict[str, str]:
@@ -898,11 +1011,13 @@ def _create_dynamic_schema_for_nodes(
             for field_name, value in item.items():
                 if field_name not in field_types:
                     field_types[field_name] = _infer_kuzu_type(value)
-                elif value is not None and field_types[field_name] == "STRING":
+                elif value is not None:
+                    current = field_types[field_name]
                     # Upgrade type if we see a more specific type
-                    inferred = _infer_kuzu_type(value)
-                    if inferred != "STRING":
-                        field_types[field_name] = inferred
+                    if current in ("STRING", "STRING[]"):
+                        inferred = _infer_kuzu_type(value)
+                        if inferred not in ("STRING", "STRING[]"):
+                            field_types[field_name] = inferred
 
         return field_types
 

@@ -1,28 +1,28 @@
+
+
 ###  Markdown loader
 Refactor /extra/loaders/markdown_loader.py with improvement from /extra/rag/markdown_chunking.py.
-Keep a LangChain interface (ie Document + metadata instead of ChunkInfo - as TypedDict if possible - and inheritnoig BaseLoader ).
+Keep a LangChain interface (ie Document + metadata instead of ChunkInfo - as TypedDict if possible - and inherit BaseLoader ).
 Replace code in genai-graph that uses markdown_chunking with the LangChain compatible loader/splitter. 
 Add test cases.
-
-### Deer-flow CLI
-
 
 
 
 
 # Add embeddings in Kuzu
+we want to use embeddings stored in the Kuzu graph nodes.   Use class EmbeddingsFactory for everything, with caching when possible.
 
-- Ask Paul for latest version
-- to Claude:  
-we want to use embeddings stored in the Kuzu graph nodes.  
-There are 2 situation : 
-  -
-the imported JSON 
+There are 2 situations : 
+  - The field are listed in the list "index_fields" of the class GraphNode. Their embeddings  should be calculated with the default model provided in ekg.yaml; and stored in the graph node/
 
-https://kuzudb.github.io/docs/extensions/vector/
+- the imported JSON : the node "L3" has an array field "descriptionEmbedding" that is an embedding encoded with OpenAI text-embedding-ada-002. Add it in the model and as node of the Kuzu graph.
 
+Generate tests to check queries involving graph and embeddings, for both cases.
+
+Look at doc here: https://kuzudb.github.io/docs/extensions/vector/
+
+Prepare a plan, ask questions, suggest improvements. 
 ...
-
 # Connect BL
 
 
