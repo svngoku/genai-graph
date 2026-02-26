@@ -429,14 +429,12 @@ def create_schema(
                 field_names.add(field_name)
 
         # Add embedding columns for index_fields when embeddings are enabled.
-        if node.compute_embeddings and node.index_fields:
+        if node.index_fields:
             # Determine the embeddings model and its dimension for FLOAT[N] type
-            embeddings_id = node.embedding_model
-            if embeddings_id is None:
-                try:
-                    embeddings_id = global_config().get_str("kg_build.embeddings.default")
-                except Exception:
-                    embeddings_id = None
+            try:
+                embeddings_id = global_config().get_str("kg_build.embeddings.default")
+            except Exception:
+                embeddings_id = None
 
             embedding_dim: int | None = None
             if embeddings_id:
@@ -648,13 +646,11 @@ def extract_graph_data(
                 item_data["_updated_at"] = now
 
                 # Compute embeddings for index_fields when enabled.
-                if node_info.compute_embeddings and node_info.index_fields:
-                    embeddings_id = node_info.embedding_model
-                    if embeddings_id is None:
-                        try:
-                            embeddings_id = global_config().get_str("kg_build.embeddings.default")
-                        except Exception:
-                            embeddings_id = None
+                if node_info.index_fields:
+                    try:
+                        embeddings_id = global_config().get_str("kg_build.embeddings.default")
+                    except Exception:
+                        embeddings_id = None
 
                     if embeddings_id:
                         handler = embeddings_handlers.get(embeddings_id)

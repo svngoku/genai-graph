@@ -298,29 +298,29 @@ class TestGraphNodeEmbeddingConfig:
             name_from="name",
             key_from="id",
         )
-        assert node_config.compute_embeddings is True
-        assert node_config.embedding_model is None
+        # compute_embeddings is derived from index_fields; empty list → False
+        assert node_config.compute_embeddings is False
+        assert node_config.embedding_field_dimensions == {}
         assert node_config.index_fields == []
 
     def test_graph_node_with_embeddings_disabled(self):
-        """Test disabling embeddings on a node type."""
+        """Test that compute_embeddings is False when index_fields is empty."""
         node_config = GraphNode(
             node_class=SimpleNode,
             name_from="name",
             key_from="id",
-            compute_embeddings=False,
         )
         assert node_config.compute_embeddings is False
 
-    def test_graph_node_with_custom_model(self):
-        """Test specifying custom embedding model."""
+    def test_graph_node_with_index_fields_enables_embeddings(self):
+        """Test that compute_embeddings is True when index_fields is non-empty."""
         node_config = GraphNode(
             node_class=SimpleNode,
             name_from="name",
             key_from="id",
-            embedding_model="custom-model@provider",
+            index_fields=["name"],
         )
-        assert node_config.embedding_model == "custom-model@provider"
+        assert node_config.compute_embeddings is True
 
     def test_graph_node_with_index_fields(self):
         """Test index_fields configuration."""
@@ -439,13 +439,13 @@ class TestEmbeddingFieldDimensions:
         assert node.embedding_field_dimensions == {}
 
     def test_graph_node_embedding_field_dimensions_set(self):
-        """Test setting embedding_field_dimensions explicitly."""
+        """Test setting embedding_field_dimensions via internal attribute."""
         node = GraphNode(
             node_class=SimpleNode,
             name_from="name",
             key_from="id",
-            embedding_field_dimensions={"test_embedding": 1536},
         )
+        node._embedding_field_dimensions = {"test_embedding": 1536}
         assert node.embedding_field_dimensions == {"test_embedding": 1536}
 
     def test_create_schema_uses_float_n_for_known_dimension(self, temp_kuzu_db):
@@ -458,8 +458,8 @@ class TestEmbeddingFieldDimensions:
             node_class=SimpleNode,
             name_from="name",
             key_from="id",
-            embedding_field_dimensions={"test_embedding": 768},
         )
+        node._embedding_field_dimensions = {"test_embedding": 768}
 
         create_schema(backend, [node], [])
 
@@ -501,8 +501,8 @@ class TestEmbeddingFieldDimensions:
             node_class=SimpleNode,
             name_from="name",
             key_from="id",
-            embedding_field_dimensions={"test_embedding": 768},
         )
+        node._embedding_field_dimensions = {"test_embedding": 768}
         create_schema(backend, [node], [])
 
         # Should not raise

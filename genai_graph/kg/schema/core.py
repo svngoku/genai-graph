@@ -126,9 +126,12 @@ class GraphNode(BaseModel):
     - Which Pydantic class to create nodes for (`node_class`)
     - Which field to use as primary key for display (`name_from`)
     - Optional customizations like additional structured `extra_classes`
+    - Optional `index_fields` to enable embedding computation
 
-    All field paths, excluded fields, and list detection are automatically
-    determined by introspecting the Pydantic model structure.
+    All field paths, excluded fields, list detection, and embedding dimensions
+    are automatically determined — either by introspecting the Pydantic model
+    structure or by the schema/factory layer — and are not part of the public
+    constructor API.
 
     The ``extra_classes`` attribute is the unified configuration entry for
     additional structured properties attached to a node. It should contain
@@ -147,24 +150,47 @@ class GraphNode(BaseModel):
     key_from: str | Callable[[dict[str, Any], str], str] = "AUTO_ID"
     description: str = ""
     index_fields: list[str] = []
-    compute_embeddings: bool = True  # Whether to compute embeddings for index_fields
-    embedding_model: str | None = None  # Override default model for this node type; None uses config default
-    # Dimensions for pre-computed list[float] fields (e.g. {"description_embedding": 1536})
-    # Populated automatically from embedding_models in Neo4jNodeMapping.build_schema()
-    embedding_field_dimensions: dict[str, int] = {}
 
-    # Set to True for nodes from explicit mappings (Neo4j, etc.) to skip orphan warnings
+    # TODO: consider removing once orphan detection can infer reachability automatically.
+    # Set to True for nodes from explicit mappings (Neo4j, etc.) to skip orphan warnings.
     explicitly_defined: bool = False
 
-    # Auto-deduced attributes (populated during schema validation)
-    field_paths: list[str] = []  # All paths where this class appears in the root model
-    is_list_at_paths: dict[str, bool] = {}  # Whether it's a list at each path
-    excluded_fields: set[str] = set()  # Auto-computed based on relationships
+    # Internal state — set by GraphSchema during schema validation.
+    # Not part of the public constructor API; use the read-only properties below.
+    _field_paths: list[str] = PrivateAttr(default_factory=list)
+    _is_list_at_paths: dict[str, bool] = PrivateAttr(default_factory=dict)
+    _excluded_fields: set[str] = PrivateAttr(default_factory=set)
+    _embedding_field_dimensions: dict[str, int] = PrivateAttr(default_factory=dict)
 
     def model_post_init(self, __context: Any) -> None:  # noqa: D401
         """Hook for future post-init logic (currently unused)."""
         # Kept for forwards-compatibility; no-op for now.
         return None
+
+    @property
+    def compute_embeddings(self) -> bool:
+        """Return True when embedding computation is required (index_fields is non-empty)."""
+        return bool(self.index_fields)
+
+    @property
+    def field_paths(self) -> list[str]:
+        """All field paths where this node class appears in the root model (auto-deduced)."""
+        return self._field_paths
+
+    @property
+    def is_list_at_paths(self) -> dict[str, bool]:
+        """Whether the node is a list at each field path (auto-deduced)."""
+        return self._is_list_at_paths
+
+    @property
+    def excluded_fields(self) -> set[str]:
+        """Fields excluded from node properties because they are handled by relationships (auto-computed)."""
+        return self._excluded_fields
+
+    @property
+    def embedding_field_dimensions(self) -> dict[str, int]:
+        """Dimensions for pre-computed list[float] fields (set by factory, not by users)."""
+        return self._embedding_field_dimensions
 
     @property
     def embedded_struct_classes(self) -> list[type[BaseModel]]:
@@ -523,13 +549,13 @@ class GraphSchema(BaseModel):
     def _deduce_node_field_paths(self) -> None:
         """Auto-deduce field paths for all node configurations."""
         for node_config in self.nodes:
-            node_config.field_paths = []
-            node_config.is_list_at_paths = {}
+            node_config._field_paths = []
+            node_config._is_list_at_paths = {}
 
             # Special case: root model (only if root_model_class is set)
             if self.root_model_class is not None and node_config.node_class == self.root_model_class:
-                node_config.field_paths = [""]  # Empty path = root
-                node_config.is_list_at_paths[""] = False
+                node_config._field_paths = [""]  # Empty path = root
+                node_config._is_list_at_paths[""] = False
                 continue
 
             # Find all paths where this class appears
@@ -733,7 +759,7 @@ class GraphSchema(BaseModel):
             # ``extra_classes`` on the parent node and is never flattened into
             # scalar columns here.
 
-            node_config.excluded_fields = excluded_fields
+            node_config._excluded_fields = excluded_fields
 
     @no_type_check  # Avoid type-checking *ANY* methods or attributes of this class.
     def _validate_coherence(self, context: KgManager | None = None) -> None:

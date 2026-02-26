@@ -20,10 +20,6 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from genai_graph.kg.backend import KgBackend
-from genai_graph.kg.ingest import create_graph, restart_database
-from genai_graph.kg.export import generate_html
-from genai_graph.kg.schema import GraphNode, GraphRelation, GraphSchema
 from genai_graph.ekg.baml_client.types import (
     CompetitiveLandscape,
     Customer,
@@ -34,6 +30,10 @@ from genai_graph.ekg.baml_client.types import (
     RiskAnalysis,
     TechnicalApproach,
 )
+from genai_graph.kg.backend import KgBackend
+from genai_graph.kg.export import generate_html
+from genai_graph.kg.ingest import create_graph, restart_database
+from genai_graph.kg.schema import GraphNode, GraphRelation, GraphSchema
 
 console = Console()
 

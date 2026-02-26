@@ -494,17 +494,16 @@ class Neo4jImportFactory(Neo4jFactory):
                         f"on field '{field_name}' of {mapping.target_label}"
                     )
 
-            graph_nodes.append(
-                GraphNode(
-                    node_class=mapping.node_class,
-                    name_from=mapping.name_field,
-                    key_from=mapping.key_field,
-                    description=mapping.description,
-                    index_fields=mapping.index_fields,
-                    embedding_field_dimensions=embedding_field_dims,
-                    explicitly_defined=True,  # Neo4j nodes don't need field path validation
-                )
+            node = GraphNode(
+                node_class=mapping.node_class,
+                name_from=mapping.name_field,
+                key_from=mapping.key_field,
+                description=mapping.description,
+                index_fields=mapping.index_fields,
+                explicitly_defined=True,  # Neo4j nodes don't need field path validation
             )
+            node._embedding_field_dimensions = embedding_field_dims
+            graph_nodes.append(node)
 
         # Build GraphRelation list from relation mappings
         graph_relations: list[GraphRelation] = []
