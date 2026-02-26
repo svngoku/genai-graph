@@ -635,6 +635,9 @@ def merge_nodes_batch(
             }
             # Also include struct field names from extra_classes
             valid_fields.update(config.struct_field_types.keys())
+            # Also include dynamically-added embedding columns (not in the Pydantic model,
+            # but added by extract_graph_data for index_fields).
+            valid_fields.update(col for col in df.columns if col.endswith("_embedding"))
 
             # Filter columns to only valid fields
             df_columns_to_keep = [col for col in df.columns if col in valid_fields]

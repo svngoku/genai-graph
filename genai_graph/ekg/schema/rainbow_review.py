@@ -91,7 +91,8 @@ class ReviewedOpportunityGraph(JsonFileBackedFactory, BaseModel):
                 ),
                 key_from=lambda data, _: str(getattr(data.get("risk_category"), "name", None) or "Other Risks"),
                 description="Risk assessment and mitigation details",
-                index_fields=["risk_description"],
+                # risk_description is a relationship property (p_risk_description_ in the BAML model)
+                # and is therefore not stored as a node column — it cannot be indexed.
             ),
             GraphNode(
                 node_class=TechnicalApproach,

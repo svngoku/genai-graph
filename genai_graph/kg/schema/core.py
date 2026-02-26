@@ -875,6 +875,26 @@ class GraphSchema(BaseModel):
                         f"{annotation!r}; expected {embedded_class.__name__} or Optional[{embedded_class.__name__}]"
                     )
 
+        # Check that index_fields are stored as direct node columns, not as relationship
+        # properties (p_<field>_ pattern).  A field named `foo` that exists on the model
+        # only as `p_foo_` is an edge property and will never appear in item_data, so the
+        # embedding column will always be NULL.
+        for node in self.nodes:
+            if not node.index_fields:
+                continue
+            model_fields = getattr(node.node_class, "model_fields", {})
+            for field_name in node.index_fields:
+                if field_name not in model_fields:
+                    rel_prop_name = f"p_{field_name}_"
+                    if rel_prop_name in model_fields:
+                        warnings_list.append(
+                            f"{node.node_class.__name__}.index_fields contains '{field_name}', "
+                            f"but that field is defined as a relationship property ('{rel_prop_name}'). "
+                            "Relationship properties are stored on edges, not on the node itself, "
+                            "so the embedding column will always be NULL. "
+                            f"Remove '{field_name}' from index_fields or promote it to a regular node field."
+                        )
+
         # Extend warnings (don't replace, to preserve warnings from path deduction)
         self._warnings.extend(warnings_list)
 
