@@ -224,8 +224,7 @@ class StratnavGraph(Neo4jImportFactory):
                 },
                 name_field="name",
                 key_field="code",
-                index_fields=["name"],
-                embedding_models={"description_embedding": "ada_002@openai"},
+                index_fields=["name", ("description", "ada_002@openai")],
             ),
             # L4: Level 4 component
             Neo4jNodeMapping(

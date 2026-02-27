@@ -8,9 +8,73 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from genai_graph.ekg.baml_client.types import ReviewedOpportunity
+from genai_graph.ekg.baml_client.types import (
+    CompetitiveLandscape,
+    Competitor,
+    FinancialMetrics,
+    KeyStatementOfWorkElement,
+    ReviewedOpportunity,
+    RiskAnalysis,
+    TechnicalApproach,
+)
+from genai_graph.ekg.schema.canonical_nodes import CustomerNode, OpportunityNode, PartnerNode, PersonNode
+from genai_graph.ekg.schema.common_nodes import Geo
 from genai_graph.kg.factories import JsonFileBackedFactory
-from genai_graph.kg.schema import GraphSchema
+from genai_graph.kg.schema import GraphNode, GraphRelation, GraphSchema
+
+# ---------------------------------------------------------------------------
+# Module-scope node singletons
+# Canonical shared types (Opportunity, Customer, Person, Partner) are imported
+# from canonical_nodes.  Rainbow-specific types are defined here.
+# ---------------------------------------------------------------------------
+
+ReviewedOpportunityNode: GraphNode = GraphNode(
+    node_class=ReviewedOpportunity,
+    extra_classes=[FinancialMetrics, CompetitiveLandscape, KeyStatementOfWorkElement],
+    name_from=lambda data, _: (
+        "Review:"
+        + str(data.get("opportunity", {}).get("opportunity_id", ""))
+        + ":"
+        + str(data.get("start_date", ""))
+    ),
+    key_from=lambda data, _: str(data.get("opportunity", {}).get("opportunity_id", "unknown")),
+    description="Root node containing the complete reviewed opportunity",
+)
+
+RiskAnalysisNode: GraphNode = GraphNode(
+    node_class=RiskAnalysis,
+    name_from=lambda data, _: (
+        getattr(data.get("risk_category"), "name", None) or str(data.get("risk_category", "other_risk"))
+    ),
+    key_from=lambda data, _: str(getattr(data.get("risk_category"), "name", None) or "Other Risks"),
+    description="Risk assessment and mitigation details",
+)
+
+TechnicalApproachNode: GraphNode = GraphNode(
+    node_class=TechnicalApproach,
+    name_from=lambda data, base: (
+        data.get("technical_stack") or data.get("architecture") or f"{base}_default"
+    ),
+    key_from="AUTO_ID",
+    description="Technical implementation approach and stack",
+    index_fields=["architecture", "technical_stack"],
+)
+
+CompetitorNode: GraphNode = GraphNode(
+    node_class=Competitor,
+    name_from=lambda data, base: data.get("known_as") or data.get("name") or f"{base}_competitor",
+    key_from=lambda data, base: data.get("known_as") or data.get("name") or f"{base}_competitor",
+    description="Competitor",
+)
+
+# Geo in rainbow uses a computed name (geo_code / country) — different from canonical GeoNode
+GeoDeliveryNode: GraphNode = GraphNode(
+    node_class=Geo,
+    name_from=lambda data, base: data.get("geo_code") or data.get("country") or f"{base}_geo",
+    key_from="name",  # computed name is stored as PK (consistent with Stratnav Geo)
+    description="Geographic location for delivery",
+    explicitly_defined=True,  # linked via explicit field_path in DELIVERED_IN
+)
 
 
 class ReviewedOpportunityGraph(JsonFileBackedFactory, BaseModel):
@@ -26,171 +90,72 @@ class ReviewedOpportunityGraph(JsonFileBackedFactory, BaseModel):
         Returns:
             GraphSchema with all node and relationship configurations
         """
-        from genai_graph.ekg.baml_client.types import (
-            CompetitiveLandscape,
-            Competitor,
-            FinancialMetrics,
-            KeyStatementOfWorkElement,
-            Opportunity,
-            Person,
-            RiskAnalysis,
-            TechnicalApproach,
-        )
-        from genai_graph.ekg.schema.common_nodes import Customer, Geo, Partner
-        from genai_graph.kg.schema import (
-            GraphNode,
-            GraphRelation,
-        )
-
-        # Note: We use BAML types directly here because ReviewedOpportunity's
-        # fields reference these exact BAML types. The path introspection needs
-        # to find the same types. Since all types share the same __name__,
-        # they'll map to the same Kuzu tables for cross-factory deduplication.
-
-        # Define nodes with descriptions
         nodes = [
-            GraphNode(
-                node_class=Opportunity,
-                name_from="name",
-                key_from="opportunity_id",
-                description="Core opportunity information",
-                index_fields=["name"],
-            ),
-            GraphNode(
-                node_class=Customer,
-                name_from="name",
-                key_from="name",
-                description="Customer organization details",
-                index_fields=["name"],
-                explicitly_defined=True,  # Connected via multi-hop path (ReviewedOpportunity → Opportunity → Customer)
-            ),
-            GraphNode(
-                node_class=Person,
-                name_from="name",
-                key_from="name",
-                description="Individual contacts and team members",
-            ),
-            # Root node
-            GraphNode(
-                node_class=ReviewedOpportunity,
-                extra_classes=[FinancialMetrics, CompetitiveLandscape, KeyStatementOfWorkElement],
-                name_from=lambda data, _: (
-                    "Review:"
-                    + str(data.get("opportunity", {}).get("opportunity_id", ""))
-                    + ":"
-                    + str(data.get("start_date", ""))
-                ),
-                key_from=lambda data, _: str(data.get("opportunity", {}).get("opportunity_id", "unknown")),
-                description="Root node containing the complete reviewed opportunity",
-            ),
-            # Regular nodes - field paths auto-deduced
-            GraphNode(
-                node_class=RiskAnalysis,
-                name_from=lambda data, _: (
-                    getattr(data.get("risk_category"), "name", None) or str(data.get("risk_category", "other_risk"))
-                ),
-                key_from=lambda data, _: str(getattr(data.get("risk_category"), "name", None) or "Other Risks"),
-                description="Risk assessment and mitigation details",
-                # risk_description is a relationship property (p_risk_description_ in the BAML model)
-                # and is therefore not stored as a node column — it cannot be indexed.
-            ),
-            GraphNode(
-                node_class=TechnicalApproach,
-                name_from=lambda data, base: (
-                    data.get("technical_stack") or data.get("architecture") or f"{base}_default"
-                ),
-                key_from="AUTO_ID",  # Use auto-generated SERIAL id
-                description="Technical implementation approach and stack",
-                index_fields=["architecture", "technical_stack"],
-            ),
-            # GraphNode(
-            #     node_class=CompetitiveLandscape,
-            #     name_from=lambda data, base: data.get("competitive_position") or f"{base}_competitive_position",
-            #     description="Competitive positioning and analysis",
-            # ),
-            GraphNode(
-                node_class=Competitor,
-                name_from=lambda data, base: data.get("known_as") or data.get("name") or f"{base}_competitor",
-                key_from=lambda data, base: data.get("known_as") or data.get("name") or f"{base}_competitor",
-                description="Competitor",
-            ),
-            GraphNode(
-                node_class=Partner,
-                name_from="name",
-                key_from="name",
-                description="Atos partner organization information",
-            ),
-            GraphNode(
-                node_class=Geo,
-                name_from=lambda data, base: data.get("geo_code") or data.get("country") or f"{base}_geo",
-                key_from="name",  # Use computed name as PK (consistent with Stratnav Geo)
-                description="Geographic location for delivery",
-                explicitly_defined=True,  # Connected via explicit field path in DELIVERED_IN relationship
-            ),
+            OpportunityNode,
+            CustomerNode,
+            PersonNode,
+            ReviewedOpportunityNode,
+            RiskAnalysisNode,
+            TechnicalApproachNode,
+            CompetitorNode,
+            PartnerNode,
+            GeoDeliveryNode,
         ]
 
-        # Define relationships with descriptions
-        # Field paths are automatically deduced from the model structure
         relations = [
             GraphRelation(
-                from_node=ReviewedOpportunity,
-                to_node=Opportunity,
+                from_node=ReviewedOpportunityNode,
+                to_node=OpportunityNode,
                 name="REVIEWS",
                 description="Review relationship to core opportunity",
             ),
             GraphRelation(
-                from_node=Opportunity,
-                to_node=Customer,
+                from_node=OpportunityNode,
+                to_node=CustomerNode,
                 name="HAS_CUSTOMER",
                 description="Opportunity belongs to customer",
             ),
             GraphRelation(
-                from_node=Customer,
-                to_node=Person,
+                from_node=CustomerNode,
+                to_node=PersonNode,
                 name="HAS_CONTACT",
                 description="Customer contact persons",
             ),
             GraphRelation(
-                from_node=ReviewedOpportunity,
-                to_node=Person,
+                from_node=ReviewedOpportunityNode,
+                to_node=PersonNode,
                 name="HAS_TEAM_MEMBER",
                 description="Internal team members",
                 field_paths=[("", "team")],  # Use team field (not customer.employees)
             ),
             GraphRelation(
-                from_node=ReviewedOpportunity,
-                to_node=Partner,
+                from_node=ReviewedOpportunityNode,
+                to_node=PartnerNode,
                 name="HAS_PARTNER",
                 description="Partner organizations involved",
             ),
             GraphRelation(
-                from_node=ReviewedOpportunity,
-                to_node=Geo,
+                from_node=ReviewedOpportunityNode,
+                to_node=GeoDeliveryNode,
                 name="DELIVERED_IN",
                 description="Geographic locations where solution is delivered",
-                field_paths=[("", "delivery_info.locations")],  # Explicit path to Geo objects
+                field_paths=[("", "delivery_info.locations")],
             ),
             GraphRelation(
-                from_node=ReviewedOpportunity,
-                to_node=RiskAnalysis,
+                from_node=ReviewedOpportunityNode,
+                to_node=RiskAnalysisNode,
                 name="HAS_RISK",
                 description="Identified risks and mitigations",
             ),
             GraphRelation(
-                from_node=ReviewedOpportunity,
-                to_node=TechnicalApproach,
+                from_node=ReviewedOpportunityNode,
+                to_node=TechnicalApproachNode,
                 name="HAS_TECH_STACK",
                 description="Technical implementation approach",
             ),
-            # GraphRelationConfig(
-            #     from_node=ReviewedOpportunity,
-            #     to_node=CompetitiveLandscape,
-            #     name="COMPETIIVE_LANDSCAPE",
-            #     description="Competitive analysis",
-            # ),
             GraphRelation(
-                from_node=ReviewedOpportunity,
-                to_node=Competitor,
+                from_node=ReviewedOpportunityNode,
+                to_node=CompetitorNode,
                 name="HAS_COMPETITOR",
                 description="Known competitors",
             ),

@@ -408,6 +408,10 @@ class KuzuBackend(KgBackend):
             self.execute(cypher)
             logger.info(f"Created vector index {index_name} on {table_name}.{field_name}")
         except Exception as e:
+            err = str(e)
+            if "already exists" in err:
+                logger.debug(f"Vector index {index_name} on {table_name} already exists, skipping")
+                return
             logger.error(f"Failed to create vector index {index_name}: {e}")
             raise
 

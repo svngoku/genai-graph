@@ -608,14 +608,14 @@ def format_schema_description(schema: GraphSchema, baml_docs: dict[str, Any], pr
     # Group by source node for clarity
     rels_by_source = {}
     for relation in schema.relations:
-        source = relation.from_node.__name__
+        source = relation.from_node.label
         if source not in rels_by_source:
             rels_by_source[source] = []
         rels_by_source[source].append(relation)
 
     for source in sorted(rels_by_source.keys()):
         for relation in rels_by_source[source]:
-            dest = relation.to_node.__name__
+            dest = relation.to_node.label
             rel_name = relation.name
             description = relation.description
 
@@ -626,7 +626,7 @@ def format_schema_description(schema: GraphSchema, baml_docs: dict[str, Any], pr
             lines.append(line)
 
             # Add relationship properties from destination node (fields with p_*_ pattern)
-            rel_properties = _get_relation_properties(relation.to_node, baml_docs)
+            rel_properties = _get_relation_properties(relation.to_node.node_class, baml_docs)
             for prop_name, prop_type, prop_desc in rel_properties:
                 prop_line = f"  {prop_name}: {prop_type}"
                 if prop_desc:

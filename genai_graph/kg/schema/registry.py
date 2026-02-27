@@ -198,7 +198,7 @@ class GraphRegistry(BaseModel):
         seen_relations: set[tuple[str, str, str]] = set()
         for schema in schemas:
             for rel in schema.relations:
-                key = (rel.from_node.__name__, rel.to_node.__name__, rel.name)
+                key = (rel.from_node.label, rel.to_node.label, rel.name)
                 if key in seen_relations:
                     continue
                 seen_relations.add(key)

@@ -20,14 +20,13 @@ from genai_graph.ekg.baml_client.types import (
     Competitor,
     FinancialMetrics,
     KeyStatementOfWorkElement,
-    Opportunity,
     Person,
     ReviewedOpportunity,
     RiskAnalysis,
     SWProjectRisks,
     TechnicalApproach,
 )
-from genai_graph.ekg.schema.common_nodes import Customer, Geo, Partner
+from genai_graph.ekg.schema.common_nodes import Customer, Geo, Opportunity, Partner
 from genai_graph.kg.backend import KuzuBackend
 from genai_graph.kg.schema import GraphNode, GraphRelation, GraphSchema
 
@@ -38,49 +37,48 @@ class TestEmbeddedStructSchemaSetup:
     def test_reviewed_opportunity_has_embedded_structs(self):
         """Verify RiskAnalysis and TechnicalApproach are in extra_classes."""
         # Build schema matching rainbow_review.py
-        nodes = [
-            GraphNode(node_class=Opportunity, name_from="name", key_from="opportunity_id"),
-            GraphNode(
-                node_class=Customer,
-                name_from="name",
-                key_from="name",
-                explicitly_defined=True,
-            ),
-            GraphNode(node_class=Person, name_from="name", key_from="name"),
-            GraphNode(
-                node_class=ReviewedOpportunity,
-                extra_classes=[
-                    FinancialMetrics,
-                    CompetitiveLandscape,
-                    KeyStatementOfWorkElement,
-                    RiskAnalysis,
-                    TechnicalApproach,
-                ],
-                name_from=lambda data, _: "Review:test",
-                key_from=lambda data, _: "test_key",
-            ),
-            GraphNode(
-                node_class=Competitor,
-                name_from=lambda data, base: data.get("name") or f"{base}_competitor",
-                key_from=lambda data, base: data.get("name") or f"{base}_competitor",
-            ),
-            GraphNode(node_class=Partner, name_from="name", key_from="name"),
-            GraphNode(
-                node_class=Geo,
-                name_from=lambda data, base: data.get("geo_code") or f"{base}_geo",
-                key_from="name",
-                explicitly_defined=True,
-            ),
-        ]
+        opp_node = GraphNode(node_class=Opportunity, name_from="name", key_from="opportunity_id")
+        customer_node = GraphNode(
+            node_class=Customer,
+            name_from="name",
+            key_from="name",
+            explicitly_defined=True,
+        )
+        person_node = GraphNode(node_class=Person, name_from="name", key_from="name")
+        reviewed_opp_node = GraphNode(
+            node_class=ReviewedOpportunity,
+            extra_classes=[
+                FinancialMetrics,
+                CompetitiveLandscape,
+                KeyStatementOfWorkElement,
+                RiskAnalysis,
+                TechnicalApproach,
+            ],
+            name_from=lambda data, _: "Review:test",
+            key_from=lambda data, _: "test_key",
+        )
+        competitor_node = GraphNode(
+            node_class=Competitor,
+            name_from=lambda data, base: data.get("name") or f"{base}_competitor",
+            key_from=lambda data, base: data.get("name") or f"{base}_competitor",
+        )
+        partner_node = GraphNode(node_class=Partner, name_from="name", key_from="name")
+        geo_node = GraphNode(
+            node_class=Geo,
+            name_from=lambda data, base: data.get("geo_code") or f"{base}_geo",
+            key_from="name",
+            explicitly_defined=True,
+        )
+        nodes = [opp_node, customer_node, person_node, reviewed_opp_node, competitor_node, partner_node, geo_node]
 
         relations = [
-            GraphRelation(from_node=ReviewedOpportunity, to_node=Opportunity, name="REVIEWS"),
-            GraphRelation(from_node=Opportunity, to_node=Customer, name="HAS_CUSTOMER"),
-            GraphRelation(from_node=Customer, to_node=Person, name="HAS_CONTACT"),
-            GraphRelation(from_node=ReviewedOpportunity, to_node=Person, name="HAS_TEAM_MEMBER"),
-            GraphRelation(from_node=ReviewedOpportunity, to_node=Partner, name="HAS_PARTNER"),
-            GraphRelation(from_node=ReviewedOpportunity, to_node=Geo, name="DELIVERED_IN"),
-            GraphRelation(from_node=ReviewedOpportunity, to_node=Competitor, name="HAS_COMPETITOR"),
+            GraphRelation(from_node=reviewed_opp_node, to_node=opp_node, name="REVIEWS"),
+            GraphRelation(from_node=opp_node, to_node=customer_node, name="HAS_CUSTOMER"),
+            GraphRelation(from_node=customer_node, to_node=person_node, name="HAS_CONTACT"),
+            GraphRelation(from_node=reviewed_opp_node, to_node=person_node, name="HAS_TEAM_MEMBER"),
+            GraphRelation(from_node=reviewed_opp_node, to_node=partner_node, name="HAS_PARTNER"),
+            GraphRelation(from_node=reviewed_opp_node, to_node=geo_node, name="DELIVERED_IN"),
+            GraphRelation(from_node=reviewed_opp_node, to_node=competitor_node, name="HAS_COMPETITOR"),
         ]
 
         schema = GraphSchema(root_model_class=ReviewedOpportunity, nodes=nodes, relations=relations)
@@ -201,21 +199,23 @@ class TestRainbowSchemaStructureValidation:
         assert Opportunity in node_classes
         assert Customer in node_classes, f"Customer not in {node_classes}"
 
-        # Verify ReviewedOpportunity has embedded structs
+        # Verify ReviewedOpportunity node exists
         ro_node = next((n for n in schema.nodes if n.node_class == ReviewedOpportunity), None)
         assert ro_node is not None
-        assert RiskAnalysis in ro_node.embedded_struct_classes
-        assert TechnicalApproach in ro_node.embedded_struct_classes
 
-        # Verify no separate RiskAnalysis or TechnicalApproach nodes
+        # RiskAnalysis and TechnicalApproach are separate nodes (not embedded structs)
+        # — they were promoted to first-class nodes so their fields can be indexed/queried directly
         node_classes_list = [n.node_class for n in schema.nodes]
-        assert node_classes_list.count(RiskAnalysis) == 0, "RiskAnalysis should not be a separate node"
-        assert node_classes_list.count(TechnicalApproach) == 0, "TechnicalApproach should not be a separate node"
+        assert node_classes_list.count(RiskAnalysis) == 1, "RiskAnalysis should be a separate node"
+        assert node_classes_list.count(TechnicalApproach) == 1, "TechnicalApproach should be a separate node"
 
-        # Verify relationships (RiskAnalysis and TechnicalApproach don't have separate rels)
+        # FinancialMetrics, CompetitiveLandscape, KeyStatementOfWorkElement remain embedded
+        assert FinancialMetrics in ro_node.embedded_struct_classes
+        assert CompetitiveLandscape in ro_node.embedded_struct_classes
+
+        # Verify dedicated relationships exist for the promoted nodes
         rel_names = {r.name for r in schema.relations}
-        assert "HAS_RISK" not in rel_names, "HAS_RISK rel should not exist (RiskAnalysis is embedded)"
-        assert "HAS_TECH_STACK" not in rel_names, "HAS_TECH_STACK rel should not exist (TechnicalApproach is embedded)"
+        assert "HAS_RISK" in rel_names, "HAS_RISK relationship should exist for the RiskAnalysis node"
 
 
 if __name__ == "__main__":

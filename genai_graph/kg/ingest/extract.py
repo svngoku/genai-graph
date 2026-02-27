@@ -430,35 +430,41 @@ def create_schema(
 
         # Add embedding columns for index_fields when embeddings are enabled.
         if node.index_fields:
-            # Determine the embeddings model and its dimension for FLOAT[N] type
+            # Pre-fetch all known embedding model infos for dimension lookup (no API key needed).
             try:
-                embeddings_id = global_config().get_str("kg_build.embeddings.default")
+                all_models = {item.id: item for item in EmbeddingsFactory.known_list()}
             except Exception:
-                embeddings_id = None
+                all_models = {}
+            try:
+                default_model_id: str | None = global_config().get_str("kg_build.embeddings.default")
+            except Exception:
+                default_model_id = None
 
-            embedding_dim: int | None = None
-            if embeddings_id:
-                try:
-                    # Use known_list() (not known_items_dict) to get dimension without
-                    # requiring the API key to be set in the environment.
-                    all_models = {item.id: item for item in EmbeddingsFactory.known_list()}
-                    info = all_models.get(embeddings_id)
+            for field_name, model_override in node.index_field_specs:
+                model_id = model_override or default_model_id
+                embedding_field = f"{field_name}_embedding"
+                embedding_dim: int | None = None
+                if model_id:
+                    info = all_models.get(model_id)
                     if info:
                         embedding_dim = info.dimension
-                except Exception as e:
-                    logger.debug(f"Could not look up embedding dimension for {embeddings_id}: {e}")
-
-            if embedding_dim is None:
-                logger.warning(
-                    f"Cannot determine embedding dimension for {table_name} "
-                    f"(model={embeddings_id}); skipping embedding columns"
-                )
-            else:
+                if embedding_dim is None:
+                    logger.warning(
+                        f"Cannot determine embedding dimension for {table_name}.{embedding_field} "
+                        f"(model={model_id}); skipping embedding column"
+                    )
+                    continue
                 kuzu_embedding_type = f"FLOAT[{embedding_dim}]"
-                for field_name in node.index_fields:
-                    embedding_field = f"{field_name}_embedding"
-                    if embedding_field in field_names:
-                        continue
+                if embedding_field in field_names:
+                    # The field already exists (e.g. as a pre-computed list[float]
+                    # Pydantic field like L3.description_embedding added by the
+                    # model_fields loop as FLOAT[]).  Upgrade it to FLOAT[N] so
+                    # Kuzu can build a vector index on it.
+                    for i, f in enumerate(fields):
+                        if f == f"{embedding_field} FLOAT[]":
+                            fields[i] = f"{embedding_field} {kuzu_embedding_type}"
+                            break
+                else:
                     fields.append(f"{embedding_field} {kuzu_embedding_type}")
                     field_names.add(embedding_field)
 
@@ -471,8 +477,8 @@ def create_schema(
 
     # Create relationship tables with properties from p_*_ fields or relation.properties
     for relation in relations:
-        from_table = relation.from_node.__name__
-        to_table = relation.to_node.__name__
+        from_table = relation.from_node.label
+        to_table = relation.to_node.label
         rel_name = relation.name
 
         # Check if properties are explicitly defined (e.g., from Neo4j mappings)
@@ -482,9 +488,9 @@ def create_schema(
             for prop_name, prop_type in relation.properties.items():
                 kuzu_type = _get_kuzu_type(prop_type)
                 rel_properties.append(f"{prop_name} {kuzu_type}")
-        elif hasattr(relation.to_node, "model_fields"):
+        elif hasattr(relation.to_node.node_class, "model_fields"):
             # Fallback: Find p_*_ properties from the to_node class
-            for field_name, field_info in relation.to_node.model_fields.items():
+            for field_name, field_info in relation.to_node.node_class.model_fields.items():
                 if field_name.startswith("p_") and field_name.endswith("_"):
                     # Extract the property name without p_ prefix and _ suffix
                     prop_name = field_name[2:-1]
@@ -648,11 +654,21 @@ def extract_graph_data(
                 # Compute embeddings for index_fields when enabled.
                 if node_info.index_fields:
                     try:
-                        embeddings_id = global_config().get_str("kg_build.embeddings.default")
+                        default_embeddings_id: str | None = global_config().get_str("kg_build.embeddings.default")
                     except Exception:
-                        embeddings_id = None
+                        default_embeddings_id = None
 
-                    if embeddings_id:
+                    for field_name, model_override in node_info.index_field_specs:
+                        embeddings_id = model_override or default_embeddings_id
+                        if not embeddings_id:
+                            logger.debug(f"Skipping embedding for {node_type}.{field_name}; no model configured")
+                            continue
+                        embedding_field = f"{field_name}_embedding"
+                        if embedding_field in item_data:
+                            continue  # already pre-computed (e.g. Stratnav description_embedding)
+                        field_value = item_data.get(field_name)
+                        if not field_value or not isinstance(field_value, str):
+                            continue
                         handler = embeddings_handlers.get(embeddings_id)
                         if handler is None:
                             try:
@@ -660,22 +676,13 @@ def extract_graph_data(
                                 embeddings_handlers[embeddings_id] = handler
                             except Exception as e:
                                 logger.warning(f"Failed to initialize embeddings handler for {embeddings_id}: {e}")
-                                handler = None
-
-                        if handler is not None:
-                            for field_name in node_info.index_fields:
-                                embedding_field = f"{field_name}_embedding"
-                                if embedding_field in item_data:
-                                    continue
-                                field_value = item_data.get(field_name)
-                                if not field_value or not isinstance(field_value, str):
-                                    continue
-                                try:
-                                    item_data[embedding_field] = handler.compute_embeddings(field_value)
-                                except Exception as e:
-                                    logger.warning(f"Failed to compute embedding for {node_type}.{field_name}: {e}")
-                    else:
-                        logger.debug(f"Skipping embeddings for {node_type}; no model configured and no default found")
+                                continue
+                        try:
+                            item_data[embedding_field] = handler.compute_embeddings(field_value)
+                        except Exception as e:
+                            logger.warning(f"Failed to compute embedding for {node_type}.{field_name}: {e}")
+                else:
+                    logger.debug(f"Skipping embeddings for {node_type}; no index_fields configured")
 
                 # Use primary key for deduplication
                 if key_value not in node_registry[node_type]:
@@ -694,15 +701,15 @@ def extract_graph_data(
 
     # Relationships
     for relation_info in relations:
-        from_type = relation_info.from_node.__name__
-        to_type = relation_info.to_node.__name__
+        from_type = relation_info.from_node.label
+        to_type = relation_info.to_node.label
 
-        # Skip relationships involving node classes that are not configured
-        from_node_info = next((n for n in nodes if n.node_class.__name__ == from_type), None)
-        to_node_info = next((n for n in nodes if n.node_class.__name__ == to_type), None)
-
-        if not from_node_info or not to_node_info:
+        # Skip relationships involving node types not in the nodes list
+        if from_type not in node_registry or to_type not in node_registry:
             continue
+        # The GraphNode instances on the relation ARE the node configs
+        from_node_info = relation_info.from_node
+        to_node_info = relation_info.to_node
 
         # Get field paths from relation config
         from_field_path = getattr(relation_info, "_from_field_path", None)
@@ -767,8 +774,8 @@ def extract_graph_data(
                 if to_id:
                     # Extract p_*_ properties from to_item for edge properties
                     edge_properties = {}
-                    if hasattr(relation_info.to_node, "model_fields"):
-                        for field_name in relation_info.to_node.model_fields.keys():
+                    if hasattr(relation_info.to_node.node_class, "model_fields"):
+                        for field_name in relation_info.to_node.node_class.model_fields.keys():
                             if field_name.startswith("p_") and field_name.endswith("_"):
                                 prop_name = field_name[2:-1]  # Remove p_ prefix and _ suffix
                                 prop_value = to_dict.get(field_name)

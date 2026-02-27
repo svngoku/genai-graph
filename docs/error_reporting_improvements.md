@@ -153,8 +153,8 @@ This usually means the field exists in data but wasn't defined in the node's Pyd
    ```python
    # The relationship will handle the opportunity field
    GraphRelation(
-       from_node=Customer,
-       to_node=Opportunity,
+       from_node=customer_node,     # GraphNode instance
+       to_node=opportunity_node,    # GraphNode instance
        name="HAS_OPPORTUNITY",
        field_paths=[("", "opportunity")],
    )

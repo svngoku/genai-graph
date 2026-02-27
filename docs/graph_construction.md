@@ -100,18 +100,23 @@ class CrmExtractGraph(TableBackedFactory):
 
 ## Common Nodes for Type Unification
 
-The `genai_graph.ekg.schema.common_nodes` module defines canonical types used across factories to ensure node deduplication.
+Two modules work together to ensure entities are shared across factories:
 
-**Key principle**: Classes with the same `__name__` create the same Kuzu table, regardless of which module they're imported from.
+- **`common_nodes.py`** — defines the canonical Pydantic **classes** (data schema)
+- **`canonical_nodes.py`** — defines the canonical `GraphNode` **singletons** (graph configuration: primary key, name field, index fields)
+
+**Key principle**: Nodes with the same class name write to the same Kuzu table, regardless of which factory imports them. The `canonical_nodes` singletons are the single source of truth for how each shared entity is stored.
 
 ### Currently defined canonical types
 
-| Canonical type | Extends | Used by factories | Notes |
-|---------------|---------|-------------------|-------|
-| `Customer` | `BamlCustomer` | Stratnav (Account→Customer), RainbowReview, CRM | Extended with iris_code, country, etc. |
-| `Geo` | `BamlGeo` | Stratnav (GEO→Geo), RainbowReview | Geographic location |
-| `Partner` | `BamlPartner` | Stratnav (TechnologyPartner→Partner), RainbowReview | Technology vendors, subcontractors |
-| `Opportunity` | `BamlOpportunity` | RainbowReview, CRM | Extended with lead, win_loss |
+| GraphNode singleton | Class | Used by factories | Notes |
+|---------------------|-------|-------------------|-------|
+| `CustomerNode` | `Customer` | Stratnav (Account→Customer), RainbowReview, CRM | Extended with iris_code, country, etc. |
+| `GeoNode` | `Geo` | Stratnav (GEO→Geo), RainbowReview | Geographic location |
+| `PartnerNode` | `Partner` | Stratnav (TechnologyPartner→Partner), RainbowReview | Technology vendors, subcontractors |
+| `OpportunityNode` | `Opportunity` | RainbowReview, CRM | Extended with lead, win_loss |
+| `PersonNode` | `Person` | RainbowReview, CRM, Stratnav | Individual contacts and team members |
+| `L3Node` | `L3` | Stratnav, StratnavSubset | Service catalog; ada-002 embedding pinned |
 
 ### Adding a new canonical type
 
@@ -126,12 +131,25 @@ class Partner(BamlPartner):
     """Partner organization (canonical type for deduplication)."""
 ```
 
-2. **Import from `common_nodes`** in all factories (not from `baml_client.types`):
+2. **Create a `GraphNode` singleton** in `canonical_nodes.py`:
 ```python
-from genai_graph.ekg.schema.common_nodes import Customer, Geo, Partner
+from genai_graph.ekg.schema.common_nodes import Partner
+from genai_graph.kg.schema import GraphNode
+
+PartnerNode: GraphNode = GraphNode(
+    node_class=Partner,
+    name_from="name",
+    key_from="name",
+    description="Partner organization (technology vendor, subcontractor, etc.)",
+)
 ```
 
-3. **Map the Neo4j label** to the canonical class:
+3. **Import the singleton** in all factories (not the raw class):
+```python
+from genai_graph.ekg.schema.canonical_nodes import CustomerNode, PartnerNode
+```
+
+4. **Map the Neo4j label** to the canonical class (Neo4j factories only):
 ```python
 Neo4jNodeMapping(
     neo4j_label="TechnologyPartner",  # Original Neo4j label
@@ -145,33 +163,50 @@ Neo4jNodeMapping(
 ### Example: Customer
 
 ```python
+# common_nodes.py
 from genai_graph.ekg.baml_client.types import Customer as BamlCustomer
 
 class Customer(BamlCustomer):
     """Extended Customer with fields from multiple sources."""
-    
+
     # Fields from Neo4j/Stratnav import (Account)
     iris_code: str | None = Field(default=None)
     country: str | None = Field(default=None)
     business_line: str | None = Field(default=None)
-    
+
     # Fields from BAML extraction
     location: Geo | None = None
     services: list[L3] = Field(default_factory=list)
+
+
+# canonical_nodes.py
+CustomerNode: GraphNode = GraphNode(
+    node_class=Customer,
+    name_from="name",
+    key_from="name",
+    description="Customer organization details",
+    index_fields=["name"],
+    explicitly_defined=True,
+)
 ```
 
 **Usage in factories**:
 ```python
-# Import from common_nodes, not from baml_client.types
-from genai_graph.ekg.schema.common_nodes import Customer, Geo, Partner, Opportunity
+# Import the GraphNode singleton, not the raw class
+from genai_graph.ekg.schema.canonical_nodes import CustomerNode, GeoNode, PartnerNode, OpportunityNode
 
-# All factories creating Customer nodes will share the same table
+# Use in build_schema()
+nodes = [OpportunityNode, CustomerNode, PartnerNode]
+relations = [
+    GraphRelation(from_node=OpportunityNode, to_node=CustomerNode, name="HAS_CUSTOMER"),
+]
 ```
 
 **Benefits**:
 - **Deduplication**: Same customer from different sources → single node
 - **Schema evolution**: New fields added without breaking existing data
 - **Type safety**: Pydantic validation across all sources
+- **Consistency**: Primary key, name field, and indexes defined once, shared everywhere
 
 ## Schema Merging
 
@@ -375,8 +410,8 @@ Using: customer → customer.employees. Alternatives: customer → lead.
 If the auto-chosen path is still wrong, specify `field_paths` explicitly as a list of `(from_path, to_path)` tuples:
 ```python
 GraphRelation(
-    from_node=Customer,
-    to_node=Person,
+    from_node=customer_node,  # GraphNode instance
+    to_node=person_node,      # GraphNode instance
     name="HAS_CONTACT",
     field_paths=[("customer", "customer.employees")],  # Explicit path
 )

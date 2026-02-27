@@ -30,7 +30,7 @@ ekg_local:
       default: qwen3_06b@deepinfra
 
   embeddings_store:
-    chroma_simple: &default_store
+    chroma_simple: &chroma_simple
       backend: Chroma 
       embeddings: default
       table_name_prefix: embeddings
@@ -46,7 +46,7 @@ ekg_local:
       config:
         storage: ${paths.data_root}/vector_store/
       
-    default: *default_store
+    default: *chroma_simple
 
   cli:
     commands:  
@@ -68,16 +68,16 @@ ekg_local:
       type: SQLStore
       path: postgresql://${oc.env:POSTGRES_USER,unknown_user}:${oc.env:POSTGRES_PASSWORD,password}@localhost:5432/ekg
 
-  graph_db: 
-    default:
+  graph_db:
+    kuzu_local: &kuzu_local
       type: kuzu
       path: ${paths.kg_outputs}/default/kuzu/ekg_database.db
-    neo4j_local:
+    neo4j_local: &neo4j_local
       type: neo4j
       path: neo4j://localhost
       username : tcl
       password: ${oc.env:NEO4_PASSWORD, null}
-      
+    default: *kuzu_local
 
   structured:
 

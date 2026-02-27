@@ -5,7 +5,6 @@ from genai_graph.ekg.baml_client.types import Geo as BamlGeo
 from genai_graph.ekg.baml_client.types import Opportunity as BamlOpportunity
 from genai_graph.ekg.baml_client.types import Partner as BamlPartner
 from genai_graph.ekg.baml_client.types import Person
-from genai_graph.kg.schema import GraphNode
 
 
 class FileMetadata(BaseModel):
@@ -106,34 +105,3 @@ class Opportunity(BamlOpportunity):
     lead: Person | None = None
     win_loss: WinLoss | None = None
     metadata: dict[str, str] | None = None
-
-
-def get_common_nodes() -> list[GraphNode]:
-    return [
-        GraphNode(
-            node_class=Opportunity,
-            name_from="name",
-            key_from="opportunity_id",  # Use opportunity_id as primary key
-            description="Core opportunity information with financial metrics embedded",
-            index_fields=["name", "status"],
-        ),
-        GraphNode(
-            node_class=Customer,
-            name_from="name",
-            key_from="name",  # TODO: replace with iris_code when available
-            description="Customer organization details",
-            index_fields=["name"],
-        ),
-        GraphNode(
-            node_class=Person,
-            name_from="name",
-            key_from="name",  # Use name as primary key for deduplication
-            description="Individual contacts and team members",
-        ),
-        GraphNode(
-            node_class=Partner,
-            name_from="name",
-            key_from="name",
-            description="Partner organization (technology vendor, subcontractor, etc.)",
-        ),
-    ]

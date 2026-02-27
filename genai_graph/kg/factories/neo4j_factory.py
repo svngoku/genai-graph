@@ -14,7 +14,6 @@ Features:
 import json
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from genai_tk.core.embeddings_factory import EmbeddingsFactory
 from loguru import logger
 from pydantic import BaseModel, Field
 from upath import UPath
@@ -51,12 +50,11 @@ class Neo4jNodeMapping(BaseModel):
     )
     name_field: str = Field(default="name", description="Field to use as node display name")
     key_field: str = Field(default="id", description="Field to use as primary key")
-    index_fields: list[str] = Field(default_factory=list, description="Fields to index for vector search")
-    embedding_models: dict[str, str] = Field(
-        default_factory=dict,
-        description="Map of target_field_name -> embeddings_id for pre-computed list[float] fields. "
-        "Used to determine the FLOAT[N] column dimension. "
-        "Example: {'description_embedding': 'ada_002@openai'}",
+    index_fields: list[str | tuple[str, str]] = Field(
+        default_factory=list,
+        description="Fields to index for vector search. Each entry is either a plain field name "
+        "(uses the default embedding model) or a (field_name, model_id) tuple that pins a specific "
+        'embedding model for that field. Example: ["name", ("description", "ada_002@openai")].',
     )
 
     model_config = {"arbitrary_types_allowed": True}
@@ -476,24 +474,9 @@ class Neo4jImportFactory(Neo4jFactory):
         node_mappings = self.get_node_mappings()
         relation_mappings = self.get_relation_mappings()
 
-        # Pre-build a dimension lookup from all registered embedding models (no API key needed)
-        all_embedding_models = {item.id: item for item in EmbeddingsFactory.known_list()}
-
         # Build GraphNode list from node mappings
         graph_nodes: list[GraphNode] = []
         for mapping in node_mappings:
-            # Resolve embedding_field_dimensions from embedding_models
-            embedding_field_dims: dict[str, int] = {}
-            for field_name, model_id in mapping.embedding_models.items():
-                info = all_embedding_models.get(model_id)
-                if info and info.dimension:
-                    embedding_field_dims[field_name] = info.dimension
-                else:
-                    logger.warning(
-                        f"Cannot resolve dimension for embedding model '{model_id}' "
-                        f"on field '{field_name}' of {mapping.target_label}"
-                    )
-
             node = GraphNode(
                 node_class=mapping.node_class,
                 name_from=mapping.name_field,
@@ -502,24 +485,33 @@ class Neo4jImportFactory(Neo4jFactory):
                 index_fields=mapping.index_fields,
                 explicitly_defined=True,  # Neo4j nodes don't need field path validation
             )
-            node._embedding_field_dimensions = embedding_field_dims
             graph_nodes.append(node)
+
+        # Build lookup: Pydantic class → GraphNode (for resolving relation endpoints)
+        node_by_class: dict[type[BaseModel], GraphNode] = {n.node_class: n for n in graph_nodes}
 
         # Build GraphRelation list from relation mappings
         graph_relations: list[GraphRelation] = []
         for mapping in relation_mappings:
-            # Transfer property_mappings to GraphRelation (Fix 2: Schema alignment)
-            # The properties dict maps target property names to their type annotations
+            from_graph_node = node_by_class.get(mapping.from_node)
+            to_graph_node = node_by_class.get(mapping.to_node)
+            if from_graph_node is None or to_graph_node is None:
+                logger.warning(
+                    f"Skipping relation {mapping.rel_name!r}: "
+                    f"from_node {mapping.from_node.__name__!r} or "
+                    f"to_node {mapping.to_node.__name__!r} not found in node mappings"
+                )
+                continue
+
+            # Transfer property_mappings to GraphRelation
             rel_properties = None
             if mapping.property_mappings:
-                # For Neo4j imports, we infer all property types as str by default
-                # since the actual data types will be preserved from the parquet
                 rel_properties = {target_prop: str for _, target_prop in mapping.property_mappings.items()}
 
             graph_relations.append(
                 GraphRelation(
-                    from_node=mapping.from_node,
-                    to_node=mapping.to_node,
+                    from_node=from_graph_node,
+                    to_node=to_graph_node,
                     name=mapping.rel_name,
                     description=mapping.description,
                     properties=rel_properties,

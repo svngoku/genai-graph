@@ -445,7 +445,7 @@ def summarize_warnings_task(config_name: str | None = None) -> list[str]:
     warnings = manager.get_warnings()
 
     if warnings:
-        logger.warning("KG creation completed with %d warning(s)", len(warnings))
+        logger.warning(f"KG creation completed with {len(warnings)} warning(s)")
         if config_name:
             manager.activate()
             manager.log_warnings(warnings)
@@ -542,29 +542,14 @@ def create_vector_indexes_task(bundles: list[GraphBundle], backend: KgBackend) -
             except Exception as e:
                 log.warning(f"Failed to inspect table {table_name}: {e}")
                 continue
-            for field in config.index_fields:
-                index_name = f"{field}_index"
-                embedding_field = f"{field}_embedding"
+            for field_name, _model in config.index_field_specs:
+                index_name = f"{field_name}_index"
+                embedding_field = f"{field_name}_embedding"
                 if embedding_field not in existing_columns:
                     log.debug(f"Skipping vector index {index_name}; column {embedding_field} not found in {table_name}")
                     continue
                 try:
                     backend.create_vector_index(table_name, embedding_field, index_name, metric="cosine")
-                    index_count += 1
-                except Exception as e:
-                    log.warning(f"Failed to create vector index {index_name}: {e}")
-
-            # Also create indexes for pre-computed list[float] fields (not generated from index_fields)
-            generated_embedding_fields = {f"{f}_embedding" for f in config.index_fields}
-            for emb_field in config.embedding_field_dimensions:
-                if emb_field in generated_embedding_fields:
-                    continue  # Already handled above
-                if emb_field not in existing_columns:
-                    log.debug(f"Skipping vector index; column {emb_field} not found in {table_name}")
-                    continue
-                index_name = f"{emb_field.removesuffix('_embedding')}_index"
-                try:
-                    backend.create_vector_index(table_name, emb_field, index_name, metric="cosine")
                     index_count += 1
                 except Exception as e:
                     log.warning(f"Failed to create vector index {index_name}: {e}")

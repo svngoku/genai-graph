@@ -442,7 +442,7 @@ def export_info(config_name: str, backend: KgBackend) -> UPath:
         lines.append("|--------------|-----------|---------|-------------|")
         for relation in schema.relations:
             rel_type = relation.name
-            direction = f"**{relation.from_node.__name__}** -> **{relation.to_node.__name__}**"
+            direction = f"**{relation.from_node.label}** -> **{relation.to_node.label}**"
             meaning = relation.description or ""
 
             if relation.field_paths:
@@ -996,7 +996,16 @@ def import_from_parquet(
             continue
 
         try:
-            df = pd.read_parquet(str(parquet_path))
+            # Read via pyarrow and strip stored pandas metadata before converting to
+            # pandas.  Without this, parquet files that contain Arrow-backed list<float64>
+            # columns (embedding vectors) crash on read with:
+            #   TypeError: data type 'list<item: double>[pyarrow]' not understood
+            # Stripping the metadata makes pyarrow return plain object-dtype columns
+            # (numpy arrays) which we can later re-wrap for Kuzu.
+            import pyarrow.parquet as pq
+
+            raw_table = pq.read_table(str(parquet_path))
+            df = raw_table.replace_schema_metadata({}).to_pandas()
             if df.empty:
                 continue
 
@@ -1079,6 +1088,32 @@ def import_from_parquet(
                     )
                     logger.debug(f"Reordered struct fields for {node_type}.{col}: {expected_fields}")
 
+            # Re-wrap embedding columns (name ends with _embedding) as Arrow-backed
+            # list<float64> so Kuzu's LOAD FROM df scanner maps them to FLOAT[N] columns.
+            # After the pyarrow-stripped read above the values are numpy.ndarray objects;
+            # plain object-dtype lists would be inferred as STRING by Kuzu.
+            try:
+                import numpy as np
+                import pyarrow as pa
+
+                for col in list(df.columns):
+                    if not col.endswith("_embedding"):
+                        continue
+                    if df[col].dtype != object or df[col].empty:
+                        continue
+                    sample_idx = df[col].first_valid_index()
+                    if sample_idx is None:
+                        continue
+                    sample = df[col].loc[sample_idx]
+                    # Accept both numpy arrays and Python lists of numeric values
+                    if not isinstance(sample, (np.ndarray, list)):
+                        continue
+                    raw_lists = [list(v) if v is not None else None for v in df[col]]
+                    arrow_arr = pa.array(raw_lists, type=pa.list_(pa.float64()), from_pandas=True)
+                    df[col] = pd.Series(pd.arrays.ArrowExtensionArray(arrow_arr), index=df.index)
+            except Exception as _cast_exc:
+                logger.debug(f"Could not re-wrap embedding columns for {node_type}: {_cast_exc}")
+
             # Determine primary key from schema info or fallback to 'id' or first column
             target_pk = pk_info.get(node_type)
             pk_field = target_pk or ("id" if "id" in df.columns else df.columns[0])
@@ -1136,9 +1171,44 @@ def import_from_parquet(
                 logger.error(
                     f"Failed to import {node_type} nodes: Schema mismatch detected. "
                     f"This usually happens when the BAML schema changed but cached parquet files have the old structure. "
-                    f"\n\n� Solution: Run 'cli kg create --clear-all-caches' to regenerate all caches."
+                    f"\n\n💡 Solution: Run 'cli kg create --clear-all-caches' to regenerate all caches."
                 )
                 logger.error(f"Technical details: {exc}")
+            elif "incorrect list entry to ARRAY" in err_msg:
+                # Embedding dimension mismatch (e.g., 1024 vs 1536 from different models).
+                # Retry without the incompatible embedding columns so non-embedding fields are still imported.
+                embedding_cols = [c for c in df.columns if c.endswith("_embedding")]
+                logger.warning(
+                    f"Embedding dimension mismatch for {node_type} ({err_msg}). "
+                    f"Retrying import without embedding columns: {embedding_cols}"
+                )
+                try:
+                    df = df.drop(columns=embedding_cols, errors="ignore")
+                    retry_other_cols = [c for c in df.columns if c != pk_field]
+                    retry_on_create = ", ".join([f"n.{c} = {c}" for c in retry_other_cols]) if retry_other_cols else ""
+                    retry_on_match = ", ".join([f"n.{c} = {c}" for c in retry_other_cols]) if retry_other_cols else ""
+                    if retry_on_create:
+                        retry_query = f"""
+                            LOAD FROM df
+                            MERGE (n:{node_type} {{{pk_field}: {pk_field}}})
+                            ON CREATE SET {retry_on_create}
+                            ON MATCH SET {retry_on_match}
+                        """
+                    else:
+                        retry_query = f"""
+                            LOAD FROM df
+                            MERGE (n:{node_type} {{{pk_field}: {pk_field}}})
+                        """
+                    kuzu_conn.execute(retry_query)
+                    nodes_imported += len(df)
+                    logger.info(
+                        f"Imported {len(df)} {node_type} nodes without embeddings "
+                        f"(dimension mismatch: dropped {embedding_cols})"
+                    )
+                    if collector is not None:
+                        collector.add_nodes(node_type, df)
+                except Exception as retry_exc:
+                    logger.error(f"Failed to import {node_type} nodes even without embeddings: {retry_exc}")
             else:
                 logger.error(f"Failed to import {node_type} nodes: {exc}")
 

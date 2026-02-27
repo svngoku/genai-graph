@@ -149,7 +149,7 @@ class GraphNode(BaseModel):
     name_from: str | Callable[[dict[str, Any], str], str]
     key_from: str | Callable[[dict[str, Any], str], str] = "AUTO_ID"
     description: str = ""
-    index_fields: list[str] = []
+    index_fields: list[str | tuple[str, str]] = []
 
     # TODO: consider removing once orphan detection can infer reachability automatically.
     # Set to True for nodes from explicit mappings (Neo4j, etc.) to skip orphan warnings.
@@ -171,6 +171,21 @@ class GraphNode(BaseModel):
     def compute_embeddings(self) -> bool:
         """Return True when embedding computation is required (index_fields is non-empty)."""
         return bool(self.index_fields)
+
+    @property
+    def index_field_specs(self) -> list[tuple[str, str | None]]:
+        """Normalised index field specs as (field_name, model_override_or_None) pairs.
+
+        Plain strings yield (name, None) meaning use the default embedding model.
+        Tuples yield (name, model_id) meaning use the specified model.
+        """
+        result: list[tuple[str, str | None]] = []
+        for entry in self.index_fields:
+            if isinstance(entry, tuple):
+                result.append(entry)
+            else:
+                result.append((entry, None))
+        return result
 
     @property
     def field_paths(self) -> list[str]:
@@ -314,8 +329,8 @@ class GraphRelation(BaseModel):
     All field paths are automatically deduced from the Pydantic model structure.
     """
 
-    from_node: type[BaseModel]
-    to_node: type[BaseModel]
+    from_node: "GraphNode"
+    to_node: "GraphNode"
     name: str
     description: str = ""
     properties: dict[str, Any] | None = None  # Property name -> annotation/type
@@ -334,7 +349,7 @@ class GraphRelation(BaseModel):
 
         Example: ``ReviewedOpportunity → HAS_RISK → RiskAnalysis``.
         """
-        return f"{self.from_node.__name__} → {self.name} → {self.to_node.__name__}"
+        return f"{self.from_node.label} → {self.name} → {self.to_node.label}"
 
     def iter_field_paths(self) -> list[tuple[str, str]]:
         """Return a copy of the (from_path, to_path) pairs for this relation."""
@@ -583,9 +598,11 @@ class GraphSchema(BaseModel):
 
             relation_config.field_paths = []
 
-            # Find all possible paths between from_node and to_node
-            from_node_paths = self._get_node_paths(relation_config.from_node)
-            to_node_paths = self._get_node_paths(relation_config.to_node)
+            # Find all possible paths between from_node and to_node.
+            # relation_config.from_node IS the GraphNode (same object as in self.nodes),
+            # so its field_paths are already populated by _deduce_node_field_paths.
+            from_node_paths = relation_config.from_node.field_paths
+            to_node_paths = relation_config.to_node.field_paths
 
             # Find all valid connections
             candidate_paths = []
@@ -603,8 +620,8 @@ class GraphSchema(BaseModel):
 
                 # Warn if multiple valid paths exist
                 if len(candidate_paths) > 1:
-                    from_label = relation_config.from_node.__name__
-                    to_label = relation_config.to_node.__name__
+                    from_label = relation_config.from_node.label
+                    to_label = relation_config.to_node.label
                     chosen = f"{candidate_paths[0][0] or '(root)'} → {candidate_paths[0][1] or '(root)'}"
                     alternatives = "; ".join([f"{p[0] or '(root)'} → {p[1] or '(root)'}" for p in candidate_paths[1:]])
                     warning_msg = (
@@ -614,14 +631,6 @@ class GraphSchema(BaseModel):
                     )
                     # Store in _warnings list so it gets picked up by validate_with_context
                     self._warnings.append(warning_msg)
-
-    def _get_node_paths(self, node_class: type[BaseModel]) -> list[str]:
-        """Get all field paths for a given node class."""
-        node_config = next(
-            (n for n in self.nodes if n.node_class.__name__ == node_class.__name__),
-            None,
-        )
-        return node_config.field_paths if node_config else []
 
     def _path_complexity_score(self, from_path: str, to_path: str) -> tuple[int, int, int, int]:
         """Calculate a complexity score for a relationship path.
@@ -729,7 +738,7 @@ class GraphSchema(BaseModel):
 
             # Find all fields that are handled by relationships
             for relation_config in self.relations:
-                if relation_config.from_node.__name__ == node_config.node_class.__name__:
+                if relation_config.from_node.label == node_config.label:
                     # Fields that point to other nodes should be excluded
                     for from_path, to_path in relation_config.field_paths:
                         # Extract the field name from the path
@@ -770,32 +779,27 @@ class GraphSchema(BaseModel):
         """
         warnings_list = []
 
-        # Check that all referenced classes in relationships have node configurations
-        referenced_classes = set()
+        # Check that all referenced node labels in relationships have node configurations
+        referenced_labels = {rel.from_node.label for rel in self.relations} | {rel.to_node.label for rel in self.relations}
+        configured_labels = {node.label for node in self.nodes}
+        missing_labels = referenced_labels - configured_labels
+
+        for label in missing_labels:
+            warnings_list.append(f"Class {label} is referenced in relationships but has no GraphNode")
+
+        # Check for duplicate relationships between the same node pair
+        relation_pairs: dict[tuple[str, str], list[str]] = {}
         for relation in self.relations:
-            referenced_classes.add(relation.from_node)
-            referenced_classes.add(relation.to_node)
-
-        configured_classes = {node.node_class for node in self.nodes}
-        missing_classes = referenced_classes - configured_classes
-
-        if missing_classes:
-            for cls in missing_classes:
-                warnings_list.append(f"Class {cls.__name__} is referenced in relationships but has no GraphNode")
-
-        # Check for duplicate relationships between the same classes
-        relation_pairs = {}
-        for relation in self.relations:
-            key = (relation.from_node, relation.to_node)
+            key = (relation.from_node.label, relation.to_node.label)
             if key in relation_pairs:
                 relation_pairs[key].append(relation.name)
             else:
                 relation_pairs[key] = [relation.name]
 
-        for (from_cls, to_cls), names in relation_pairs.items():
+        for (from_label, to_label), names in relation_pairs.items():
             if len(names) > 1:
                 warnings_list.append(
-                    f"Multiple relationships defined between {from_cls.__name__} and {to_cls.__name__}: {', '.join(names)}"
+                    f"Multiple relationships defined between {from_label} and {to_label}: {', '.join(names)}"
                 )
 
         # Warn when we have node classes that never appear in the reachable
@@ -825,7 +829,7 @@ class GraphSchema(BaseModel):
         #     if not relation.field_paths:
         #         warnings_list.append(
         #             f"No valid field paths found for relationship {relation.name} "
-        #             f"between {relation.from_node.__name__} and {relation.to_node.__name__}"
+        #             f"between {relation.from_node.label} and {relation.to_node.label}"
         #         )
 
         # Validate embedded field configurations (MAP/STRUCT support)
@@ -940,10 +944,10 @@ class GraphSchema(BaseModel):
             )
 
         # Relations — sorted by (from, name, to)
-        for rel in sorted(self.relations, key=lambda r: (r.from_node.__name__, r.name, r.to_node.__name__)):
+        for rel in sorted(self.relations, key=lambda r: (r.from_node.label, r.name, r.to_node.label)):
             props = ",".join(sorted(rel.properties.keys())) if rel.properties else ""
             parts.append(
-                f"rel:{rel.from_node.__name__}->{rel.name}->{rel.to_node.__name__}|props={props}|desc={rel.description}"
+                f"rel:{rel.from_node.label}->{rel.name}->{rel.to_node.label}|props={props}|desc={rel.description}"
             )
 
         combined = "\n".join(parts)
@@ -1065,7 +1069,7 @@ class GraphSchema(BaseModel):
         # Relations
         logger.debug("Relationship Configurations:")
         for relation in self.relations:
-            from_to = f"{relation.from_node.__name__} → {relation.to_node.__name__}"
+            from_to = f"{relation.from_node.label} → {relation.to_node.label}"
             paths_str = (
                 "; ".join([f"{fp} → {tp}" for fp, tp in relation.field_paths]) if relation.field_paths else "None"
             )

@@ -11,9 +11,49 @@ from typing import Type
 
 from pydantic import BaseModel
 
-from genai_graph.ekg.baml_client.types import SWArchitectureDocument
+from genai_graph.ekg.baml_client.types import Solution, SWArchitectureDocument, TechnicalComponent
+from genai_graph.ekg.schema.canonical_nodes import CustomerNode, OpportunityNode, PersonNode
+from genai_graph.ekg.schema.common_nodes import L3  # L3 arch-doc node uses key_from="name" (no code available)
 from genai_graph.kg.factories import JsonFileBackedFactory
-from genai_graph.kg.schema import GraphSchema
+from genai_graph.kg.schema import GraphNode, GraphRelation, GraphSchema
+
+# ---------------------------------------------------------------------------
+# Module-scope node singletons
+# ---------------------------------------------------------------------------
+
+SWArchitectureDocumentNode: GraphNode = GraphNode(
+    node_class=SWArchitectureDocument,
+    name_from=lambda data, base: f"Architecture:{data.get('document_date', 'unknown')}",
+    key_from=lambda data, base: f"Architecture:{data.get('document_date', 'unknown')}",
+    description="Root node containing the complete architecture document with technical stack and solutions",
+)
+
+TechnicalComponentNode: GraphNode = GraphNode(
+    node_class=TechnicalComponent,
+    name_from="name",
+    key_from="name",
+    description="Individual technology, framework, platform, tool, or infrastructure component",
+)
+
+SolutionNode: GraphNode = GraphNode(
+    node_class=Solution,
+    name_from="name",
+    key_from="name",
+    description="Specific product, managed service, or OSS solution used in the architecture",
+    index_fields=["name"],
+)
+
+# L3 in architecture docs uses key_from="name" because docs reference L3 by name (no code available).
+# description uses ada_002@openai (1536-dim) to match Stratnav pre-computed vectors.
+# Note: canonical L3Node uses key_from="code" and is defined in canonical_nodes.py.
+L3ArchDocNode: GraphNode = GraphNode(
+    node_class=L3,
+    name_from="name",
+    key_from="name",
+    description="Level 3 service offering from service catalog",
+    index_fields=["name", ("description", "ada_002@openai")],
+    explicitly_defined=True,  # L3 is not in SWArchitectureDocument fields; linked via MAPS_TO_SERVICE
+)
 
 
 class ArchitectureDocumentGraph(JsonFileBackedFactory, BaseModel):
@@ -32,125 +72,55 @@ class ArchitectureDocumentGraph(JsonFileBackedFactory, BaseModel):
         Returns:
             GraphSchema with all node and relationship configurations
         """
-        from genai_graph.ekg.baml_client.types import (
-            Customer,
-            Opportunity,
-            Person,
-            Solution,
-            SWArchitectureDocument,
-            TechnicalComponent,
-        )
-        from genai_graph.ekg.schema.common_nodes import L3
-        from genai_graph.kg.schema import (
-            GraphNode,
-            GraphRelation,
-        )
-
-        # Note: We use BAML types directly here (not extended types from common_nodes)
-        # because SWArchitectureDocument's fields reference these BAML types.
-
-        # Define nodes with descriptions
         nodes = [
-            # BAML types that SWArchitectureDocument references
-            GraphNode(
-                node_class=Opportunity,
-                name_from="name",
-                key_from="opportunity_id",
-                description="Core opportunity information",
-                index_fields=["name", "status"],
-            ),
-            GraphNode(
-                node_class=Customer,
-                name_from="name",
-                key_from="name",
-                description="Customer organization details",
-                index_fields=["name"],
-            ),
-            GraphNode(
-                node_class=Person,
-                name_from="name",
-                key_from="name",
-                description="Individual contacts and team members",
-            ),
-            # Root node - the architecture document itself
-            GraphNode(
-                node_class=SWArchitectureDocument,
-                name_from=lambda data, base: f"Architecture:{data.get('document_date', 'unknown')}",
-                key_from=lambda data, base: f"Architecture:{data.get('document_date', 'unknown')}",
-                description="Root node containing the complete architecture document with technical stack and solutions",
-            ),
-            # Technical Component nodes - individual technologies and tools
-            GraphNode(
-                node_class=TechnicalComponent,
-                name_from="name",
-                key_from="name",  # Use name field as primary key for deduplication
-                description="Individual technology, framework, platform, tool, or infrastructure component",
-                index_fields=["name", "type"],
-            ),
-            # Solution nodes - managed services, products, and OSS solutions
-            GraphNode(
-                node_class=Solution,
-                name_from="name",
-                key_from="name",  # Use name field as primary key for deduplication
-                description="Specific product, managed service, or OSS solution used in the architecture",
-                index_fields=["name", "vendor", "type"],
-            ),
-            # L3 service nodes from Stratnav catalog
-            # Note: L3 nodes are primarily imported from Stratnav (with code as PK).
-            # In architecture docs, L3 is referenced by name. Using name as key here
-            # ensures deduplication within this factory; cross-factory merging with
-            # Stratnav L3 nodes happens at the graph merge level.
-            GraphNode(
-                node_class=L3,
-                name_from="name",
-                key_from="name",
-                description="Level 3 service offering from service catalog",
-                index_fields=["name", "description"],
-            ),
+            OpportunityNode,
+            CustomerNode,
+            PersonNode,
+            SWArchitectureDocumentNode,
+            TechnicalComponentNode,
+            SolutionNode,
+            L3ArchDocNode,
         ]
 
-        # Define relationships with descriptions
         # BAML properties matching p_*_ pattern (e.g., p_purpose_) are automatically
         # converted to edge properties
         relations = [
-            # Document to project
             GraphRelation(
-                from_node=SWArchitectureDocument,  # Top class
-                to_node=Opportunity,
+                from_node=SWArchitectureDocumentNode,
+                to_node=OpportunityNode,
                 name="SOFWARE_ARCHITECURE",
                 description="Architecture document for the opportunity/project",
             ),
-            # Document to technical components in the stack
             GraphRelation(
-                from_node=SWArchitectureDocument,
-                to_node=TechnicalComponent,
+                from_node=SWArchitectureDocumentNode,
+                to_node=TechnicalComponentNode,
                 name="USED_TECHNOLOGY",
                 description="Architecture includes this technology component.",
             ),
-            # Document to solutions
             GraphRelation(
-                from_node=SWArchitectureDocument,
-                to_node=Solution,
+                from_node=SWArchitectureDocumentNode,
+                to_node=SolutionNode,
                 name="USED_SOLUTION",
-                description="Architecture leverages this solution. ",
+                description="Architecture leverages this solution.",
             ),
             GraphRelation(
-                from_node=Opportunity,
-                to_node=Customer,
+                from_node=OpportunityNode,
+                to_node=CustomerNode,
                 name="HAS_CUSTOMER",
                 description="Opportunity belongs to customer",
             ),
             GraphRelation(
-                from_node=Customer, to_node=Person, name="HAS_CONTACT", description="Customer contact persons"
+                from_node=CustomerNode,
+                to_node=PersonNode,
+                name="HAS_CONTACT",
+                description="Customer contact persons",
             ),
-            # Solution to L3 service catalog mapping
             GraphRelation(
-                from_node=Solution,
-                to_node=L3,
+                from_node=SolutionNode,
+                to_node=L3ArchDocNode,
                 name="MAPS_TO_SERVICE",
                 description="Solution maps to or is delivered by this L3 service offering",
             ),
-            # Component to component relationships (dependencies/integration)
         ]
 
         return GraphSchema(root_model_class=self.TOP_CLASS, nodes=nodes, relations=relations)

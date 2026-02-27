@@ -3,9 +3,17 @@ from typing import Any
 from pydantic import BaseModel
 
 from genai_graph.ekg.baml_client.types import Person
+from genai_graph.ekg.schema.canonical_nodes import CustomerNode, OpportunityNode, PersonNode
 from genai_graph.ekg.schema.common_nodes import Customer, Opportunity, WinLoss
 from genai_graph.kg.factories import TableBackedFactory
 from genai_graph.kg.schema import GraphNode, GraphRelation, GraphSchema
+
+WinLossNode: GraphNode = GraphNode(
+    node_class=WinLoss,
+    name_from=lambda data, _base: data.get("reason") or data.get("result") or "other/unset",
+    key_from="AUTO_ID",
+    description="Win/Loss outcome for the opportunity",
+)
 
 
 class CrmExtractGraph(TableBackedFactory, BaseModel):
@@ -48,57 +56,35 @@ class CrmExtractGraph(TableBackedFactory, BaseModel):
         Creates schema with Opportunity, Person, and WinLoss nodes and their relationships.
         """
         nodes = [
-            GraphNode(
-                node_class=Opportunity,
-                name_from="name",
-                key_from="opportunity_id",
-                description="Sales opportunity with win/loss tracking",
-                index_fields=["name", "status"],
-            ),
-            GraphNode(
-                node_class=Customer,
-                name_from="name",
-                key_from="name",
-                description="Customer organization details",
-                index_fields=["name"],
-            ),
-            GraphNode(
-                node_class=Person,
-                name_from="name",
-                key_from="name",
-                description="Individual contacts and team members",
-            ),
-            GraphNode(
-                node_class=WinLoss,
-                name_from=lambda data, _base: data.get("reason") or data.get("result") or "other/unset",
-                key_from="AUTO_ID",
-                description="Win/Loss outcome for the opportunity",
-            ),
+            OpportunityNode,
+            CustomerNode,
+            PersonNode,
+            WinLossNode,
         ]
 
         relations = [
             GraphRelation(
-                from_node=Opportunity,
-                to_node=WinLoss,
+                from_node=OpportunityNode,
+                to_node=WinLossNode,
                 name="WIN_LOSS_INFO",
                 description="Win/loss outcome for this opportunity",
             ),
             GraphRelation(
-                from_node=Opportunity,
-                to_node=Person,
+                from_node=OpportunityNode,
+                to_node=PersonNode,
                 name="LEAD_BY",
                 description="Account Sales Leader",
                 field_paths=[("", "lead")],
             ),
             GraphRelation(
-                from_node=Opportunity,
-                to_node=Customer,
+                from_node=OpportunityNode,
+                to_node=CustomerNode,
                 name="HAS_CUSTOMER",
                 description="Customer organization for this opportunity",
             ),
             GraphRelation(
-                from_node=Customer,
-                to_node=Person,
+                from_node=CustomerNode,
+                to_node=PersonNode,
                 name="HAS_CONTACT",
                 description="Customer contact persons",
                 field_paths=[("customer", "customer.employees")],

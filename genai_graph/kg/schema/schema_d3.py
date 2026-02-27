@@ -117,7 +117,7 @@ def build_schema_d3_data(schema: GraphSchema, graph_names: list[str] | None = No
                         "type_human": field_type_human,
                         "type_kuzu": field_type_kuzu,
                         "description": field_desc,
-                        "indexed": field_name in (node.index_fields or []),
+                        "indexed": field_name in {fn for fn, _ in node.index_field_specs},
                         "embedded": False,
                     }
                 )
@@ -144,7 +144,7 @@ def build_schema_d3_data(schema: GraphSchema, graph_names: list[str] | None = No
                 "description": description,
                 "primary_key": primary_key,
                 "name_from": name_from,
-                "index_fields": list(node.index_fields or []),
+                "index_fields": [fn for fn, _ in node.index_field_specs],
                 "fields": fields_out,
             }
         )
@@ -152,13 +152,13 @@ def build_schema_d3_data(schema: GraphSchema, graph_names: list[str] | None = No
     links_out: list[dict[str, Any]] = []
 
     for rel in schema.relations:
-        source = rel.from_node.__name__
-        target = rel.to_node.__name__
+        source = rel.from_node.label
+        target = rel.to_node.label
 
         props_out: list[dict[str, Any]] = []
-        for prop_name, prop_type_human, prop_desc in _get_relation_properties(rel.to_node, baml_docs):
+        for prop_name, prop_type_human, prop_desc in _get_relation_properties(rel.to_node.node_class, baml_docs):
             raw_field_name = f"p_{prop_name}_"
-            field_info = getattr(rel.to_node, "model_fields", {}).get(raw_field_name)
+            field_info = getattr(rel.to_node.node_class, "model_fields", {}).get(raw_field_name)
             prop_type_kuzu = _get_kuzu_type_for_field(field_info.annotation) if field_info else "STRING"
 
             props_out.append(

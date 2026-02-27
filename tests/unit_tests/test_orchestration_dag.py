@@ -313,6 +313,7 @@ class TestGraphSchemaFingerprint:
             GraphNode(node_class=Person, name_from="name"),
             GraphNode(node_class=Company, name_from="name"),
         ]
+        person_node, company_node = nodes[0], nodes[1]
         if extra_node:
 
             class Project(PydanticBaseModel):
@@ -321,7 +322,7 @@ class TestGraphSchemaFingerprint:
             nodes.append(GraphNode(node_class=Project, name_from="name"))
 
         rels = [
-            GraphRelation(from_node=Person, to_node=Company, name="WORKS_AT"),
+            GraphRelation(from_node=person_node, to_node=company_node, name="WORKS_AT"),
         ]
 
         return GraphSchema(root_model_class=Person, nodes=nodes, relations=rels)

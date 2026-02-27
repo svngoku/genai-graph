@@ -56,25 +56,31 @@ def create_configuration():
         GraphSchema with all auto-deduced configurations
     """
     # Define nodes - just specify the class and name_from field
+    reviewed_opp_node = GraphNode(node_class=ReviewedOpportunity, name_from="start_date", key_from="AUTO_ID")
+    opportunity_node = GraphNode(node_class=Opportunity, name_from="name", key_from="AUTO_ID")
+    customer_node = GraphNode(node_class=Customer, name_from="name", key_from="AUTO_ID")
+    person_node = GraphNode(node_class=Person, name_from="name", key_from="AUTO_ID")
+    partner_node = GraphNode(node_class=Partner, name_from="name", key_from="AUTO_ID")
+    risk_analysis_node = GraphNode(node_class=RiskAnalysis, name_from="risk_description", key_from="AUTO_ID")
+    technical_approach_node = GraphNode(
+        node_class=TechnicalApproach,
+        name_from=lambda data, base: data.get("technical_stack") or data.get("architecture") or f"{base}_default",
+        key_from="AUTO_ID",
+    )
+    competitive_landscape_node = GraphNode(
+        node_class=CompetitiveLandscape,
+        name_from=lambda data, base: data.get("competitive_position") or f"{base}_competitive_position",
+        key_from="AUTO_ID",
+    )
     nodes = [
-        # Root node
-        GraphNode(node_class=ReviewedOpportunity, name_from="start_date", key_from="AUTO_ID"),
-        # Regular nodes - field paths auto-deduced
-        GraphNode(node_class=Opportunity, name_from="name", key_from="AUTO_ID"),
-        GraphNode(node_class=Customer, name_from="name", key_from="AUTO_ID"),
-        GraphNode(node_class=Person, name_from="name", key_from="AUTO_ID"),  # Handles both contacts and team
-        GraphNode(node_class=Partner, name_from="name", key_from="AUTO_ID"),
-        GraphNode(node_class=RiskAnalysis, name_from="risk_description", key_from="AUTO_ID"),
-        GraphNode(
-            node_class=TechnicalApproach,
-            name_from=lambda data, base: data.get("technical_stack") or data.get("architecture") or f"{base}_default",
-            key_from="AUTO_ID",
-        ),
-        GraphNode(
-            node_class=CompetitiveLandscape,
-            name_from=lambda data, base: data.get("competitive_position") or f"{base}_competitive_position",
-            key_from="AUTO_ID",
-        ),
+        reviewed_opp_node,
+        opportunity_node,
+        customer_node,
+        person_node,
+        partner_node,
+        risk_analysis_node,
+        technical_approach_node,
+        competitive_landscape_node,
         # FinancialMetrics is now expected to be provided via extra_classes on the
         # appropriate node in real schemas; we do not configure embed_in_parent here.
     ]
@@ -82,14 +88,14 @@ def create_configuration():
     # Define relationships - just specify from/to classes and relationship name
     # Field paths are automatically deduced from the model structure
     relations = [
-        GraphRelation(from_node=ReviewedOpportunity, to_node=Opportunity, name="REVIEWS"),
-        GraphRelation(from_node=Opportunity, to_node=Customer, name="HAS_CUSTOMER"),
-        GraphRelation(from_node=Customer, to_node=Person, name="HAS_CONTACT"),
-        GraphRelation(from_node=ReviewedOpportunity, to_node=Person, name="HAS_TEAM_MEMBER"),
-        GraphRelation(from_node=ReviewedOpportunity, to_node=Partner, name="HAS_PARTNER"),
-        GraphRelation(from_node=ReviewedOpportunity, to_node=RiskAnalysis, name="HAS_RISK"),
-        GraphRelation(from_node=ReviewedOpportunity, to_node=TechnicalApproach, name="HAS_TECH_STACK"),
-        GraphRelation(from_node=ReviewedOpportunity, to_node=CompetitiveLandscape, name="HAS_COMPETITION"),
+        GraphRelation(from_node=reviewed_opp_node, to_node=opportunity_node, name="REVIEWS"),
+        GraphRelation(from_node=opportunity_node, to_node=customer_node, name="HAS_CUSTOMER"),
+        GraphRelation(from_node=customer_node, to_node=person_node, name="HAS_CONTACT"),
+        GraphRelation(from_node=reviewed_opp_node, to_node=person_node, name="HAS_TEAM_MEMBER"),
+        GraphRelation(from_node=reviewed_opp_node, to_node=partner_node, name="HAS_PARTNER"),
+        GraphRelation(from_node=reviewed_opp_node, to_node=risk_analysis_node, name="HAS_RISK"),
+        GraphRelation(from_node=reviewed_opp_node, to_node=technical_approach_node, name="HAS_TECH_STACK"),
+        GraphRelation(from_node=reviewed_opp_node, to_node=competitive_landscape_node, name="HAS_COMPETITION"),
         # Note: No relationship to FinancialMetrics because it's embedded in Opportunity
     ]
 

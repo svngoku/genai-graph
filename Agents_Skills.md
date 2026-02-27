@@ -73,34 +73,42 @@ class Partner(BamlPartner):
 Pattern: `class <Name>(<BamlName>):` — the `__name__` must match the BAML
 type's `__name__` for table unification.
 
-#### 2. Register in `get_common_nodes()`
+#### 2. Create a `GraphNode` singleton in `canonical_nodes.py`
 
 ```python
-GraphNode(
+PartnerNode: GraphNode = GraphNode(
     node_class=Partner,
     name_from="name",
     key_from="name",
     description="Partner organization",
-),
+)
 ```
+
+Export it from the module. Other factories import this singleton.
 
 #### 3–4. Update the factory that owned the old type
 
 - Delete old class definition (e.g. `TechnologyPartner`).
-- Add to import: `from genai_graph.ekg.schema.common_nodes import ..., Partner`
+- Add to import: `from genai_graph.ekg.schema.canonical_nodes import ..., PartnerNode`
 - Update `Neo4jNodeMapping`: keep `neo4j_label="TechnologyPartner"` (matches source data), change `node_class=Partner`.
-- Update `Neo4jRelationMapping`: change `to_node=Partner` (or `from_node`).
+- Update `Neo4jRelationMapping`: change `to_node=Partner` (or `from_node`) — these still use raw classes.
 
 #### 5. Update other factories
 
-Replace:
+Replace raw class imports with the node singleton:
 ```python
+# Before
 from genai_graph.ekg.baml_client.types import Partner
+# ...nodes list...
+GraphNode(node_class=Partner, name_from="name", key_from="name")
+
+# After
+from genai_graph.ekg.schema.canonical_nodes import PartnerNode
+# ...nodes list...
+PartnerNode  # use the singleton directly
 ```
-With:
-```python
-from genai_graph.ekg.schema.common_nodes import Partner
-```
+
+Update any `GraphRelation` calls to pass `PartnerNode` (the `GraphNode` instance) instead of the class.
 
 #### 6–7. Update documentation
 
@@ -191,7 +199,8 @@ A `GraphRelation` (or `Neo4jRelationMapping`) references a node class in `from_n
 |---------|------|
 | BAML schema definitions | `genai_graph/ekg/baml_src/schema/*.baml` |
 | Generated BAML types | `genai_graph/ekg/baml_client/types.py` (DO NOT EDIT) |
-| Canonical node types | `genai_graph/ekg/schema/common_nodes.py` |
+| Canonical Pydantic classes | `genai_graph/ekg/schema/common_nodes.py` |
+| Canonical `GraphNode` singletons | `genai_graph/ekg/schema/canonical_nodes.py` |
 | Stratnav (Neo4j) factory | `genai_graph/ekg/schema/stratnav.py` |
 | Rainbow review (BAML) factory | `genai_graph/ekg/schema/rainbow_review.py` |
 | CRM export factory | `genai_graph/ekg/schema/crm_export.py` |

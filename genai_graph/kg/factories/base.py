@@ -68,7 +68,7 @@ class KgFactory(ABC, BaseModel):
         schema = self.build_schema()
         result = {}
         for relation in schema.relations:
-            direction = f"{relation.from_node.__name__} → {relation.to_node.__name__}"
+            direction = f"{relation.from_node.label} → {relation.to_node.label}"
             result[relation.name] = (direction, relation.description)
         return result
 

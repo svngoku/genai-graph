@@ -515,22 +515,22 @@ class TestEmbeddingFieldDimensions:
 
 
 # ---------------------------------------------------------------------------
-# New tests for Scenario E: Neo4jNodeMapping.embedding_models + build_schema
+# New tests for Scenario E: Neo4jNodeMapping tuple index_fields + per-field model
 # ---------------------------------------------------------------------------
 
 
-class TestNeo4jNodeMappingEmbeddingModels:
-    """Test Neo4jNodeMapping.embedding_models and dimension resolution in build_schema."""
+class TestNeo4jNodeMappingIndexFields:
+    """Test Neo4jNodeMapping.index_fields tuple syntax and per-field model pinning."""
 
-    def test_neo4j_node_mapping_embedding_models_default(self):
-        """Test that embedding_models defaults to empty dict."""
+    def test_neo4j_node_mapping_index_fields_default(self):
+        """Test that index_fields defaults to empty list."""
         from genai_graph.kg.factories.neo4j_factory import Neo4jNodeMapping
 
         mapping = Neo4jNodeMapping(neo4j_label="L3", node_class=SimpleNode, name_field="name", key_field="id")
-        assert mapping.embedding_models == {}
+        assert mapping.index_fields == []
 
-    def test_neo4j_node_mapping_embedding_models_set(self):
-        """Test setting embedding_models for a pre-computed field."""
+    def test_neo4j_node_mapping_index_fields_plain_strings(self):
+        """Test that index_fields accepts plain strings (uses default embedding model)."""
         from genai_graph.kg.factories.neo4j_factory import Neo4jNodeMapping
 
         mapping = Neo4jNodeMapping(
@@ -538,12 +538,25 @@ class TestNeo4jNodeMappingEmbeddingModels:
             node_class=SimpleNode,
             name_field="name",
             key_field="id",
-            embedding_models={"test_embedding": "embeddings_768@fake"},
+            index_fields=["name"],
         )
-        assert mapping.embedding_models == {"test_embedding": "embeddings_768@fake"}
+        assert mapping.index_fields == ["name"]
 
-    def test_build_schema_resolves_dimension_from_known_model(self):
-        """Test that build_schema() resolves embedding_field_dimensions via EmbeddingsFactory."""
+    def test_neo4j_node_mapping_index_fields_tuple_overrides_model(self):
+        """Test that index_fields accepts (field, model_id) tuples for per-field model pinning."""
+        from genai_graph.kg.factories.neo4j_factory import Neo4jNodeMapping
+
+        mapping = Neo4jNodeMapping(
+            neo4j_label="L3",
+            node_class=SimpleNode,
+            name_field="name",
+            key_field="id",
+            index_fields=[("test_field", "embeddings_768@fake")],
+        )
+        assert mapping.index_fields == [("test_field", "embeddings_768@fake")]
+
+    def test_build_schema_passes_index_fields_to_graph_node(self):
+        """Test that build_schema() passes tuple index_fields through to GraphNode.index_field_specs."""
         from genai_graph.kg.factories.neo4j_factory import Neo4jImportFactory, Neo4jNodeMapping
 
         class MinimalFactory(Neo4jImportFactory):
@@ -556,7 +569,7 @@ class TestNeo4jNodeMappingEmbeddingModels:
                         node_class=SimpleNode,
                         name_field="name",
                         key_field="id",
-                        embedding_models={"test_embedding": "embeddings_768@fake"},
+                        index_fields=["name", ("description", "embeddings_768@fake")],
                     )
                 ]
 
@@ -570,11 +583,10 @@ class TestNeo4jNodeMappingEmbeddingModels:
         schema = factory.build_schema()
         assert len(schema.nodes) == 1
         node_cfg = schema.nodes[0]
-        # Dimension for embeddings_768@fake is 768
-        assert node_cfg.embedding_field_dimensions == {"test_embedding": 768}
+        assert node_cfg.index_field_specs == [("name", None), ("description", "embeddings_768@fake")]
 
-    def test_l3_stratnav_mapping_has_ada002_dimension(self):
-        """Test that the real L3 StratnavGraph mapping resolves ada-002 (1536 dims)."""
+    def test_l3_stratnav_mapping_pins_ada002_for_description(self):
+        """Test that the real L3 StratnavGraph mapping pins ada_002@openai for description."""
         from genai_graph.ekg.schema.stratnav import StratnavGraph
 
         factory = StratnavGraph.__new__(StratnavGraph)
@@ -586,8 +598,8 @@ class TestNeo4jNodeMappingEmbeddingModels:
 
         schema = factory.build_schema()
         l3_node = next(n for n in schema.nodes if n.node_class.__name__ == "L3")
-        # ada_002 has dimension 1536
-        assert l3_node.embedding_field_dimensions.get("description_embedding") == 1536
+        specs = {field: model for field, model in l3_node.index_field_specs}
+        assert specs.get("description") == "ada_002@openai"
 
 
 # ---------------------------------------------------------------------------

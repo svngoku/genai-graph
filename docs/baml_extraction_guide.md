@@ -89,55 +89,78 @@ Graph factories define how extracted data becomes nodes and relationships in the
 
 ### Basic Factory Structure
 
+Define `GraphNode` singletons at **module scope** — once per class. These are
+reused in `build_schema()` and passed directly to `GraphRelation`.
+
 ```python
 from pydantic import BaseModel
-from genai_graph.ekg.baml_client.types import ReviewedOpportunity
+from genai_graph.ekg.baml_client.types import Opportunity, Person, ReviewedOpportunity
+from genai_graph.ekg.schema.canonical_nodes import CustomerNode  # canonical shared node
+from genai_graph.ekg.schema.common_nodes import Geo
 from genai_graph.kg.factories import JsonFileBackedFactory
-from genai_graph.kg.schema import GraphSchema, GraphNode, GraphRelation
+from genai_graph.kg.schema import GraphNode, GraphRelation, GraphSchema
+
+# ---------------------------------------------------------------------------
+# Module-scope node singletons — defined once, referenced in GraphRelation
+# ---------------------------------------------------------------------------
+OpportunityNode: GraphNode = GraphNode(
+    node_class=Opportunity,
+    name_from="name",
+    key_from="opportunity_id",
+    description="Core opportunity information",
+    index_fields=["name", "status"],
+)
+GeoNode: GraphNode = GraphNode(
+    node_class=Geo,
+    name_from="name",
+    key_from="name",
+    explicitly_defined=True,
+)
+ReviewedOpportunityNode: GraphNode = GraphNode(
+    node_class=ReviewedOpportunity,
+    name_from=lambda data, _: "Review:" + str(data.get("start_date")),
+    key_from="AUTO_ID",
+)
+
 
 class ReviewedOpportunityGraph(JsonFileBackedFactory, BaseModel):
     """Factory for processing reviewed opportunity documents."""
-    
+
     def get_model_class(self) -> type[BaseModel]:
         """Return the root Pydantic model class."""
         return ReviewedOpportunity
-    
+
     def build_schema(self) -> GraphSchema:
         """Define nodes and relationships."""
-        from genai_graph.ekg.baml_client.types import (
-            Opportunity,
-            Person,
-        )
-        # Import canonical types for cross-factory dedup
-        from genai_graph.ekg.schema.common_nodes import Customer, Geo
-        
         nodes = [
-            GraphNode(
-                node_class=Opportunity,
-                name_from="name",
-                key_from="opportunity_id",
-                description="Core opportunity information",
-                index_fields=["name", "status"],
-            ),
+            ReviewedOpportunityNode,
+            OpportunityNode,
+            CustomerNode,  # canonical shared node (from canonical_nodes)
+            GeoNode,
             # ... more nodes
         ]
-        
+
         relations = [
             GraphRelation(
-                from_node=ReviewedOpportunity,
-                to_node=Opportunity,
+                from_node=ReviewedOpportunityNode,  # GraphNode instance
+                to_node=OpportunityNode,            # GraphNode instance
                 name="REVIEWS",
                 description="Links review to opportunity",
             ),
             # ... more relationships
         ]
-        
+
         return GraphSchema(
             root_model_class=ReviewedOpportunity,
             nodes=nodes,
-            relations=relations
+            relations=relations,
         )
 ```
+
+> **Why module-scope singletons?** `GraphRelation` validates that `from_node`
+> and `to_node` are `GraphNode` instances (not raw classes). Defining them at
+> module scope makes them easy to reference and ensures the same object is
+> used in both `nodes=[...]` and `GraphRelation(from_node=..., to_node=...)`.
 
 ### Node Configuration
 
@@ -240,11 +263,14 @@ Properties from `FinancialMetrics` and `KeyStatementOfWorkElement` will be embed
 
 ### Relationship Configuration
 
+`GraphRelation` takes `GraphNode` **instances** (not class objects) for
+`from_node` and `to_node`. Use the module-scope singletons defined above:
+
 ```python
 GraphRelation(
-    from_node=Opportunity,      # Source node class
-    to_node=Customer,           # Target node class
-    name="HAS_CUSTOMER",        # Relationship type name
+    from_node=opportunity_node,  # GraphNode instance
+    to_node=customer_node,       # GraphNode instance
+    name="HAS_CUSTOMER",         # Relationship type name
     description="Opportunity belongs to customer",
 )
 ```
@@ -288,16 +314,16 @@ Use `field_paths` when:
 
 ```python
 GraphRelation(
-    from_node=ReviewedOpportunity,
-    to_node=Person,
+    from_node=reviewed_opp_node,
+    to_node=person_node,
     name="HAS_TEAM_MEMBER",
     # Tuple: (from_path, to_path) — "" means root
-    field_paths=[("", "team")],
+    field_paths=[("" , "team")],
 )
 
 GraphRelation(
-    from_node=ReviewedOpportunity,
-    to_node=Geo,
+    from_node=reviewed_opp_node,
+    to_node=geo_node,
     name="DELIVERED_IN",
     field_paths=[("", "delivery_info.locations")],
 )
