@@ -27,7 +27,7 @@ from genai_graph.kg.manager import get_kg_manager
 if TYPE_CHECKING:
     from genai_graph.kg.backend import KgBackend
 
-DEFAULT_VIZ_LIMIT = 1000
+DEFAULT_VIZ_LIMIT = 2000
 
 
 def get_available_kg_configs() -> list[str]:
@@ -138,8 +138,10 @@ def build_filtered_cypher_query(
     Returns:
         Cypher query string (comma-separated for union execution)
     """
-    # Build relationship type filter with multi-hop pattern when node types are filtered
-    use_multi_hop = bool(node_types)  # Use multi-hop pattern when filtering by node types
+    # Use multi-hop only when a specific node is selected (explore its neighbourhood).
+    # For node-type-only filters, multi-hop causes a path-count explosion that makes
+    # the LIMIT hit after just 2-3 source nodes, hiding all others of the same type.
+    use_multi_hop = bool(node_types and node_name)
     HOPS = 5
 
     # Build relationship filter
@@ -184,7 +186,9 @@ def build_filtered_cypher_query(
     elif node_types:
         # Node type filter - query both directions, allowing connections to any node type
         queries = []
-        per_type_limit = max(10, limit // (len(node_types) * 2))  # Split limit across types and directions
+        # Split limit across types (not across directions) – single-hop deduplication
+        # handles any overlap between the two direction queries.
+        per_type_limit = max(50, limit // len(node_types))
 
         for node_type in node_types:
             if exclusion_filter:
@@ -390,7 +394,7 @@ def main() -> None:
         limit = st.number_input(
             "Result Limit",
             min_value=10,
-            max_value=5000,
+            max_value=10000,
             value=DEFAULT_VIZ_LIMIT,
             step=50,
             help="Maximum number of relationships to display",
@@ -431,11 +435,14 @@ def main() -> None:
                     sss.current_query = query
 
                     # Generate HTML visualization
-                    # Filter orphan nodes when node type filter is active (multi-hop can create them)
+                    # filter_orphan_nodes: removes unconnected intermediates from multi-hop paths.
+                    # selected_node_types: ensures ALL instances of the chosen types are fetched
+                    # via a supplemental query, and exempts them from orphan pruning.
                     html_content = generate_html(
                         backend,
                         query=query,
                         filter_orphan_nodes=bool(sss.selected_node_types),
+                        selected_node_types=sss.selected_node_types or None,
                     )
                     sss.graph_html = html_content
                     st.success("✅ Visualization generated!")

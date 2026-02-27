@@ -174,6 +174,8 @@ def _fetch_graph_data(
     relation_configs: list | None = None,
     query: str = "MATCH (n)-[r]->(m) RETURN n, r, m LIMIT 1000",
     union: bool = True,
+    supplemental_node_types: list[str] | None = None,
+    supplemental_limit: int = 2000,
 ) -> tuple[list[NodeRecord], list[RelationshipRecord]]:
     """Fetch all nodes and edges from the graph database via the provided connection/backend.
 
@@ -185,6 +187,10 @@ def _fetch_graph_data(
                Can be customized to filter by node types, limit results, etc.
                Must return columns named 'n', 'r', 'm' for source node, relationship, target node.
         union: If True and query contains multiple statements, union the results. Default True.
+        supplemental_node_types: Node type labels to fetch in full regardless of the relationship
+            query result (e.g. ``["L3"]``). Prevents nodes from being missed when the LIMIT on
+            the relationship query is reached before all instances of the type are seen.
+        supplemental_limit: Maximum number of nodes per supplemental node type to retrieve.
 
     Returns:
         Tuple of (nodes, relationships) where:
@@ -450,6 +456,47 @@ def _fetch_graph_data(
         except Exception as e:
             print(f"Warning: Could not fetch isolated nodes: {e}")
 
+        # Supplemental fetch: ensure every instance of the selected node types is present
+        # even when the relationship query hit its LIMIT before covering all of them.
+        if supplemental_node_types:
+            for sup_type in supplemental_node_types:
+                try:
+                    sup_query = f"MATCH (n:{sup_type}) RETURN n LIMIT {supplemental_limit}"
+                    sup_df = connection.execute_get_as_df(sup_query, union=False)
+
+                    for _, row in sup_df.iterrows():
+                        node_obj = row["n"]
+                        if not isinstance(node_obj, dict):
+                            continue
+
+                        kuzu_id = _serialize_kuzu_id(node_obj.get("_id"))
+                        if not kuzu_id or kuzu_id in kuzu_id_to_node_data:
+                            continue  # already present from relationship query
+
+                        node_type = node_obj.get("_label", sup_type)
+
+                        node_dict = {}
+                        for key, val in node_obj.items():
+                            if key in ("_created_at", "_updated_at", "_original_name"):
+                                node_dict[key] = str(val).strip() or str(val)
+                            elif not key.startswith("_") and val is not None:
+                                node_dict[key] = str(val).strip() or str(val)
+
+                        node_name = _get_node_display_name(node_dict, node_type)
+                        node_dict["type"] = node_type
+                        node_dict["name"] = node_name
+
+                        node_uuid = str(uuid.uuid4())
+                        kuzu_id_to_node_data[kuzu_id] = {
+                            "uuid": node_uuid,
+                            "type": node_type,
+                            "node_dict": node_dict,
+                        }
+                        nodes.append(NodeRecord(node_id=node_uuid, properties=node_dict))
+
+                except Exception as e:
+                    print(f"Warning: Could not fetch supplemental nodes for type '{sup_type}': {e}")
+
     except Exception as e:
         print(f"Error in _fetch_graph_data: {e}")
         return [], []
@@ -466,6 +513,7 @@ def generate_html(
     query: str = "MATCH (n)-[r]->(m) RETURN n, r, m",
     union: bool = True,
     filter_orphan_nodes: bool = False,
+    selected_node_types: list[str] | None = None,
 ) -> str:
     """Generate an HTML graph visualization from a graph connection/backend.
 
@@ -483,11 +531,23 @@ def generate_html(
         union: If True and query contains multiple statements, union the results. Default True.
         filter_orphan_nodes: If True, remove nodes that don't appear in any relationship.
             Useful when using multi-hop queries that may include intermediate nodes. Default False.
+            Nodes whose type is in ``selected_node_types`` are always preserved regardless of this flag.
+        selected_node_types: Node type labels the user explicitly chose to display.  All instances
+            of these types are fetched via a supplemental query so that LIMIT constraints on the
+            relationship query cannot leave them out.  Nodes of these types are also exempt from
+            ``filter_orphan_nodes`` pruning.
 
     Returns:
         The HTML content as a string.
     """
-    nodes_data, relationships_data = _fetch_graph_data(connection, node_configs, relation_configs, query, union)
+    nodes_data, relationships_data = _fetch_graph_data(
+        connection,
+        node_configs,
+        relation_configs,
+        query,
+        union,
+        supplemental_node_types=selected_node_types,
+    )
 
     # Build visualization model using generic color assignment
 
@@ -549,14 +609,18 @@ def generate_html(
             }
         )
 
-    # Optionally filter out orphan nodes - nodes that don't appear in any relationship
-    # This prevents intermediate path nodes from appearing disconnected in multi-hop queries
+    # Optionally filter out orphan nodes - nodes that don't appear in any relationship.
+    # Nodes whose type is in selected_node_types are always kept: the user explicitly
+    # asked to see them, and their relationships may have been cut off by LIMIT.
     if filter_orphan_nodes:
         connected_node_ids: set[str] = set()
         for link in links_list:
             connected_node_ids.add(link["source"])
             connected_node_ids.add(link["target"])
-        nodes_list = [node for node in nodes_list if node["id"] in connected_node_ids]
+        selected_type_set: set[str] = set(selected_node_types) if selected_node_types else set()
+        nodes_list = [
+            node for node in nodes_list if node["id"] in connected_node_ids or node.get("type") in selected_type_set
+        ]
 
     html_content = _generate_html_content(nodes_list, links_list)
 
