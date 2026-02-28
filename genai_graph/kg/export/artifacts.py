@@ -1296,7 +1296,7 @@ def export_warnings(config_name: str, warnings: list[str]) -> UPath:
     destination = manager.get_warnings_md_path_for(config_name)
     destination.write_text(markdown_content, encoding="utf-8")
 
-    logger.info("Exported warnings report to '%s'", destination)
+    logger.info("Exported warnings report to '{}'", destination)
 
     return destination
 

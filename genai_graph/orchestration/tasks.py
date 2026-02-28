@@ -468,6 +468,59 @@ def delete_backend_task(config_key: str = "default", kg_config_name: str | None 
         logger_pf.info("No backend storage found at '%s' for config '%s'", path, config_key)
 
 
+@task(cache_policy=NO_CACHE)
+def compute_similarities_task(bundles: list[GraphBundle], backend: KgBackend) -> list:
+    """Create similarity-based relationships for all SimilarityFactory bundles.
+
+    Runs after ``create_vector_indexes_task`` so that all HNSW indexes are
+    available before any vector queries are issued.
+
+    Args:
+        bundles: List of GraphBundles; only those whose factory is a
+            :class:`~genai_graph.kg.factories.SimilarityFactory` are processed.
+        backend: Active KgBackend (must be KuzuBackend for similarity queries).
+
+    Returns:
+        List of :class:`~genai_graph.kg.factories.SimilarityResult` objects,
+        one per processed SimilarityFactory bundle.
+    """
+    from genai_graph.kg.factories.similarity import SimilarityFactory, SimilarityResult
+
+    log = _get_prefect_logger_or_default()
+    results: list[SimilarityResult] = []
+
+    for bundle in bundles:
+        if not isinstance(bundle.factory, SimilarityFactory):
+            continue
+
+        factory_name = getattr(bundle.factory, "name", bundle.config.get("factory", "<unknown>"))
+        log.info("Running similarity computation for factory '%s'", factory_name)
+
+        try:
+            result = bundle.factory.compute_similarities(backend)
+            results.append(result)
+            log.info(
+                "Similarity factory '%s': evaluated %d source nodes, created %d relationships",
+                result.factory_name,
+                result.pairs_evaluated,
+                result.relationships_created,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            import traceback
+
+            log.error(
+                "Similarity computation failed for '%s': %s\n%s",
+                factory_name,
+                exc,
+                traceback.format_exc(),
+            )
+
+    if not results:
+        log.debug("No SimilarityFactory bundles found; skipping similarity computation")
+
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------

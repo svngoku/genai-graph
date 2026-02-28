@@ -8,6 +8,9 @@ This package provides factories that load data from various sources:
 - Neo4jImportFactory: Extended factory with schema-based mappings
 - Neo4jNodeMapping: Configuration for node type mappings
 - Neo4jRelationMapping: Configuration for relationship type mappings
+- SimilarityFactory: Abstract base for embedding-similarity relationship factories
+- SimilaritySpec: Configuration for one similarity field pair (from/to/relationship/iterate_over)
+- SimilarityResult: Statistics from a similarity computation run
 """
 
 from genai_graph.kg.factories.base import KgFactory
@@ -17,6 +20,11 @@ from genai_graph.kg.factories.neo4j_factory import (
     Neo4jImportFactory,
     Neo4jNodeMapping,
     Neo4jRelationMapping,
+)
+from genai_graph.kg.factories.similarity import (
+    SimilarityFactory,
+    SimilarityResult,
+    SimilaritySpec,
 )
 from genai_graph.kg.factories.table_factory import TableBackedFactory
 
@@ -28,4 +36,7 @@ __all__ = [
     "Neo4jImportFactory",
     "Neo4jNodeMapping",
     "Neo4jRelationMapping",
+    "SimilarityFactory",
+    "SimilaritySpec",
+    "SimilarityResult",
 ]

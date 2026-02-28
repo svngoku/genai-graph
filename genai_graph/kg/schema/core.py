@@ -780,7 +780,9 @@ class GraphSchema(BaseModel):
         warnings_list = []
 
         # Check that all referenced node labels in relationships have node configurations
-        referenced_labels = {rel.from_node.label for rel in self.relations} | {rel.to_node.label for rel in self.relations}
+        referenced_labels = {rel.from_node.label for rel in self.relations} | {
+            rel.to_node.label for rel in self.relations
+        }
         configured_labels = {node.label for node in self.nodes}
         missing_labels = referenced_labels - configured_labels
 
@@ -816,6 +818,10 @@ class GraphSchema(BaseModel):
             # Skip nodes that are explicitly defined (e.g., from Neo4j mappings)
             # These nodes don't need field paths since they come from explicit definitions
             if node.explicitly_defined:
+                continue
+            # When there is no root model at all the concept of "orphaned" does not apply
+            # (e.g. SimilarityFactory schemas have root_model_class=None by design)
+            if not all_root_classes:
                 continue
             # Only warn if not root node and field_paths is empty or None
             if not node.field_paths:

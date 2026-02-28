@@ -22,6 +22,7 @@ from genai_graph.kg.ingest import DocumentStats, ParquetCollector, set_parquet_c
 from genai_graph.orchestration.dag import resolve_import_dag
 from genai_graph.orchestration.models import BundleResult, ImportResult, KgRunResult, WarningsCollector
 from genai_graph.orchestration.tasks import (
+    compute_similarities_task,
     create_schema_task,
     create_vector_indexes_task,
     delete_backend_task,
@@ -167,6 +168,11 @@ def create_kg_flow(
     # 6b. Create vector indexes for embedding fields
     # ------------------------------------------------------------------
     create_vector_indexes_task.submit(bundles, backend).result()
+
+    # ------------------------------------------------------------------
+    # 6c. Compute similarity-based relationships
+    # ------------------------------------------------------------------
+    compute_similarities_task.submit(bundles, backend).result()
 
     # Aggregate stats from all bundles
     total_stats = DocumentStats()

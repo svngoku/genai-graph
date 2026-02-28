@@ -40,19 +40,6 @@ SolutionNode: GraphNode = GraphNode(
     name_from="name",
     key_from="name",
     description="Specific product, managed service, or OSS solution used in the architecture",
-    index_fields=["name"],
-)
-
-# L3 in architecture docs uses key_from="name" because docs reference L3 by name (no code available).
-# description uses ada_002@openai (1536-dim) to match Stratnav pre-computed vectors.
-# Note: canonical L3Node uses key_from="code" and is defined in canonical_nodes.py.
-L3ArchDocNode: GraphNode = GraphNode(
-    node_class=L3,
-    name_from="name",
-    key_from="name",
-    description="Level 3 service offering from service catalog",
-    index_fields=["name", ("description", "ada_002@openai")],
-    explicitly_defined=True,  # L3 is not in SWArchitectureDocument fields; linked via MAPS_TO_SERVICE
 )
 
 
@@ -78,8 +65,7 @@ class ArchitectureDocumentGraph(JsonFileBackedFactory, BaseModel):
             PersonNode,
             SWArchitectureDocumentNode,
             TechnicalComponentNode,
-            SolutionNode,
-            L3ArchDocNode,
+            SolutionNode
         ]
 
         # BAML properties matching p_*_ pattern (e.g., p_purpose_) are automatically
@@ -114,12 +100,6 @@ class ArchitectureDocumentGraph(JsonFileBackedFactory, BaseModel):
                 to_node=PersonNode,
                 name="HAS_CONTACT",
                 description="Customer contact persons",
-            ),
-            GraphRelation(
-                from_node=SolutionNode,
-                to_node=L3ArchDocNode,
-                name="MAPS_TO_SERVICE",
-                description="Solution maps to or is delivered by this L3 service offering",
             ),
         ]
 

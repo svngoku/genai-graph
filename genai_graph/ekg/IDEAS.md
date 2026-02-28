@@ -1,4 +1,11 @@
 
+I  want to create new relationships in a graph based on semantic similarity between  2 nodes. 
+Its a kind of graph, with its own factory (but with mainly relationships  and node without fields that can be merged )
+I've iniiatated an example in ekg.yaml ( key "learned_stratnav_subset_rainbow_crm" - can be changed )
+Simiarity could used Kuzu vector search capabilities preferably (otherwize Pandas or else). We don't expect a lot of of nodes, so a quadratic complexity is acceptable. 
+
+Create a plan for that factory and graph creation.  Ask question, suggest  improvement. 
+
 
 ###  Markdown loader
 Refactor /extra/loaders/markdown_loader.py with improvement from /extra/rag/markdown_chunking.py.
@@ -10,18 +17,7 @@ Add test cases.
 
 
 # Add embeddings in Kuzu
-we want to use embeddings stored in the Kuzu graph nodes.   Use class EmbeddingsFactory for everything, with caching when possible.
 
-There are 2 situations : 
-  - The field are listed in the list "index_fields" of the class GraphNode. Their embeddings  should be calculated with the default model provided in ekg.yaml; and stored in the graph node/
-
-- the imported JSON : the node "L3" has an array field "descriptionEmbedding" that is an embedding encoded with OpenAI text-embedding-ada-002. Add it in the model and as node of the Kuzu graph.
-
-Generate tests to check queries involving graph and embeddings, for both cases.
-
-Look at doc here: https://kuzudb.github.io/docs/extensions/vector/
-
-Prepare a plan, ask questions, suggest improvements. 
 ...
 # Connect BL
 

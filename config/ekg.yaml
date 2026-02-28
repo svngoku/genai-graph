@@ -1,95 +1,95 @@
-
 schemas_root: genai_graph.ekg.schema
-
 paths:
-  rainbow_md : ${paths.ekg_data}/rainbow/md/
-  rainbow_json : ${paths.ekg_data}/rainbow/json/
-  rainbow_pdf : ${paths.ekg_data}/rainbow/pdf/
-  rainbow_ppt : ${paths.ekg_data}/rainbow/ppt/
-  add_json : ${paths.ekg_data}/arch_doc/json/
-  stratnav_db : ${paths.ekg_data}/stratnav
-
+  rainbow_md: '${paths.ekg_data}/rainbow/md/'
+  rainbow_json: '${paths.ekg_data}/rainbow/json/'
+  rainbow_pdf: '${paths.ekg_data}/rainbow/pdf/'
+  rainbow_ppt: '${paths.ekg_data}/rainbow/ppt/'
+  add_json: '${paths.ekg_data}/arch_doc/json/'
+  stratnav_db: '${paths.ekg_data}/stratnav'
 kg_build:
   llms:
-    default: gpt_oss120@openrouter   
+    default: gpt_oss120@openrouter
   embeddings:
-    default: qwen3_06b@deepinfra
-
+    default: ada_002@openrouter
 kg_configs:
   one_rainbow:
     graphs:
-      - factory: genai_graph.ekg.schema.rainbow_review:ReviewedOpportunityGraph
-        data_root: ${paths.rainbow_json}
-        include: 
-          - "*CNES*TMA*VENUS*"
-        exclude: 
-          - "fake/*"
+      - factory: 'genai_graph.ekg.schema.rainbow_review:ReviewedOpportunityGraph'
+        data_root: '${paths.rainbow_json}'
+        include:
+          - '*CNES*TMA*VENUS*'
+        exclude:
+          - fake/*
         recursive: true
         file_embedding:
-          metadata: ["Opportunity.opportunity_id","Customer.name"]
-
-  crm_export:  
+          metadata:
+            - Opportunity.opportunity_id
+            - Customer.name
+  crm_export:
     graphs:
-      - factory: "${schemas_root}.crm_export:CrmExtractGraph"
+      - factory: '${schemas_root}.crm_export:CrmExtractGraph'
         files:
-          - ${paths.ekg_data}/crm_export/report1750429630460_SHORTEN.xlsx
-        pd_read_parameters: {} 
-
+          - '${paths.ekg_data}/crm_export/report1750429630460_SHORTEN.xlsx'
+        pd_read_parameters: {}
   one_rainbow_with_db:
     import:
       - crm_export
     graphs:
-      - factory: "${schemas_root}.rainbow_review:ReviewedOpportunityGraph"
-        data_root: ${paths.rainbow_json}
-        include: 
-          - "*CNES*TMA*VENUS*"
-        exclude: 
-          - "fake/*"
+      - factory: '${schemas_root}.rainbow_review:ReviewedOpportunityGraph'
+        data_root: '${paths.rainbow_json}'
+        include:
+          - '*CNES*TMA*VENUS*'
+        exclude:
+          - fake/*
         recursive: true
-
   rainbow_add_crm:
     import:
       - crm_export
     graphs:
-      - factory: genai_graph.ekg.schema.rainbow_review:ReviewedOpportunityGraph
-        data_root: ${paths.rainbow_json}
-        include: 
-          - "*CNES*"
-        exclude: 
-          - "fake/*"
+      - factory: 'genai_graph.ekg.schema.rainbow_review:ReviewedOpportunityGraph'
+        data_root: '${paths.rainbow_json}'
+        include:
+          - '*CNES*'
+        exclude:
+          - fake/*
         recursive: true
-      - factory: genai_graph.ekg.schema.architecture_doc:ArchitectureDocumentGraph
-        data_root: ${paths.add_json}
-        include: 
-          - "*CNES*"
-        exclude: 
-          - "fake/*"
-        recursive: true 
-
+      - factory: 'genai_graph.ekg.schema.architecture_doc:ArchitectureDocumentGraph'
+        data_root: '${paths.add_json}'
+        include:
+          - '*CNES*'
+        exclude:
+          - fake/*
+        recursive: true
   several_rainbow:
     graphs:
-      - factory: genai_graph.ekg.schema.rainbow_review:ReviewedOpportunityGraph
-        data_root: ${paths.rainbow_json}
-        include: 
-          - "*.json"
+      - factory: 'genai_graph.ekg.schema.rainbow_review:ReviewedOpportunityGraph'
+        data_root: '${paths.rainbow_json}'
+        include:
+          - '*.json'
         recursive: true
-  
   stratnav_subset:
     graphs:
-      - factory: genai_graph.ekg.schema.stratnav:StratnavGraph 
-        neo4j_export_file: ${paths.stratnav_db}/subset/sn-subset200.jsonl
+      - factory: 'genai_graph.ekg.schema.stratnav:StratnavGraph'
+        neo4j_export_file: '${paths.stratnav_db}/subset/sn-subset200.jsonl'
         embeddings:
           - field: L3.descriptionEmbedding
-            model: ada_002@openai
+            model: ada_002@openrouter
 
   stratnav_subset_rainbow_crm:
     import:
       - rainbow_add_crm
       - stratnav_subset
 
-  # stratnav:
-  #   graphs:
-  #     - factory: genai_graph.ekg.schema.stratnav:StratnavGraph 
-  #       neo4j_export_file: ${paths.stratnav_db}/26-01-2018/sn-v3-q4-2026-01-28.jsonl
-
-
+  learned_stratnav_subset_rainbow_crm:
+    import:
+      - stratnav_subset_rainbow_crm
+    graphs:
+      - factory: 'genai_graph.ekg.schema.learned_graph:L3TechApproachMatcher'
+        similarities:
+          - relationship: POSSIBLE_OFFERING
+            from: TechnicalApproach.architecture
+            to: L3.description
+            iterate_over: from
+            threshold: 0.8
+            top_k: 5
+            combiner: first

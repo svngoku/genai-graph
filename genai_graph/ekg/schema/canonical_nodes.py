@@ -40,7 +40,7 @@ L3Node: GraphNode = GraphNode(
     name_from="name",
     key_from="code",
     description="Level 3 service offering from service catalog",
-    index_fields=["name", ("description", "ada_002@openai")],
+    index_fields=[("description", "ada_002@openai")],
     explicitly_defined=True,
 )
 
@@ -49,7 +49,7 @@ OpportunityNode: GraphNode = GraphNode(
     name_from="name",
     key_from="opportunity_id",
     description="Core opportunity information",
-    index_fields=["name"],
+    index_fields=["description"],
 )
 
 CustomerNode: GraphNode = GraphNode(
@@ -57,7 +57,6 @@ CustomerNode: GraphNode = GraphNode(
     name_from="name",
     key_from="name",
     description="Customer organization details",
-    index_fields=["name"],
     explicitly_defined=True,  # Reachable via various multi-hop paths across factories
 )
 
