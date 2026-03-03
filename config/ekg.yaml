@@ -11,6 +11,9 @@ kg_build:
     default: gpt_oss120@openrouter
   embeddings:
     default: ada_002@openrouter
+
+
+
 kg_configs:
   one_rainbow:
     graphs:
@@ -32,8 +35,6 @@ kg_configs:
           - '${paths.ekg_data}/crm_export/report1750429630460_SHORTEN.xlsx'
         pd_read_parameters: {}
   one_rainbow_with_db:
-    import:
-      - crm_export
     graphs:
       - factory: '${schemas_root}.rainbow_review:ReviewedOpportunityGraph'
         data_root: '${paths.rainbow_json}'
@@ -42,9 +43,14 @@ kg_configs:
         exclude:
           - fake/*
         recursive: true
+      - factory: '${schemas_root}.crm_export:CrmExtractGraph'
+        files:
+          - '${paths.ekg_data}/crm_export/report1750429630460_SHORTEN.xlsx'
+        pd_read_parameters: {}
+        filter_by_existing:
+          node_label: Opportunity
+          property: opportunity_id
   rainbow_add_crm:
-    import:
-      - crm_export
     graphs:
       - factory: 'genai_graph.ekg.schema.rainbow_review:ReviewedOpportunityGraph'
         data_root: '${paths.rainbow_json}'
@@ -60,6 +66,13 @@ kg_configs:
         exclude:
           - fake/*
         recursive: true
+      - factory: '${schemas_root}.crm_export:CrmExtractGraph'
+        files:
+          - '${paths.ekg_data}/crm_export/report1750429630460_SHORTEN.xlsx'
+        pd_read_parameters: {}
+        filter_by_existing:
+          node_label: Opportunity
+          property: opportunity_id
   several_rainbow:
     graphs:
       - factory: 'genai_graph.ekg.schema.rainbow_review:ReviewedOpportunityGraph'

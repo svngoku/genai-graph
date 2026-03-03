@@ -43,7 +43,7 @@ from genai_graph.kg.factories import (
 from genai_graph.kg.ingest import DocumentStats, add_documents_to_graph, add_neo4j_data_to_graph
 from genai_graph.kg.ingest import create_schema as core_create_schema
 from genai_graph.kg.manager import get_kg_manager
-from genai_graph.orchestration.models import BundleResult, GraphBundle, ImportResult, WarningsCollector
+from genai_graph.orchestration.models import BundleResult, GraphBundle, GraphFilter, ImportResult, WarningsCollector
 
 
 def _get_prefect_logger_or_default() -> Any:
@@ -52,6 +52,19 @@ def _get_prefect_logger_or_default() -> Any:
         return get_run_logger()
     except MissingContextError:
         return logger
+
+
+def _query_existing_pks(backend: KgBackend, gf: GraphFilter) -> set[str]:
+    """Return the set of all PK values for *node_label.property* in the graph."""
+    query = f"MATCH (n:{gf.node_label}) RETURN n.{gf.property} AS pk"
+    try:
+        df = backend.execute_get_as_df(query)
+        if df.empty or "pk" not in df.columns:
+            return set()
+        return {str(v) for v in df["pk"].dropna()}
+    except Exception as exc:
+        logger.warning("filter_by_existing query failed (%s): %s", gf, exc)
+        return set()
 
 
 @task(cache_policy=NO_CACHE)
@@ -112,7 +125,9 @@ def load_factories_task(kg_cfg: dict[str, Any]) -> list[GraphBundle]:
                 graph_impl = imported
             elif isinstance(imported, type) and issubclass(imported, KgFactory):
                 constructor_kwargs = {
-                    k: v for k, v in graph_cfg.items() if k not in {"factory", "initial_load", "trigger"}
+                    k: v
+                    for k, v in graph_cfg.items()
+                    if k not in {"factory", "initial_load", "trigger", "filter_by_existing"}
                 }
                 graph_impl = imported(**constructor_kwargs)  # type: ignore[misc]
             else:
@@ -214,6 +229,20 @@ def ingest_bundle_task(bundle: GraphBundle, backend: KgBackend) -> BundleResult:
         try:
             keys = graph_impl.get_all_keys()
             logger_pf.debug("Retrieved %d keys from table-backed factory", len(keys))
+            filter_cfg = graph_cfg.get("filter_by_existing")
+            if filter_cfg:
+                gf = GraphFilter.model_validate(filter_cfg)
+                allowed = _query_existing_pks(backend, gf)
+                before = len(keys)
+                keys = [k for k in keys if k in allowed]
+                logger_pf.info(
+                    "filter_by_existing (%s.%s): %d/%d keys kept for %s",
+                    gf.node_label,
+                    gf.property,
+                    len(keys),
+                    before,
+                    factory_path,
+                )
         except Exception as exc:  # pragma: no cover - defensive
             msg = f"Failed to get keys from table for {factory_path}: {exc}"
             logger.warning(msg)

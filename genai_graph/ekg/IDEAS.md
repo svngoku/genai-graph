@@ -1,11 +1,27 @@
+# Completed Tasks
 
-I  want to create new relationships in a graph based on semantic similarity between  2 nodes. 
-Its a kind of graph, with its own factory (but with mainly relationships  and node without fields that can be merged )
-I've iniiatated an example in ekg.yaml ( key "learned_stratnav_subset_rainbow_crm" - can be changed )
-Simiarity could used Kuzu vector search capabilities preferably (otherwize Pandas or else). We don't expect a lot of of nodes, so a quadratic complexity is acceptable. 
+## Refactor DAG — COMPLETED ✓
 
-Create a plan for that factory and graph creation.  Ask question, suggest  improvement. 
+**Improved construction of complex KG with deferred, filtered CRM ingestion.**
 
+**Changes made:**
+1. **GraphFilter Pydantic model** (`models.py`) — Generalized filtering mechanism for any node type/property.
+2. **ingest_bundle_task enhancement** (`tasks.py`) — After collecting factory keys, applies `filter_by_existing` to intersect with existing node PKs in the graph.
+3. **ekg.yaml refactor** — Moved CRM from `import:` to `graphs:` (listed last) with `filter_by_existing` config:
+   - `one_rainbow_with_db`: Rainbow first, then CRM filtered by existing Opportunities
+   - `rainbow_add_crm`: Rainbow + ArchDoc first, then CRM filtered by existing Opportunities
+4. **Standalone crm_export config preserved** — Still available for building full CRM-only graphs.
+
+**Design flexibility achieved:**
+- `filter_by_existing` can be used with any `TableBackedFactory` to defer ingestion until graph state is known
+- Future enhancements (caching, additional filters) easy to add via `GraphFilter` extensions
+- Execution order controlled by `graphs:` list ordering (simple, no new DSL needed)
+
+**Result:** CRM data (~thousands of rows) is now ingested only where relevant, reducing graph bloat and improving construction speed for multi-factory scenarios.
+
+---
+
+# Open Tasks
 
 ###  Markdown loader
 Refactor /extra/loaders/markdown_loader.py with improvement from /extra/rag/markdown_chunking.py.

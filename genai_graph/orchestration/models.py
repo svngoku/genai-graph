@@ -17,6 +17,20 @@ from genai_graph.kg.ingest import DocumentStats
 from genai_graph.kg.schema import GraphSchema
 
 
+class GraphFilter(BaseModel):
+    """Describes how to filter factory keys against nodes already in the graph.
+
+    When set on a graph config entry via ``filter_by_existing``, only factory
+    keys whose values match existing node PKs are ingested.  This allows
+    deferred, filtered ingestion for large data sources (e.g. CRM exports).
+    """
+
+    node_label: str
+    """Kuzu node table name to match against (e.g. ``'Opportunity'``)."""
+    property: str
+    """Node property holding the primary key value (e.g. ``'opportunity_id'``)."""
+
+
 class GraphBundle(BaseModel):
     """In-memory representation of a configured graph during KG creation."""
 
