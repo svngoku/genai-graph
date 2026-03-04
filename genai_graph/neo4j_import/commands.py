@@ -358,8 +358,7 @@ class Neo4jCommands(CliTopCommand):
 
             # Get default db path from config if not specified
             if db_path is None:
-                cfg = global_config()
-                db_path = str(Path(cfg.get("paths.data_root", ".")) / "neo4j_import" / "kuzu_db")
+                db_path = str(global_config().get_dir_path("paths.data_root") / "neo4j_import" / "kuzu_db")
 
             resolved_db_path = resolve_config_path(db_path)
             db_path_obj = Path(resolved_db_path)
@@ -456,8 +455,7 @@ class Neo4jCommands(CliTopCommand):
 
             # Get default db path from config if not specified
             if db_path is None:
-                cfg = global_config()
-                db_path = str(Path(cfg.get("paths.data_root", ".")) / "neo4j_import" / "kuzu_db")
+                db_path = str(global_config().get_dir_path("paths.data_root") / "neo4j_import" / "kuzu_db")
 
             resolved_db_path = resolve_config_path(db_path)
             db_path_obj = Path(resolved_db_path)
@@ -534,8 +532,7 @@ class Neo4jCommands(CliTopCommand):
 
             # Get default db path from config if not specified
             if db_path is None:
-                cfg = global_config()
-                db_path = str(Path(cfg.get("paths.data_root", ".")) / "neo4j_import" / "kuzu_db")
+                db_path = str(global_config().get_dir_path("paths.data_root") / "neo4j_import" / "kuzu_db")
 
             resolved_db_path = resolve_config_path(db_path)
             db_path_obj = Path(resolved_db_path)
