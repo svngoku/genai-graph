@@ -385,11 +385,12 @@ class EkgCommands(CliTopCommand):
             import asyncio
             import sys
 
-            from genai_tk.agents.langchain_setup import setup_langchain
-            from genai_tk.cli.langchain_agent import (
+            from genai_tk.agents.langchain.agent import (
                 run_langchain_agent_direct,
                 run_langchain_agent_shell,
             )
+            from genai_tk.agents.langchain.config import load_unified_config, resolve_profile
+            from genai_tk.agents.langchain_setup import setup_langchain
 
             from genai_graph.kg.manager import get_kg_manager
             from genai_graph.kg.query import (
@@ -411,14 +412,20 @@ class EkgCommands(CliTopCommand):
                 debug=debug,
             )
 
+            # Load the EKG profile from langchain.yaml (inherits RichToolCallMiddleware from defaults)
+            # then override system_prompt with the dynamically-built EKG prompt.
+            lc_config = load_unified_config()
+            profile = resolve_profile(lc_config, "ekg")
+            profile = profile.model_copy(update={"system_prompt": system_prompt})
+
             if chat:
                 # Interactive chat mode using the shared LangChain shell
                 asyncio.run(
                     run_langchain_agent_shell(
-                        llm,
-                        tools=[ekg_tool],
-                        mcp_server_names=mcp,
-                        system_prompt=system_prompt,
+                        profile=profile,
+                        llm_override=llm,
+                        extra_tools=[ekg_tool],
+                        extra_mcp_servers=list(mcp),
                     )
                 )
             else:
@@ -430,15 +437,13 @@ class EkgCommands(CliTopCommand):
                     raise typer.Exit(1)
 
                 # Reuse the common ReAct helper from genai-tk
-                # If --first-tool is specified, the agent stops after one tool call
                 asyncio.run(
                     run_langchain_agent_direct(
                         input.strip(),
-                        llm_id=llm,
-                        mcp_server_names=mcp,
-                        additional_tools=[ekg_tool],
-                        pre_prompt=system_prompt,
-                        single_tool_mode=first_tool,
+                        profile=profile,
+                        llm_override=llm,
+                        extra_tools=[ekg_tool],
+                        extra_mcp_servers=list(mcp),
                     )
                 )
 
