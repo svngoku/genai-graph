@@ -1,242 +1,116 @@
-# This Makefile provides commands for:
-# - Development environment setup
-# - Docker image building and deployment
-# - Cloud platform integration (GCP, Azure, Modal)
-# - Project maintenance tasks
-#
-# Usage: make [target]
-#cSpell: disable
-
-
-STREAMLIT_ENTRY_POINT="genai_graph/main/streamlit.py"
-MODAL_ENTRY_POINT="genai_graph/main/modal_app.py"
-APP=genai-graph
-IMAGE_VERSION=0.2a
-AWS_REGION=eu-west-1
-AWS_ACCOUNT_ID=909658914353
-
-# Development PYTHONPATH for local genai-tk development
-# Assumes project structure: parent/genai-tk and parent/genai-graph
-# For different structures, override with: make target DEV_PYTHONPATH="/custom/path/genai-tk:.:$(PWD)"
-DEV_PYTHONPATH="../genai-tk:.:$(PWD)"
-
-all: help 
-
-MAKEFLAGS += --warn-undefined-variables                                                            
-SHELL     := bash -euo pipefail -c   # exit on error, undefined var, pipefail 
-
-# Guard against GNU/Make vs BSD/Make incompatibilities 
-# ifneq ($(shell echo 'a b' | xargs -n1 echo 2>/dev/null | wc -l),2)                                 
-#   $(error You need GNU xargs)                                                                      
-# endif
-
-# .env file discovery - check most common locations first
-ENV_FILE := $(shell \
-	if [ -f ".env" ]; then echo "$(CURDIR)/.env"; \
-	elif [ -f "../.env" ]; then echo "$(CURDIR)/../.env"; \
-	elif [ -f "../../.env" ]; then echo "$(CURDIR)/../../.env"; \
-	else echo ""; fi)
-ifneq ($(ENV_FILE),)
-include $(ENV_FILE)
-else
-$(warning .env file not found in current or parent directories)
-endif
-
-
-#include deploy/docker.mk
-#include deploy/prefect.mk
-#include deploy/aws.mk
-#include deploy/github.mk
-#include deploy/modal.mk
-
-.PHONY: .uv .pre-commit .pythonpath show-dev-path benchmark
-.PHONY: fmt lint test test-unit test-integration test-install check
-
-.uv:  ## Check that uv is installed
-	@uv -V || echo 'Please install uv: curl -LsSf https://astral.sh/uv/install.sh | sh 
-
-.pre-commit: .uv  ## Check that pre-commit is installed    see https://pre-commit.com/
-	@uv run pre-commit -V || uv pip install pre-commit
-
-.pythonpath:
-	@if [ -z "$(PYTHONPATH)" ]; then \
-		echo "Warning: PYTHONPATH is not set. Consider to put somewhere: export PYTHONPATH=\".\" "; \
-	fi
-
-show-dev-path: ## Show current DEV_PYTHONPATH setting
-	@echo "Current DEV_PYTHONPATH: $(DEV_PYTHONPATH)"
-	@echo "Checking genai-tk availability: $$([ -d ../genai-tk ] && echo 'EXISTS' || echo 'NOT FOUND')"
-	@echo "Usage: make webapp (uses DEV_PYTHONPATH) or make test-install"
-
+# cSpell: disable
+# GenAI Graph -- project Makefile.
+# All shared targets (install, fmt, lint, test, clean, rebase, ...) come from
+# tk_makefile.mk which mirrors genai-tk/Makefile.  Only project-specific
+# variables and targets belong here.
 
 ##############################
-##  Development & Testing
+##  Project variables
 ##############################
+APP            = genai-graph
+PKG_NAME       = genai_graph
+IMAGE_VERSION  = 0.2a
+AWS_REGION     = eu-west-1
+AWS_ACCOUNT_ID = 909658914353
+STREAMLIT_ENTRY = genai_graph/main/streamlit.py
+MODAL_ENTRY     = genai_graph/main/modal_app.py
 
-fmt: ## Format code with ruff
-	uv run ruff format .
-	uv run ruff check --select I --fix .
+# PYTHONPATH when running against a local genai-tk source checkout.
+# Falls back gracefully when genai-tk is only present in .venv.
+DEV_PYTHONPATH = ../genai-tk:.:$(PWD)
 
-test: ## Run all tests
-	uv run pytest tests/unit_tests/ tests/integration_tests/ -v
-
-test-unit: ## Run unit tests only
-	uv run pytest tests/unit_tests/ -v
-
-test-integration: ## Run integration tests only
-	uv run pytest tests/integration_tests/ -v
-
-check: fmt lint test ## Run format, lint, and test sequentially
-
+all: help
 
 ##############################
-##  GenAI Blueprint related commands
+##  Includes
 ##############################
-.PHONY: fast_api langserve webapp 
-fast-api: ## langsLauch FastAPI server localy
+include tk_makefile.mk   # genai-tk standard targets (install/fmt/lint/test/clean/...)
+# include deploy/docker.mk
+# include deploy/prefect.mk
+# include deploy/modal.mk
+
+##############################
+##  Web Applications
+##############################
+.PHONY: webapp fast-api langserve
+
+webapp:  ## Launch Streamlit app
+	PYTHONPATH=$(DEV_PYTHONPATH) uv run streamlit run "$(STREAMLIT_ENTRY)"
+
+fast-api:  ## Launch FastAPI server locally
 	uvicorn $(FASTAPI_ENTRY_POINT) --reload
 
-langserve: ## Lauch langserve app
+langserve:  ## Launch LangServe app
 	PYTHONPATH=$(DEV_PYTHONPATH) uv run python genai_graph/main/langserve_app.py
 
-webapp: ## Launch Streamlit app
-	PYTHONPATH=$(DEV_PYTHONPATH) uv run streamlit run "$(STREAMLIT_ENTRY_POINT)"
-
-
 ##############################
-##  Development
+##  Testing
 ##############################
-.PHONY: rebase aider aider-haiku aider-r1 lint quality clean_notebooks 
-rebase: ## Sync local repo with remote one (changes are stashed before!)
-	git fetch origin
-	git stash
-	git rebase origin/main
-	uv sync --upgrade-package genai-tk
+.PHONY: test-install
 
-lint: ## Run Ruff an all Python files to format fix imports
-	ruff check --select I --fix genai_graph
-	ruff format
-
-
-quality: ## Run Ruff on all Python files to check quality (fast version)
-	@echo "Running ruff on Python files (excluding .venv and wip)..."
-	ruff check --fix --exclude .venv --exclude genai_graph/wip  --exclude *.ipynb .
-
-
-##############################
-##  uv and project  install
-##############################
-
-.PHONY: check-uv install
-
-check-uv: ## Check if uv is installed, install if missing
-	@if command -v uv >/dev/null 2>&1; then \
-		echo "uv is already installed"; \
-	else \
-		echo "uv is not installed. Installing now..."; \
-		curl -LsSf https://astral.sh/uv/install.sh | sh; \
-		echo "uv installed successfully"; \
-		. $HOME/.local/bin/env; \
-	fi
-
-install: check-uv   ## Install SW
-	uv sync
-
-##############
-##  MISC  ###
-##############
-
-.PHONY: clean clean-notebooks clean-history help postgres chrome qwen show-dev-path
-
-clean:  ## Clean Python bytecode, cache files, and system artifacts
-	@echo "Cleaning UV cache and Python artifacts..."
-	uv cache prune
-	@# Single find command for all cleanup operations
-	find . \( -name "*.py[co]" -o -name "__pycache__" -o -name ".ruff_cache" -o -name ".mypy_cache" \) -exec rm -rf {} + 2>/dev/null || true
-	@echo "Cleaning system artifacts..."
-	@# Clean /tmp directory (excluding socket and lock files)
-	rm -rf /tmp/pytest* /tmp/tmpdir* /tmp/*.tmp 2>/dev/null || true
-	@# Clean pip cache
-	rm -rf ~/.cache/pip 2>/dev/null || true
-	@# Clean unused Docker images and dangling containers
-	@if command -v docker >/dev/null 2>&1; then \
-		echo "Cleaning Docker artifacts..."; \
-		docker container prune -f 2>/dev/null || true; \
-		docker image prune -f 2>/dev/null || true; \
-		docker volume prune -f 2>/dev/null || true; \
-	fi
-	@echo "Cleanup complete!"
-
-clean-history: ## Remove duplicate entries and common commands from .bash_history
-	@if [ -f ~/.bash_history ]; then \
-		awk '!/^(ls|cat|hgrep|h|cd|p|m|ll|pwd|code|mkdir|export|rmdir|uv tree|make)( |$$)/ && !seen[$$0]++' ~/.bash_history > ~/.bash_history_unique && \
-		mv ~/.bash_history_unique ~/.bash_history; \
-		echo "Done : duplicates and common commands removed. \nRun 'history -c; history -r' in your shell to reload the cleaned history"; \
-	else \
-		echo "No .bash_history file found"; \
-	fi                                                                                                  
-
-help:                                                                                                                                          
-	@echo "Available targets:"                                                                                                                  
-	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST) | sort 
-
-
-test-install: .pythonpath ## Quick test install
+test-install: .pythonpath  ## Quick smoke-test: call a fake LLM via the CLI
 	@if [ -z "$(PYTHONPATH)" ]; then \
-		echo -e "\033[33mWarning: PYTHONPATH is not set. Consider setting: export PYTHONPATH=\".\"\033[0m"; \
+		echo -e "\033[33mWarning: PYTHONPATH is not set.\033[0m"; \
 	else \
-		echo -e "\033[32mPYTHONPATH is set to: $(PYTHONPATH)\033[0m"; \
+		echo -e "\033[32mPYTHONPATH=$(PYTHONPATH)\033[0m"; \
 	fi
-	@echo -e "\033[3m\033[36mCall a fake LLM that returns the prompt. Here it should display 'tell me a joke on ...'\033[0m"
+	@echo -e "\033[3m\033[36mExpected output: 'tell me a joke on bears'\033[0m"
 	echo bears | PYTHONPATH=$(DEV_PYTHONPATH) uv run cli core run joke -m parrot_local_fake
 
-
 ##############################
-##  Project specific commands
+##  Graph Tools
 ##############################
+.PHONY: kuzu-explorer baml-generate
 
-
-kuzu-explorer:  ## Start KuzuDB explorer
+kuzu-explorer:  ## Start KuzuDB explorer at http://localhost:8000
 	docker run --rm -p 8000:8000 \
-		-v /home/tcl/kuzu:/database  \
+		-v /home/tcl/kuzu:/database \
 		-e KUZU_FILE=ekg_database.db \
-		--rm kuzudb/explorer:latest \
-	& chrome http://localhost:8000
+		kuzudb/explorer:latest &
+	xdg-open http://localhost:8000
 
-baml-generate:  ## Generate BAML code from baml_src
+baml-generate:  ## Generate BAML Python client from baml_src
 	uv run baml-cli generate --from ./genai_graph/ekg/baml_src
 
 ##############################
-##  MICS
+##  Prefect
 ##############################
+.PHONY: prefect-server prefect-server-stop
 
-prefect-server: ## Start Prefect server in background
-	@echo "Starting Prefect server in background..."
+prefect-server:  ## Start Prefect server in background
 	@prefect config set PREFECT_API_URL=http://127.0.0.1:4200/api
-	@cd ~/prj/genai-graph && nohup prefect server start > prefect-server.log 2>&1 & \
-	echo "Prefect server started. PID: $$!"; \
+	@nohup prefect server start > prefect-server.log 2>&1 & \
+	echo "Prefect server started (PID: $$!)"; \
 	echo "Logs: tail -f prefect-server.log"; \
-	echo "Stop: pkill -f 'prefect server start'"
+	echo "Stop: make prefect-server-stop"
 
-prefect-server-stop: ## Stop Prefect server
-	@echo "Stopping Prefect server..."
-	@pkill -f 'prefect server start' && echo "Prefect server stopped." || echo "No Prefect server process found."
+prefect-server-stop:  ## Stop Prefect server
+	@pkill -f 'prefect server start' \
+		&& echo "Prefect server stopped." \
+		|| echo "No Prefect server running."
 
+##############################
+##  Infrastructure
+##############################
+.PHONY: postgres chrome
 
-postgres:   ## Start docker Postgres + pgvector                                                                           
+postgres:  ## Start Postgres + pgvector container
 	docker rm -f pgvector-container 2>/dev/null || true
 	docker run -d --name pgvector-container \
-		-e POSTGRES_USER=$(POSTGRES_USER) -e POSTGRES_PASSWORD=$(POSTGRES_PASSWORD) -e POSTGRES_DB=ekg \
+		-e POSTGRES_USER=$(POSTGRES_USER) \
+		-e POSTGRES_PASSWORD=$(POSTGRES_PASSWORD) \
+		-e POSTGRES_DB=ekg \
 		-p 5432:5432 \
 		-v /home/tcl/pgvector-data:/var/lib/postgresql/data \
 		pgvector/pgvector:pg17
 
-chrome:  ## Start docker Chromium 
-# see https://hub.docker.com/r/linuxserver/chromium
+chrome:  ## Start Chromium container (UI at http://localhost:3000)
 	docker rm -f chromium 2>/dev/null || true
 	docker run -d --name=chromium \
-	--security-opt seccomp=unconfined  -e PUID=1000 -e PGID=1000 -e TZ=Europe/Paris  \
-	-p 3000:3000 -p 3001:3001 -v /home/tcl/.chromiun:/config \
-	--shm-size="1gb" --restart unless-stopped \
-	lscr.io/linuxserver/chromium:latest
+		--security-opt seccomp=unconfined \
+		-e PUID=1000 -e PGID=1000 -e TZ=Europe/Paris \
+		-p 3000:3000 -p 3001:3001 \
+		-v /home/tcl/.chromiun:/config \
+		--shm-size="1gb" --restart unless-stopped \
+		lscr.io/linuxserver/chromium:latest
 	xdg-open localhost:3000
