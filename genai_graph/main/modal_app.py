@@ -164,7 +164,7 @@ def streamlit_server():
 #     """Local entrypoint for Modal deployment."""
 #     import time
 
-#     print("Streamlit app deployed! Access it at:")
+#     print("Streamlit app deployed! Access it at.")
 #     print("https://tcaminel--genai-framework-run-dev.modal.run")
 #     print("Press Ctrl+C to stop the app")
 

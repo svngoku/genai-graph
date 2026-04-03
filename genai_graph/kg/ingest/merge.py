@@ -231,7 +231,7 @@ class NodeIdMapping(BaseModel):
         """Return all mapping items."""
         result = []
         for k, v in self.mapping_data.items():
-            parts = k.split("::", 1)
+            parts = k.split(":.", 1)
             if len(parts) == 2:
                 result.append(((parts[0], parts[1]), v))
         return result

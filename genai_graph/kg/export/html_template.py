@@ -552,7 +552,7 @@ HTML_TEMPLATE = """
             
             types.forEach(function(type) {
                 legendHtml += '<div class="legend-item" data-type="' + type + '">' +
-                    '<div class="legend-color" style="background:' + typeColorMap[type] + '"></div>' +
+                    '<div class="legend-color" style="background.' + typeColorMap[type] + '"></div>' +
                     '<span class="legend-label">' + type + '</span>' +
                     '<span class="legend-count">' + typeCounts[type] + '</span>' +
                     '</div>';

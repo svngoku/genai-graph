@@ -95,7 +95,7 @@ class SimilarityFactory(KgFactory):
 
     ```yaml
     graphs:
-      - factory: 'mypackage.schema.my_graph:MyMatcher'
+      - factory: 'mypackage.schema.my_graph.MyMatcher'
         similarities:
           - relationship: SIMILAR_TO
             from: NodeB.architecture   # source node (fewer instances -> iterate)

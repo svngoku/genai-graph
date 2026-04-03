@@ -160,7 +160,7 @@ def _discover_table_subgraphs() -> list[TableInfo]:
 
                 tables.append(
                     TableInfo(
-                        subgraph_name=factory_path.split(":")[-1],
+                        subgraph_name=factory_path.split(".")[-1],
                         table_name=table_name,
                         cache_dir=str(cache_dir),
                         source_files=resolved_files,
@@ -532,7 +532,7 @@ def _discover_table_subgraphs() -> list[TableInfo]:
 
                 tables.append(
                     TableInfo(
-                        subgraph_name=factory_path.split(":")[-1],
+                        subgraph_name=factory_path.split(".")[-1],
                         table_name=table_name,
                         db_dsn=constructor_kwargs["db_dsn"],
                         source_files=resolved_files,

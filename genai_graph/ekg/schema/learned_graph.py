@@ -33,7 +33,7 @@ class L3TechApproachMatcher(SimilarityFactory):
     Configuration example (from ``ekg.yaml``):
 
     ```yaml
-    - factory: 'genai_graph.ekg.schema.learned_graph:L3TechApproachMatcher'
+    - factory: 'genai_graph.ekg.schema.learned_graph.L3TechApproachMatcher'
       similarities:
         - relationship: POSSIBLE_OFFERING
           from: TechnicalApproach.architecture   # source; fewer nodes -> iterate

@@ -569,7 +569,7 @@ def create_in_memory_backend() -> KgBackend:
     Currently returns a Kuzu-based backend connected to an in-memory database.
     """
     backend = KuzuBackend()
-    backend.connect(":memory:")
+    backend.connect(":memory.")
     return backend
 
 

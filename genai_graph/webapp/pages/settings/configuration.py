@@ -170,7 +170,7 @@ def main() -> None:
                 try:
                     llm = get_llm()
                     response = llm.invoke([HumanMessage(content=test_input)])
-                    st.success("LLM Response:")
+                    st.success("LLM Response.")
                     st.write(response.content)
                 except Exception as e:
                     st.error(f"Error running LLM test: {str(e)}")

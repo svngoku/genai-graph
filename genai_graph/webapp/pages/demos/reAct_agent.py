@@ -308,7 +308,7 @@ def display_sidebar() -> None:
                 current_index = available_llms.index(sss.llm_selected)
 
             selected_llm = st.selectbox(
-                "Select LLM:",
+                "Select LLM.",
                 options=available_llms,
                 index=current_index,
                 key="llm_selector",
@@ -333,7 +333,7 @@ def display_sidebar() -> None:
             current_index = available_configs.index(sss.kg_config_selected)
 
         selected_kg = st.selectbox(
-            "Select KG Configuration:",
+            "Select KG Configuration.",
             options=available_configs,
             index=current_index,
             key="kg_selector",

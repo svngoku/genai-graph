@@ -58,7 +58,7 @@ class GraphRegistry(BaseModel):
         manager = get_kg_manager()
         profile_cfg = manager.get_profile_dict()
 
-        # Get graphs: [{factory: "module:Class", initial_load: [...]}, ...]
+        # Get graphs: [{factory: "module.Class", initial_load: [...]}, ...]
         graph_configs = profile_cfg.get("graphs", []) or []
         self._failed_factories: list[tuple[str, str]] = []  # (factory_path, error)
 

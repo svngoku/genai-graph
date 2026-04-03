@@ -35,7 +35,7 @@ def test_missing_key_field_error_message():
     error_msg = str(exc_info.value)
     # Check that error message includes helpful information
     assert "Key field 'missing_field' not found or empty" in error_msg
-    assert "Available fields:" in error_msg
+    assert "Available fields." in error_msg
     assert "name" in error_msg  # Should show available fields
     assert "key_from='AUTO_ID'" in error_msg  # Should suggest AUTO_ID
 
@@ -58,7 +58,7 @@ def test_missing_key_field_shows_field_preview():
 
     error_msg = str(exc_info.value)
     # Should show preview of fields (first 10)
-    assert "Available fields:" in error_msg
+    assert "Available fields." in error_msg
     assert "(and 6 more)" in error_msg  # 16 total - 10 shown = 6 more
 
 

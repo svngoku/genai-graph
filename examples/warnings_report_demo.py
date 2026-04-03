@@ -22,7 +22,7 @@ with open(output_file, "w") as f:
 
 print(f"Sample warnings report generated: {output_file}")
 print("\n" + "=" * 80)
-print("PREVIEW:")
+print("PREVIEW.")
 print("=" * 80 + "\n")
 print(markdown_report[:2000])
 print("\n... (truncated) ...")

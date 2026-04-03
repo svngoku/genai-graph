@@ -66,8 +66,8 @@ def categorize_warnings(warnings: list[str]) -> WarningsReport:
         "orphaned_node": r"No field paths found for (\w+) in the root model structure",
         "embedded_field": r"Embedded class (\w+) not found in (\w+)",
         "field_type_mismatch": r"Field '(\w+)' in (\w+) has type mismatch",
-        "schema_creation_failed": r"Schema creation failed for subgraph (.+?):",
-        "validation_warning": r"Graph schema validation:",
+        "schema_creation_failed": r"Schema creation failed for subgraph (.+?).",
+        "validation_warning": r"Graph schema validation.",
     }
 
     for warning in warnings:
@@ -315,7 +315,7 @@ def generate_warnings_markdown(warnings: list[str]) -> str:
             "3. **Check Field Paths**: Verify orphaned nodes are reachable from root models",
             "4. **Fix Schema Errors**: Address any schema creation failures",
             "",
-            "For more information, see:",
+            "For more information, see.",
             "- [Graph Construction Guide](../../../docs/graph_construction.md)",
             "- [Schema Documentation](../../../docs/kg_explorer.md)",
             "",

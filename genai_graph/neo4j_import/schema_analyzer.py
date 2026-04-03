@@ -334,7 +334,7 @@ class SchemaAnalyzer:
         print(f"Total relationships: {self.schema.total_relationships:,}")
 
         print(f"\n{'─' * 60}")
-        print("NODE TABLES:")
+        print("NODE TABLES.")
         print(f"{'─' * 60}")
         for label, info in sorted(self.schema.node_tables.items()):
             print(f"\n  {label} ({info.count:,} nodes)")
@@ -344,7 +344,7 @@ class SchemaAnalyzer:
                 print(f"    - {prop_name}: {types_str}{nullable_str}")
 
         print(f"\n{'─' * 60}")
-        print("RELATIONSHIP TABLES:")
+        print("RELATIONSHIP TABLES.")
         print(f"{'─' * 60}")
         for rel_type, info in sorted(self.schema.rel_tables.items()):
             from_str = ", ".join(sorted(info.from_labels))

@@ -52,7 +52,7 @@ embeddings_store:
     embeddings: default
     table_name_prefix: embeddings
     config:
-      storage: '::memory::'  # In-memory Chroma storage
+      storage: '::memory:.'  # In-memory Chroma storage
   
   local_fast:
     backend: Chroma  

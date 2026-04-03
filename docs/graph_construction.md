@@ -271,7 +271,7 @@ stratnav_subset_rainbow_crm:
     - rainbow_add_crm         # Imports nodes/rels from parquet
     - stratnav_subset
   graphs:
-    - factory: genai_graph.ekg.schema.my_factory:MyGraph
+    - factory: genai_graph.ekg.schema.my_factory.MyGraph
 ```
 
 **Import process**:
@@ -301,7 +301,7 @@ kg_configs:
     import:
       - crm_export              # Import CRM data first
     graphs:
-      - factory: "genai_graph.ekg.schema.rainbow_review:ReviewedOpportunityGraph"
+      - factory: "genai_graph.ekg.schema.rainbow_review.ReviewedOpportunityGraph"
         data_root: ${paths.rainbow_json}
         include: 
           - "*CNES*TMA*VENUS*"
@@ -392,7 +392,7 @@ During KG creation, various warnings may appear. Here's a reference guide:
 ```
 No graphs are registered in the GraphRegistry.
 The following factories failed to load:
-  - genai_graph.ekg.schema.my_factory:MyGraph: ImportError: cannot import name ...
+  - genai_graph.ekg.schema.my_factory.MyGraph: ImportError: cannot import name ...
 ```
 **Cause**: Factory import failed due to syntax error, missing dependency, or wrong module path.  
 **Solution**: Check the listed module paths and fix the import errors shown in the message.

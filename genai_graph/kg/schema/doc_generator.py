@@ -55,7 +55,7 @@ def generate_schema_description(graphs: str | list[str], print_enums: bool = Tru
     # extended and base types are expected when merging different graphs)
     registry = GraphRegistry.get_instance()
     with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", category=UserWarning, message="Graph schema validation:")
+        warnings.filterwarnings("ignore", category=UserWarning, message="Graph schema validation.")
         schema = registry.build_combined_schema(graphs)
     return format_schema_description(schema=schema, baml_docs=baml_docs, print_enums=print_enums)
 

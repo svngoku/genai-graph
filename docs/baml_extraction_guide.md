@@ -379,7 +379,7 @@ Fields prefixed with `p_` and suffixed with `_` are:
 kg_configs:
   my_kg:
     graphs:
-      - factory: genai_graph.ekg.schema.rainbow_review:ReviewedOpportunityGraph
+      - factory: genai_graph.ekg.schema.rainbow_review.ReviewedOpportunityGraph
         data_root: ${paths.rainbow_json}
         include: 
           - "*CNES*TMA*VENUS*"  # File glob pattern
@@ -417,7 +417,7 @@ kg_configs:
     import:
       - crm_export           # Import nodes/rels from another KG config
     graphs:
-      - factory: genai_graph.ekg.schema.my_factory:MyGraph
+      - factory: genai_graph.ekg.schema.my_factory.MyGraph
         data_root: ${paths.my_data}
         include: ["*CNES*"]
         exclude: ["fake/*"]

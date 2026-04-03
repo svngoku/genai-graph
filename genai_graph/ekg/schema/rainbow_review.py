@@ -32,9 +32,9 @@ ReviewedOpportunityNode: GraphNode = GraphNode(
     node_class=ReviewedOpportunity,
     extra_classes=[FinancialMetrics, CompetitiveLandscape, KeyStatementOfWorkElement],
     name_from=lambda data, _: (
-        "Review:"
+        "Review."
         + str(data.get("opportunity", {}).get("opportunity_id", ""))
-        + ":"
+        + "."
         + str(data.get("start_date", ""))
     ),
     key_from=lambda data, _: str(data.get("opportunity", {}).get("opportunity_id", "unknown")),

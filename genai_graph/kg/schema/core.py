@@ -1066,14 +1066,14 @@ class GraphSchema(BaseModel):
         logger.debug(f"Graph Schema Summary for {root_name}")
 
         # Nodes
-        logger.debug("Node Configurations:")
+        logger.debug("Node Configurations.")
         for node in self.nodes:
             paths_str = ", ".join(node.field_paths) if node.field_paths else "ROOT"
             excluded_str = ", ".join(sorted(node.excluded_fields)) if node.excluded_fields else "None"
             logger.debug(f"  {node.node_class.__name__}: key={node.key}, paths={paths_str}, excluded={excluded_str}")
 
         # Relations
-        logger.debug("Relationship Configurations:")
+        logger.debug("Relationship Configurations.")
         for relation in self.relations:
             from_to = f"{relation.from_node.label} → {relation.to_node.label}"
             paths_str = (
@@ -1083,6 +1083,6 @@ class GraphSchema(BaseModel):
 
         # Warnings
         if self._warnings:
-            logger.warning("Schema warnings:")
+            logger.warning("Schema warnings.")
             for warning in self._warnings:
                 logger.warning(f"  {warning}")

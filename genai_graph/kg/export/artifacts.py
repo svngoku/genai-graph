@@ -196,7 +196,7 @@ def export_schema_json(config_name: str) -> UPath:
     selected_graphs = registry.list_graphs()
 
     with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", category=UserWarning, message="Graph schema validation:")
+        warnings.filterwarnings("ignore", category=UserWarning, message="Graph schema validation.")
         schema = registry.build_combined_schema(selected_graphs)
 
     schema_data = build_schema_d3_data(schema, graph_names=selected_graphs)
@@ -264,7 +264,7 @@ def export_info(config_name: str, backend: KgBackend) -> UPath:
     # extended and base types are expected when merging different graphs)
     try:
         with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=UserWarning, message="Graph schema validation:")
+            warnings.filterwarnings("ignore", category=UserWarning, message="Graph schema validation.")
             schema = registry.build_combined_schema(selected_graphs)
     except ValueError as exc:
         logger.error(f"Failed to build schema: {exc}")

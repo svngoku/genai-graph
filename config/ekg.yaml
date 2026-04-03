@@ -17,7 +17,7 @@ kg_build:
 kg_configs:
   one_rainbow:
     graphs:
-      - factory: 'genai_graph.ekg.schema.rainbow_review:ReviewedOpportunityGraph'
+      - factory: 'genai_graph.ekg.schema.rainbow_review.ReviewedOpportunityGraph'
         data_root: '${paths.rainbow_json}'
         include:
           - '*CNES*TMA*VENUS*'
@@ -30,20 +30,20 @@ kg_configs:
             - Customer.name
   crm_export:
     graphs:
-      - factory: '${schemas_root}.crm_export:CrmExtractGraph'
+      - factory: '${schemas_root}.crm_export.CrmExtractGraph'
         files:
           - '${paths.ekg_data}/crm_export/report1750429630460_SHORTEN.xlsx'
         pd_read_parameters: {}
   one_rainbow_with_db:
     graphs:
-      - factory: '${schemas_root}.rainbow_review:ReviewedOpportunityGraph'
+      - factory: '${schemas_root}.rainbow_review.ReviewedOpportunityGraph'
         data_root: '${paths.rainbow_json}'
         include:
           - '*CNES*TMA*VENUS*'
         exclude:
           - fake/*
         recursive: true
-      - factory: '${schemas_root}.crm_export:CrmExtractGraph'
+      - factory: '${schemas_root}.crm_export.CrmExtractGraph'
         files:
           - '${paths.ekg_data}/crm_export/report1750429630460_SHORTEN.xlsx'
         pd_read_parameters: {}
@@ -52,21 +52,21 @@ kg_configs:
           property: opportunity_id
   rainbow_add_crm:
     graphs:
-      - factory: 'genai_graph.ekg.schema.rainbow_review:ReviewedOpportunityGraph'
+      - factory: 'genai_graph.ekg.schema.rainbow_review.ReviewedOpportunityGraph'
         data_root: '${paths.rainbow_json}'
         include:
           - '*CNES*'
         exclude:
           - fake/*
         recursive: true
-      - factory: 'genai_graph.ekg.schema.architecture_doc:ArchitectureDocumentGraph'
+      - factory: 'genai_graph.ekg.schema.architecture_doc.ArchitectureDocumentGraph'
         data_root: '${paths.add_json}'
         include:
           - '*CNES*'
         exclude:
           - fake/*
         recursive: true
-      - factory: '${schemas_root}.crm_export:CrmExtractGraph'
+      - factory: '${schemas_root}.crm_export.CrmExtractGraph'
         files:
           - '${paths.ekg_data}/crm_export/report1750429630460_SHORTEN.xlsx'
         pd_read_parameters: {}
@@ -75,14 +75,14 @@ kg_configs:
           property: opportunity_id
   several_rainbow:
     graphs:
-      - factory: 'genai_graph.ekg.schema.rainbow_review:ReviewedOpportunityGraph'
+      - factory: 'genai_graph.ekg.schema.rainbow_review.ReviewedOpportunityGraph'
         data_root: '${paths.rainbow_json}'
         include:
           - '*.json'
         recursive: true
   stratnav_subset:
     graphs:
-      - factory: 'genai_graph.ekg.schema.stratnav:StratnavGraph'
+      - factory: 'genai_graph.ekg.schema.stratnav.StratnavGraph'
         neo4j_export_file: '${paths.stratnav_db}/subset/sn-subset200.jsonl'
         embeddings:
           - field: L3.descriptionEmbedding
@@ -97,7 +97,7 @@ kg_configs:
     import:
       - stratnav_subset_rainbow_crm
     graphs:
-      - factory: 'genai_graph.ekg.schema.learned_graph:L3TechApproachMatcher'
+      - factory: 'genai_graph.ekg.schema.learned_graph.L3TechApproachMatcher'
         similarities:
           - relationship: POSSIBLE_OFFERING
             from: TechnicalApproach.architecture
