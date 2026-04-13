@@ -197,11 +197,19 @@ def create_kg_flow(
     _run_export_phase(cfg_name, backend, collector, warnings, export_html, manager)
 
     # Log completion outcome
-    outcome_status = "warning" if warnings else "success"
+    if total_stats.total_failed > 0:
+        logger.error(
+            "KG creation finished with {} failed document(s) out of {} total. "
+            "Check the warnings report for details.",
+            total_stats.total_failed,
+            total_stats.total_processed + total_stats.total_failed,
+        )
+    outcome_status = "warning" if (warnings or total_stats.total_failed > 0) else "success"
     manager.log_outcome(
         "create_kg",
         outcome_status,
-        f"KG creation completed with {total_stats.total_processed} docs processed",
+        f"KG creation completed: {total_stats.total_processed} ok, {total_stats.total_failed} failed",
+
         details={
             "processed": total_stats.total_processed,
             "failed": total_stats.total_failed,

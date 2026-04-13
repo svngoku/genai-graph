@@ -172,10 +172,14 @@ class EkgCommands(CliTopCommand):
                     warnings = result.warnings
 
                     console.print("")
+                    has_failures = stats.total_failed > 0
+                    status_color = "yellow" if has_failures else "green"
+                    status_icon = "⚠" if has_failures else "✓"
                     console.print(
-                        f"[green]✓ KG creation completed for [bold]{cfg_name}[/bold].[/green] Processed: "
-                        f"{stats.total_processed} ok, {stats.total_failed} failed. "
-                        f"Path: {result.db_path}",
+                        f"[{status_color}]{status_icon} KG creation completed for [bold]{cfg_name}[/bold].[/{status_color}] Processed: "
+                        f"{stats.total_processed} ok, "
+                        + (f"[red bold]{stats.total_failed} failed[/red bold]" if has_failures else "0 failed")
+                        + f". Path: {result.db_path}",
                     )
 
                     if warnings:
@@ -183,7 +187,7 @@ class EkgCommands(CliTopCommand):
                         for idx, warning in enumerate(warnings, 1):
                             console.print(f"  [yellow]{idx}.[/yellow] {warning}")
                         console.print("")
-                    else:
+                    elif not has_failures:
                         console.print("[green]✓ No warnings[/green]")
 
                     if result.html_export and export_html:

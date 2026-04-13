@@ -222,26 +222,24 @@ def add_documents_to_graph(
             stats.total_processed += 1
 
         except Exception as e:
-            error_msg = str(e)
-            # Provide helpful context based on error type
-            if "Key field" in error_msg and "not found or empty" in error_msg:
-                logger.error(f"Failed to process {key}: {e}")
-                logger.info(
-                    "💡 Tip: If this field may be missing in some documents, "
-                    "consider using key_from='AUTO_ID' for auto-generated IDs"
-                )
-            elif "Cannot find property" in error_msg:
-                logger.error(f"Failed to process {key}: {e}")
-                logger.info(
-                    "💡 Tip: Schema mismatch - field exists in data but not in node definition. "
-                    "Check that your Pydantic model matches the data structure."
-                )
-            else:
-                logger.error(f"Failed to process key {key}: {e}")
-
             import traceback
 
+            error_msg = str(e)
+            hint = ""
+            # Provide helpful context based on error type
+            if "Key field" in error_msg and "not found or empty" in error_msg:
+                hint = " 💡 Consider key_from='AUTO_ID' if this field may be absent."
+            elif "Cannot find property" in error_msg:
+                hint = " 💡 Schema mismatch — field in data not in node definition."
+
+            full_msg = f"Failed to process key {key}: {error_msg}{hint}"
+            logger.error(full_msg)
             logger.debug(traceback.format_exc())
+
+            # Propagate to KgManager so failures appear in the warnings report
+            if context:
+                context.add_warning(full_msg)
+
             stats.total_failed += 1
             continue
 
