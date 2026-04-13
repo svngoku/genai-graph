@@ -1140,6 +1140,11 @@ def import_from_parquet(
                 logger.debug(f"No valid {node_type} nodes to import after filtering")
                 continue
 
+            # Ladybug doesn't support pandas 3.x ``str`` dtype; cast to ``object``.
+            for col in list(df.columns):
+                if str(df[col].dtype) == "str" or (hasattr(df[col].dtype, "name") and df[col].dtype.name == "str"):
+                    df[col] = df[col].astype(object)
+
             # Build MERGE query - merge on primary key, set all other fields
             other_cols = [c for c in df.columns if c != pk_field]
             on_create_set = ", ".join([f"n.{c} = {c}" for c in other_cols]) if other_cols else ""

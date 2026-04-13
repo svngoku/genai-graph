@@ -564,6 +564,14 @@ def _prepare_node_dataframe(
     except Exception:
         pass  # Non-critical: fall back to object dtype if arrow not available
 
+    # Ladybug's numpy_type.cpp scanner does not recognise pandas 3.x's default
+    # ``str`` dtype (pyarrow-backed ``ArrowDtype(pa.string())``).  It only handles
+    # the legacy ``object`` dtype or the explicit ``StringDtype``.  Convert any
+    # ``str``-typed columns so LOAD FROM df doesn't hit UNREACHABLE_CODE.
+    for col in list(df.columns):
+        if str(df[col].dtype) == "str" or (hasattr(df[col].dtype, "name") and df[col].dtype.name == "str"):
+            df[col] = df[col].astype(object)
+
     return df
 
 
