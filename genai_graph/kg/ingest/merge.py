@@ -486,7 +486,16 @@ def _prepare_node_dataframe(
         elif isinstance(value, dict):
             # Look up struct field types if this is a known struct field
             sub_field_types = struct_field_types.get(field_name, {}) if field_name else {}
-            return {k: clean_value(v, field_name=k, expected_type=sub_field_types.get(k)) for k, v in value.items()}
+            if sub_field_types:
+                # Embedded STRUCT with defined sub-field types — keep as dict for Ladybug STRUCT column
+                return {k: clean_value(v, field_name=k, expected_type=sub_field_types.get(k)) for k, v in value.items()}
+            else:
+                # No embedded struct definition — the schema stores this as STRING.
+                # Serialize to JSON so Ladybug doesn't encounter a Python dict in an
+                # object-dtype column (which triggers UNREACHABLE_CODE in numpy_type.cpp).
+                import json
+
+                return json.dumps(value, default=str) if value else None
         elif isinstance(value, list):
             return [clean_value(item, field_name=field_name, expected_type=expected_type) for item in value]
         return value
