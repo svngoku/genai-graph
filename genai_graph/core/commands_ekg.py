@@ -385,11 +385,11 @@ class EkgCommands(CliTopCommand):
             import asyncio
             import sys
 
-            from genai_tk.agents.langchain.agent import (
+            from genai_tk.agents.langchain.agent_cli import (
                 run_langchain_agent_direct,
                 run_langchain_agent_shell,
             )
-            from genai_tk.agents.langchain.config import load_unified_config, resolve_profile
+            from genai_tk.agents.langchain.langchain_agent import LangchainAgent
             from genai_tk.agents.langchain_setup import setup_langchain
 
             from genai_graph.kg.manager import get_kg_manager
@@ -412,22 +412,17 @@ class EkgCommands(CliTopCommand):
                 debug=debug,
             )
 
-            # Load the EKG profile from langchain.yaml (inherits RichToolCallMiddleware from defaults)
-            # then override system_prompt with the dynamically-built EKG prompt.
-            lc_config = load_unified_config()
-            profile = resolve_profile(lc_config, "ekg")
-            profile = profile.model_copy(update={"system_prompt": system_prompt})
-
             if chat:
                 # Interactive chat mode using the shared LangChain shell
-                asyncio.run(
-                    run_langchain_agent_shell(
-                        profile=profile,
-                        llm_override=llm,
-                        extra_tools=[ekg_tool],
-                        extra_mcp_servers=list(mcp),
-                    )
+                agent = LangchainAgent(
+                    profile_name="EKG",
+                    llm=llm,
+                    tools=[ekg_tool],
+                    mcp_servers=list(mcp),
+                    system_prompt=system_prompt,
+                    checkpointer=True,
                 )
+                asyncio.run(run_langchain_agent_shell(agent))
             else:
                 # Handle input from --input parameter or stdin
                 if not input and not sys.stdin.isatty():
@@ -436,16 +431,15 @@ class EkgCommands(CliTopCommand):
                     console.print("[red]❌ Input parameter or something in stdin is required[/red]")
                     raise typer.Exit(1)
 
-                # Reuse the common ReAct helper from genai-tk
-                asyncio.run(
-                    run_langchain_agent_direct(
-                        input.strip(),
-                        profile=profile,
-                        llm_override=llm,
-                        extra_tools=[ekg_tool],
-                        extra_mcp_servers=list(mcp),
-                    )
+                agent = LangchainAgent(
+                    profile_name="EKG",
+                    llm=llm,
+                    tools=[ekg_tool],
+                    mcp_servers=list(mcp),
+                    system_prompt=system_prompt,
                 )
+                # Reuse the common ReAct helper from genai-tk
+                asyncio.run(run_langchain_agent_direct(input.strip(), agent))
 
         @cli_app.command("cypher")
         def cypher(
