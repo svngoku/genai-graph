@@ -127,7 +127,7 @@ def add_neo4j_data_to_graph(
             nodes_data=nodes_data,
             relationships=relationships,
             context=context,
-            key_fields=key_fields if key_fields else None,
+            key_fields=key_fields or None,
         )
 
         stats.nodes_created = nodes_data.total_count()

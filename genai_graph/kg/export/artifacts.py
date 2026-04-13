@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Any
 
 import pandas as pd
+import pyarrow as pa
 from loguru import logger
 from pydantic import BaseModel
 from upath import UPath
@@ -1140,26 +1141,24 @@ def import_from_parquet(
                 logger.debug(f"No valid {node_type} nodes to import after filtering")
                 continue
 
-            # Ladybug doesn't support pandas 3.x ``str`` dtype; cast to ``object``.
-            for col in list(df.columns):
-                if str(df[col].dtype) == "str" or (hasattr(df[col].dtype, "name") and df[col].dtype.name == "str"):
-                    df[col] = df[col].astype(object)
-
             # Build MERGE query - merge on primary key, set all other fields
             other_cols = [c for c in df.columns if c != pk_field]
             on_create_set = ", ".join([f"n.{c} = {c}" for c in other_cols]) if other_cols else ""
             on_match_set = ", ".join([f"n.{c} = {c}" for c in other_cols]) if other_cols else ""
 
+            # Convert to Arrow table to bypass Ladybug's buggy NumPy scanner
+            arrow_df = pa.Table.from_pandas(df)
+
             if on_create_set:
                 merge_query = f"""
-                    LOAD FROM df
+                    LOAD FROM arrow_df
                     MERGE (n:{node_type} {{{pk_field}: {pk_field}}})
                     ON CREATE SET {on_create_set}
                     ON MATCH SET {on_match_set}
                 """
             else:
                 merge_query = f"""
-                    LOAD FROM df
+                    LOAD FROM arrow_df
                     MERGE (n:{node_type} {{{pk_field}: {pk_field}}})
                 """
 
@@ -1194,16 +1193,17 @@ def import_from_parquet(
                     retry_other_cols = [c for c in df.columns if c != pk_field]
                     retry_on_create = ", ".join([f"n.{c} = {c}" for c in retry_other_cols]) if retry_other_cols else ""
                     retry_on_match = ", ".join([f"n.{c} = {c}" for c in retry_other_cols]) if retry_other_cols else ""
+                    retry_arrow = pa.Table.from_pandas(df)
                     if retry_on_create:
                         retry_query = f"""
-                            LOAD FROM df
+                            LOAD FROM retry_arrow
                             MERGE (n:{node_type} {{{pk_field}: {pk_field}}})
                             ON CREATE SET {retry_on_create}
                             ON MATCH SET {retry_on_match}
                         """
                     else:
                         retry_query = f"""
-                            LOAD FROM df
+                            LOAD FROM retry_arrow
                             MERGE (n:{node_type} {{{pk_field}: {pk_field}}})
                         """
                     kuzu_conn.execute(retry_query)
@@ -1251,8 +1251,9 @@ def import_from_parquet(
                         props_str = ""
 
                     # Create relationships using MATCH + CREATE
+                    arrow_merge_df = pa.Table.from_pandas(merge_df)
                     create_query = f"""
-                        LOAD FROM merge_df
+                        LOAD FROM arrow_merge_df
                         MATCH (a:{from_type} {{{from_key}: from_id}}), (b:{to_type} {{{to_key}: to_id}})
                         CREATE (a)-[:{rel_type}{props_str}]->(b)
                     """

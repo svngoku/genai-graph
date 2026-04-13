@@ -234,7 +234,9 @@ class KgManager(BaseModel):
     def base_path(self) -> UPath:
         """Root directory for this KG profile."""
         if self._base_path is None:
-            self._base_path = UPath(global_config().get_dir_path("paths.kg_outputs", create_if_not_exists=True)) / self.profile
+            self._base_path = (
+                UPath(global_config().get_dir_path("paths.kg_outputs", create_if_not_exists=True)) / self.profile
+            )
         return self._base_path
 
     @property

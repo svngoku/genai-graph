@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+import pyarrow as pa
 import pandas as pd
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -29,6 +30,17 @@ if TYPE_CHECKING:
 # =============================================================================
 # Type definitions for node data structures
 # =============================================================================
+
+
+def _df_to_arrow(df: pd.DataFrame) -> pa.Table:
+    """Convert a pandas DataFrame to a PyArrow Table for Ladybug ingestion.
+
+    Ladybug's NumPy scanner doesn't handle pandas 3.x's default ``str`` dtype
+    (``StringDtype``), hitting UNREACHABLE_CODE in numpy_type.cpp. Converting to
+    a PyArrow Table bypasses the NumPy path entirely — Ladybug scans Arrow
+    tables natively.
+    """
+    return pa.Table.from_pandas(df)
 
 # A single node's properties as a dictionary
 NodeProperties = dict[str, Any]
@@ -564,14 +576,6 @@ def _prepare_node_dataframe(
     except Exception:
         pass  # Non-critical: fall back to object dtype if arrow not available
 
-    # Ladybug's numpy_type.cpp scanner does not recognise pandas 3.x's default
-    # ``str`` dtype (pyarrow-backed ``ArrowDtype(pa.string())``).  It only handles
-    # the legacy ``object`` dtype or the explicit ``StringDtype``.  Convert any
-    # ``str``-typed columns so LOAD FROM df doesn't hit UNREACHABLE_CODE.
-    for col in list(df.columns):
-        if str(df[col].dtype) == "str" or (hasattr(df[col].dtype, "name") and df[col].dtype.name == "str"):
-            df[col] = df[col].astype(object)
-
     return df
 
 
@@ -696,8 +700,8 @@ def merge_nodes_batch(
                 ON MATCH SET {on_match_set}
             """
 
-            # debug(merge_query)
-            # debug(df)
+            # Convert to Arrow table to bypass Ladybug's buggy NumPy scanner
+            df = _df_to_arrow(df)
             kuzu_conn.execute(merge_query)
 
             # Collect DataFrame for parquet export if collector is active
@@ -921,6 +925,7 @@ def merge_relationships_batch(
                     MATCH (from:{from_type} {{{from_key_field}: from_id}}), (to:{to_type} {{{to_key_field}: to_id}})
                     MERGE (from)-[:{rel_name}]->(to)
                 """
+                df = _df_to_arrow(df)
                 kuzu_conn.execute(merge_rel_query)
                 total_created += len(df)
 
