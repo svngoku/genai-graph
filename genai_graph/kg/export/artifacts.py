@@ -28,6 +28,8 @@ class HtmlExportResult(BaseModel):
     config_name: str
     output_path: UPath
 
+    model_config = {"arbitrary_types_allowed": True}
+
 
 class ParquetExportResult(BaseModel):
     """Result of parquet export task."""
