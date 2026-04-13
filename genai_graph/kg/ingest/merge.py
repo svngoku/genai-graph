@@ -751,15 +751,19 @@ def merge_nodes_batch(
                 ON MATCH SET {on_match_set}
             """
 
-            # Convert to Arrow table to bypass Ladybug's buggy NumPy scanner
-            # NOTE: arrow_table is read by name from this frame by Ladybug's LOAD FROM scanner.
-            arrow_table = _df_to_arrow(df, struct_field_types=config.struct_field_types)  # noqa: F841
+            # Convert to Arrow table to bypass Ladybug's buggy NumPy scanner and to
+            # enforce schema-defined struct field order before writing to both Ladybug and parquet.
+            # NOTE: arrow_table is also read by name from this frame by Ladybug's LOAD FROM scanner.
+            arrow_table = _df_to_arrow(df, struct_field_types=config.struct_field_types)
             kuzu_conn.execute(merge_query)
 
-            # Collect DataFrame for parquet export if collector is active
+            # Collect DataFrame for parquet export if collector is active.
+            # Use arrow_table.to_pandas() rather than df so that struct columns in the
+            # parquet have fields in schema-defined order — otherwise a KG that imports
+            # this parquet will hit the same struct field-order mismatch in Ladybug.
             collector = get_parquet_collector()
             if collector is not None:
-                collector.add_nodes(node_type, df)
+                collector.add_nodes(node_type, arrow_table.to_pandas())
 
             # Stats - we can't easily distinguish created vs matched in batch mode
             type_stats.created = len(df)  # Approximation
