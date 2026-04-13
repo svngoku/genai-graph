@@ -694,14 +694,14 @@ def merge_nodes_batch(
                 df["_updated_at"] = timestamp
 
             merge_query = f"""
-                LOAD FROM df
+                LOAD FROM arrow_table
                 MERGE (n:{node_type} {{{primary_key_field}: {primary_key_field}}})
                 ON CREATE SET {on_create_set}
                 ON MATCH SET {on_match_set}
             """
 
             # Convert to Arrow table to bypass Ladybug's buggy NumPy scanner
-            df = _df_to_arrow(df)
+            arrow_table = _df_to_arrow(df)
             kuzu_conn.execute(merge_query)
 
             # Collect DataFrame for parquet export if collector is active
@@ -921,11 +921,11 @@ def merge_relationships_batch(
                 total_created += len(df)
             else:
                 merge_rel_query = f"""
-                    LOAD FROM df
+                    LOAD FROM arrow_rel_table
                     MATCH (from:{from_type} {{{from_key_field}: from_id}}), (to:{to_type} {{{to_key_field}: to_id}})
                     MERGE (from)-[:{rel_name}]->(to)
                 """
-                df = _df_to_arrow(df)
+                arrow_rel_table = _df_to_arrow(df)
                 kuzu_conn.execute(merge_rel_query)
                 total_created += len(df)
 
