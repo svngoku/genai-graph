@@ -115,7 +115,7 @@ def query_kg(query: str, llm_id: str | None = None) -> pd.DataFrame:
     if not backend:
         raise Exception("EKG database not found")
     cypher_query = text2cypher_chain(query, llm_id=llm_id).invoke({})
-    logger.info(f"Generated Cypher query: {cypher_query}")
+    logger.info("Generated Cypher query: {}", cypher_query)
     try:
         result = backend.execute(cypher_query)
         df = result.get_as_df()

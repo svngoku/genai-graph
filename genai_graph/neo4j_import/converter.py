@@ -68,7 +68,7 @@ class Neo4jToKuzuConverter:
         if analyze_first and self.schema is None:
             self.analyze_schema()
 
-        logger.info(f"Converting JSONL to Kuzu JSON files in: {output_path}")
+        logger.info("Converting JSONL to Kuzu JSON files in: {}", output_path)
 
         # First pass: collect all data
         self._collect_data(stats)
@@ -82,7 +82,7 @@ class Neo4jToKuzuConverter:
             with file_path.open("w", encoding="utf-8") as f:
                 json.dump(nodes, f, indent=2, ensure_ascii=False)
             stats.node_files_created.append(str(file_path))
-            logger.info(f"Created node file: {file_path} ({len(nodes)} nodes)")
+            logger.info("Created node file: {} ({} nodes)", file_path, len(nodes))
 
         # Write relationship files
         rels_dir = output_path / "relationships"
@@ -95,7 +95,7 @@ class Neo4jToKuzuConverter:
             with file_path.open("w", encoding="utf-8") as f:
                 json.dump(rels, f, indent=2, ensure_ascii=False)
             stats.rel_files_created.append(str(file_path))
-            logger.info(f"Created relationship file: {file_path} ({len(rels)} rels)")
+            logger.info("Created relationship file: {} ({} rels)", file_path, len(rels))
 
         return stats
 
@@ -108,7 +108,7 @@ class Neo4jToKuzuConverter:
         with self.jsonl_path.open("r", encoding="utf-8") as f:
             for line_num, line in enumerate(f, 1):
                 if line_num % 10000 == 0:
-                    logger.debug(f"Processing line {line_num}...")
+                    logger.debug("Processing line {}...", line_num)
 
                 line = line.strip()
                 if not line:
@@ -229,7 +229,7 @@ class SubsetCreator:
         nodes_by_label: dict[str, list[dict]] = defaultdict(list)
         rels_by_type: dict[str, list[dict]] = defaultdict(list)
 
-        logger.info(f"Reading source JSONL: {self.jsonl_path}")
+        logger.info("Reading source JSONL: {}", self.jsonl_path)
 
         with self.jsonl_path.open("r", encoding="utf-8") as f:
             for line in f:
@@ -291,7 +291,7 @@ class SubsetCreator:
                         break
 
         # Write subset file
-        logger.info(f"Writing subset to: {output_path}")
+        logger.info("Writing subset to: {}", output_path)
 
         with output_path.open("w", encoding="utf-8") as f:
             for node in selected_nodes:
@@ -306,7 +306,7 @@ class SubsetCreator:
             "rel_types": len(rels_by_type),
         }
 
-        logger.info(f"Subset created: {stats}")
+        logger.info("Subset created: {}", stats)
 
         return stats
 

@@ -39,4 +39,4 @@ def display_messages(container: DeltaGenerator | Any) -> None:
         elif isinstance(msg, HumanMessage) and msg.content:
             container.chat_message("human").write(msg.content)
         else:
-            logger.warning(f"unknown message ! {msg}")
+            logger.warning("unknown message ! {}", msg)

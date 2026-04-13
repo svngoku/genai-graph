@@ -171,7 +171,7 @@ def create_schema_task(bundles: list[GraphBundle], backend: KgBackend) -> list[G
         try:
             core_create_schema(backend, schema.nodes, schema.relations, manager)
             schema.validate_with_context(manager)
-            logger.info(f"Created schema for subgraph {getattr(graph_impl, 'name', '<unknown>')}")
+            logger.info("Created schema for subgraph {}", getattr(graph_impl, "name", "<unknown>"))
         except Exception as exc:  # pragma: no cover - defensive
             import traceback
 
@@ -474,7 +474,7 @@ def summarize_warnings_task(config_name: str | None = None) -> list[str]:
     warnings = manager.get_warnings()
 
     if warnings:
-        logger.warning(f"KG creation completed with {len(warnings)} warning(s)")
+        logger.warning("KG creation completed with {} warning(s)", len(warnings))
         if config_name:
             manager.activate()
             manager.log_warnings(warnings)

@@ -46,9 +46,9 @@ class EmbeddingsHandler:
 
         try:
             self.factory = get_embeddings(embeddings=self.embeddings_id, cache_embeddings=True)
-            logger.debug(f"EmbeddingsHandler initialized with model: {self.embeddings_id}")
+            logger.debug("EmbeddingsHandler initialized with model: {}", self.embeddings_id)
         except Exception as e:
-            logger.error(f"Failed to initialize EmbeddingsFactory for {self.embeddings_id}: {e}")
+            logger.error("Failed to initialize EmbeddingsFactory for {}: {}", self.embeddings_id, e)
             raise
 
     def compute_embeddings(self, text: str) -> list[float]:
@@ -70,7 +70,7 @@ class EmbeddingsHandler:
         try:
             # embed_query returns embedding directly as list[float]
             embeddings = self.factory.embed_query(text)
-            logger.debug(f"Computed embedding for text ({len(text)} chars) -> {len(embeddings)} dims")
+            logger.debug("Computed embedding for text ({} chars) -> {} dims", len(text), len(embeddings))
             return embeddings
         except Exception as e:
             logger.error(f"Failed to compute embedding for text: {e}")

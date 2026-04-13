@@ -168,7 +168,7 @@ for section_name, page_files in nav_config.items():
         if page_path.exists():
             section_pages.append(st.Page(page=page_path, title=page_title))
         else:
-            logger.warning(f"page not found: {page_path} ")
+            logger.warning("page not found: {} ", page_path)
     if section_pages:
         pages[section_name.title()] = section_pages
 

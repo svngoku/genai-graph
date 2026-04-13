@@ -124,12 +124,12 @@ class SchemaAnalyzer:
         Returns:
             SchemaInfo containing all extracted schema information.
         """
-        logger.info(f"Analyzing JSONL file: {self.jsonl_path}")
+        logger.info("Analyzing JSONL file: {}", self.jsonl_path)
 
         with self.jsonl_path.open("r", encoding="utf-8") as f:
             for line_num, line in enumerate(f, 1):
                 if line_num % 10000 == 0:
-                    logger.debug(f"Processed {line_num} lines...")
+                    logger.debug("Processed {} lines...", line_num)
 
                 line = line.strip()
                 if not line:
@@ -138,7 +138,7 @@ class SchemaAnalyzer:
                 try:
                     record = json.loads(line)
                 except json.JSONDecodeError as e:
-                    logger.warning(f"Line {line_num}: Invalid JSON - {e}")
+                    logger.warning("Line {}: Invalid JSON - {}", line_num, e)
                     continue
 
                 record_type = record.get("type")
@@ -149,10 +149,10 @@ class SchemaAnalyzer:
                     self._process_relationship(record, max_samples)
 
         logger.info(
-            f"Analysis complete: {self.schema.total_nodes} nodes, {self.schema.total_relationships} relationships"
+            "Analysis complete: {} nodes, {} relationships", self.schema.total_nodes, self.schema.total_relationships
         )
-        logger.info(f"Node tables: {list(self.schema.node_tables.keys())}")
-        logger.info(f"Rel tables: {list(self.schema.rel_tables.keys())}")
+        logger.info("Node tables: {}", list(self.schema.node_tables.keys()))
+        logger.info("Rel tables: {}", list(self.schema.rel_tables.keys()))
 
         return self.schema
 

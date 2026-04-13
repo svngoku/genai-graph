@@ -43,14 +43,14 @@ class KuzuImporter:
             delete_existing: If True, delete existing database before creating.
         """
         if delete_existing and self.db_path.exists():
-            logger.warning(f"Deleting existing database: {self.db_path}")
+            logger.warning("Deleting existing database: {}", self.db_path)
             if self.db_path.is_dir():
                 shutil.rmtree(self.db_path)
             else:
                 self.db_path.unlink()
 
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Opening Kuzu database: {self.db_path}")
+        logger.info("Opening Kuzu database: {}", self.db_path)
 
         self.db = kuzu.Database(str(self.db_path))
         self.conn = kuzu.Connection(self.db)
@@ -83,7 +83,7 @@ class KuzuImporter:
 
         for stmt in schema_statements:
             try:
-                logger.debug(f"Executing: {stmt[:100]}...")
+                logger.debug("Executing: {}...", stmt[:100])
                 self.conn.execute(stmt)
                 stats.schema_statements_executed += 1
 
@@ -149,7 +149,7 @@ class KuzuImporter:
 
                 try:
                     stmt = f"COPY {table_name} FROM '{json_file}';"
-                    logger.info(f"Importing nodes: {table_name}")
+                    logger.info("Importing nodes: {}", table_name)
                     result = self.conn.execute(stmt)
 
                     # Count imported rows
@@ -174,7 +174,7 @@ class KuzuImporter:
 
                 try:
                     stmt = f"COPY {file_stem} FROM '{json_file}';"
-                    logger.info(f"Importing relationships: {file_stem}")
+                    logger.info("Importing relationships: {}", file_stem)
                     result = self.conn.execute(stmt)
 
                     # Count imported relationships
@@ -188,7 +188,7 @@ class KuzuImporter:
                     logger.error(error_msg)
                     stats.errors.append(error_msg)
 
-        logger.info(f"Import complete: {stats.nodes_imported} nodes, {stats.relationships_imported} relationships")
+        logger.info("Import complete: {} nodes, {} relationships", stats.nodes_imported, stats.relationships_imported)
 
         return stats
 
@@ -254,7 +254,7 @@ class KuzuImporter:
                         stats["total_relationships"] += count
 
         except Exception as e:
-            logger.warning(f"Error getting stats: {e}")
+            logger.warning("Error getting stats: {}", e)
 
         return stats
 
@@ -342,11 +342,11 @@ def import_neo4j_to_kuzu(
     logger.info("\n" + "=" * 60)
     logger.info("IMPORT COMPLETE")
     logger.info("=" * 60)
-    logger.info(f"Database: {db_path}")
-    logger.info(f"Total nodes: {final_stats['total_nodes']}")
-    logger.info(f"Total relationships: {final_stats['total_relationships']}")
+    logger.info("Database: {}", db_path)
+    logger.info("Total nodes: {}", final_stats["total_nodes"])
+    logger.info("Total relationships: {}", final_stats["total_relationships"])
 
     if import_stats.errors or schema_stats.errors:
-        logger.warning(f"Errors encountered: {len(import_stats.errors + schema_stats.errors)}")
+        logger.warning("Errors encountered: {}", len(import_stats.errors + schema_stats.errors))
 
     return result

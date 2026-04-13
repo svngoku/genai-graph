@@ -203,7 +203,7 @@ class EkgCommands(CliTopCommand):
                 except Exception as exc:  # pragma: no cover - defensive
                     import traceback as tb
 
-                    logger.error(f"KG creation failed for {cfg_name}: {exc}")
+                    logger.error("KG creation failed for {}: {}", cfg_name, exc)
                     logger.error(tb.format_exc())
                     console.print(f"[red]❌ KG creation failed for {cfg_name}: {exc}[/red]")
                     failed_configs.append((cfg_name, str(exc)))
@@ -551,7 +551,7 @@ class EkgCommands(CliTopCommand):
             except Exception as e:
                 import traceback as tb
 
-                logger.error(f"Failed to process query: {e}")
+                logger.error("Failed to process query: {}", e)
                 console.print(f"[red]❌ Query error: {e}[/red]")
                 console.print("[red]" + tb.format_exc() + "[/red]")
                 return
@@ -677,10 +677,10 @@ class EkgCommands(CliTopCommand):
                 console.print(f"[cyan]Output directory:[/cyan] {result.output_dir}/fake/")
 
             except FileNotFoundError as exc:
-                logger.error(f"CRM file not found: {exc}")
+                logger.error("CRM file not found: {}", exc)
                 console.print(f"[red]❌ CRM file not found: {exc}[/red]")
                 raise typer.Exit(1) from exc
             except Exception as exc:
-                logger.error(f"Fake Rainbow generation failed: {exc}")
+                logger.error("Fake Rainbow generation failed: {}", exc)
                 console.print(f"[red]❌ Generation failed: {exc}[/red]")
                 raise typer.Exit(1) from exc

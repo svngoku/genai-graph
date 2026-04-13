@@ -70,7 +70,7 @@ async def _generate_fake_rainbow_task(
 
     # Check if file already exists
     if output_path.exists() and not force:
-        logger.info(f"Skipping - file already exists: {output_path}")
+        logger.info("Skipping - file already exists: {}", output_path)
         return FakeRainbowTaskResult(opportunity_id=opportunity_id, output_path=str(output_path))
 
     # Build input text from CRM data for BAML function
@@ -83,8 +83,8 @@ async def _generate_fake_rainbow_task(
         f"Reason: {row_data.get('Reason', '')}"
     )
 
-    logger.info(f"Generating fake Rainbow data for opportunity {opportunity_id}")
-    logger.debug(f"Input text: {input_text}")
+    logger.info("Generating fake Rainbow data for opportunity {}", opportunity_id)
+    logger.debug("Input text: {}", input_text)
 
     # Call BAML FakeRainbowJson function
     params: dict[str, Any] = {"__input__": input_text}
@@ -132,8 +132,8 @@ def crm_fake_rainbow_flow(
     resolved_crm_path = resolve_config_path(crm_file_path)
     resolved_output_dir = resolve_config_path(output_dir)
 
-    logger.info(f"Reading CRM export from: {resolved_crm_path}")
-    logger.info(f"Generating {num_files} fake Rainbow JSON files to: {resolved_output_dir}")
+    logger.info("Reading CRM export from: {}", resolved_crm_path)
+    logger.info("Generating {} fake Rainbow JSON files to: {}", num_files, resolved_output_dir)
 
     # Read Excel file
     crm_path = UPath(resolved_crm_path)
@@ -168,7 +168,7 @@ def crm_fake_rainbow_flow(
     # Extract first n rows
     rows_to_process = df.head(num_files)
 
-    logger.info(f"Processing {len(rows_to_process)} CRM rows in parallel...")
+    logger.info("Processing {} CRM rows in parallel...", len(rows_to_process))
 
     # Submit tasks in parallel
     futures = []
