@@ -192,6 +192,10 @@ class ParquetCollector(BaseModel):
 
     nodes: dict[str, pd.DataFrame] = Field(default_factory=dict)
     relationships: dict[str, pd.DataFrame] = Field(default_factory=dict)
+    # Struct field type info per node type, so parquet export can write
+    # struct columns with the correct (schema-defined) field order — pyarrow's
+    # default ``from_pandas`` path alphabetises dict keys which breaks Ladybug.
+    node_struct_field_types: dict[str, dict[str, dict[str, str]]] = Field(default_factory=dict)
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -752,18 +756,22 @@ def merge_nodes_batch(
             """
 
             # Convert to Arrow table to bypass Ladybug's buggy NumPy scanner and to
-            # enforce schema-defined struct field order before writing to both Ladybug and parquet.
-            # NOTE: arrow_table is also read by name from this frame by Ladybug's LOAD FROM scanner.
-            arrow_table = _df_to_arrow(df, struct_field_types=config.struct_field_types)
+            # enforce schema-defined struct field order.
+            # NOTE: arrow_table is read by name from this frame by Ladybug's LOAD FROM scanner.
+            arrow_table = _df_to_arrow(df, struct_field_types=config.struct_field_types)  # noqa: F841
             kuzu_conn.execute(merge_query)
 
             # Collect DataFrame for parquet export if collector is active.
-            # Use arrow_table.to_pandas() rather than df so that struct columns in the
-            # parquet have fields in schema-defined order — otherwise a KG that imports
-            # this parquet will hit the same struct field-order mismatch in Ladybug.
+            # We save the original df (not arrow_table.to_pandas()) because the Arrow
+            # roundtrip produces Arrow-backed pandas dtype for embedding columns
+            # (list<item: double>[pyarrow]) which breaks downstream operations.
+            # Struct field ordering is handled at parquet write time via
+            # collector.node_struct_field_types.
             collector = get_parquet_collector()
             if collector is not None:
-                collector.add_nodes(node_type, arrow_table.to_pandas())
+                collector.add_nodes(node_type, df)
+                if config.struct_field_types:
+                    collector.node_struct_field_types[node_type] = config.struct_field_types
 
             # Stats - we can't easily distinguish created vs matched in batch mode
             type_stats.created = len(df)  # Approximation

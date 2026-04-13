@@ -676,7 +676,17 @@ def save_parquet_from_collector(
             continue
         try:
             parquet_path = nodes_dir / f"{node_type}.parquet"
-            df.to_parquet(str(parquet_path), index=False)
+            # Use _df_to_arrow with struct_field_types so that struct columns in
+            # the parquet file have fields in schema-defined order.  Plain
+            # df.to_parquet() alphabetises dict keys which breaks Ladybug on import.
+            struct_types = collector.node_struct_field_types.get(node_type)
+            if struct_types:
+                from genai_graph.kg.ingest.merge import _df_to_arrow
+
+                arrow_table = _df_to_arrow(df, struct_field_types=struct_types)
+                pq.write_table(arrow_table, str(parquet_path))
+            else:
+                df.to_parquet(str(parquet_path), index=False)
             total_nodes += len(df)
             node_tables.append(node_type)
             logger.debug(f"Saved {len(df)} {node_type} nodes to parquet from collector")
