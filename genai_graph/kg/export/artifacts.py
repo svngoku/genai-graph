@@ -14,7 +14,6 @@ from datetime import datetime
 from typing import Any
 
 import pandas as pd
-import pyarrow as pa
 from loguru import logger
 from pydantic import BaseModel
 from upath import UPath

@@ -14,8 +14,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-import pyarrow as pa
 import pandas as pd
+import pyarrow as pa
 from loguru import logger
 from pydantic import BaseModel, Field
 
@@ -32,15 +32,63 @@ if TYPE_CHECKING:
 # =============================================================================
 
 
-def _df_to_arrow(df: pd.DataFrame) -> pa.Table:
+def _ladybug_type_to_arrow(type_str: str) -> pa.DataType:
+    """Map a Ladybug/Kuzu type string to a PyArrow data type."""
+    type_str = type_str.strip()
+    if type_str.endswith("[]"):
+        inner = type_str[:-2]
+        return pa.list_(_ladybug_type_to_arrow(inner))
+    upper = type_str.upper()
+    if upper == "STRING":
+        return pa.string()
+    if upper in ("DOUBLE", "FLOAT"):
+        return pa.float64()
+    if upper in ("INT64", "INT32", "INT16"):
+        return pa.int64()
+    if upper == "BOOL":
+        return pa.bool_()
+    return pa.string()  # fallback
+
+
+def _df_to_arrow(
+    df: pd.DataFrame,
+    struct_field_types: dict[str, dict[str, str]] | None = None,
+) -> pa.Table:
     """Convert a pandas DataFrame to a PyArrow Table for Ladybug ingestion.
 
     Ladybug's NumPy scanner doesn't handle pandas 3.x's default ``str`` dtype
     (``StringDtype``), hitting UNREACHABLE_CODE in numpy_type.cpp. Converting to
     a PyArrow Table bypasses the NumPy path entirely — Ladybug scans Arrow
     tables natively.
+
+    For struct columns, an explicit Arrow schema is built so that field order
+    matches the Ladybug schema definition (Ladybug rejects mismatched order).
     """
-    return pa.Table.from_pandas(df)
+    if not struct_field_types:
+        return pa.Table.from_pandas(df)
+
+    # Build explicit Arrow schema for struct columns
+    schema_overrides: dict[str, pa.DataType] = {}
+    for col_name, sub_fields in struct_field_types.items():
+        if col_name in df.columns:
+            arrow_fields = [(fname, _ladybug_type_to_arrow(ftype)) for fname, ftype in sub_fields.items()]
+            schema_overrides[col_name] = pa.struct(arrow_fields)
+
+    if not schema_overrides:
+        return pa.Table.from_pandas(df)
+
+    # Build per-column arrays with explicit types for struct columns
+    arrays = []
+    names = []
+    for col in df.columns:
+        if col in schema_overrides:
+            arrays.append(pa.array(df[col].tolist(), type=schema_overrides[col]))
+        else:
+            arrays.append(pa.Array.from_pandas(df[col]))
+        names.append(col)
+
+    return pa.table(dict(zip(names, arrays)))
+
 
 # A single node's properties as a dictionary
 NodeProperties = dict[str, Any]
@@ -504,8 +552,13 @@ def _prepare_node_dataframe(
             # Look up struct field types if this is a known struct field
             sub_field_types = struct_field_types.get(field_name, {}) if field_name else {}
             if sub_field_types:
-                # Embedded STRUCT with defined sub-field types — keep as dict for Ladybug STRUCT column
-                return {k: clean_value(v, field_name=k, expected_type=sub_field_types.get(k)) for k, v in value.items()}
+                # Embedded STRUCT with defined sub-field types — keep as dict for Ladybug STRUCT column.
+                # IMPORTANT: iterate in sub_field_types order (from schema), not value.items() order,
+                # because Ladybug requires struct fields in the exact order defined in the schema.
+                return {
+                    k: clean_value(value.get(k), field_name=k, expected_type=sub_field_types.get(k))
+                    for k in sub_field_types
+                }
             else:
                 # No embedded struct definition — the schema stores this as STRING.
                 # Serialize to JSON so Ladybug doesn't encounter a Python dict in an
@@ -701,7 +754,7 @@ def merge_nodes_batch(
             """
 
             # Convert to Arrow table to bypass Ladybug's buggy NumPy scanner
-            arrow_table = _df_to_arrow(df)
+            arrow_table = _df_to_arrow(df, struct_field_types=config.struct_field_types)
             kuzu_conn.execute(merge_query)
 
             # Collect DataFrame for parquet export if collector is active
