@@ -11,6 +11,7 @@ Uses Kuzu's DataFrame MERGE capability for efficient batch operations:
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
@@ -468,6 +469,10 @@ def _prepare_node_dataframe(
         - STRING[]: Use empty list [] for None values
         - STRING: Keep None as-is (Kuzu handles this correctly)
         """
+        # Convert enum values to their primitive value (str/int) so Ladybug's numpy
+        # scanner doesn't encounter Python Enum objects in object-dtype columns.
+        if isinstance(value, Enum):
+            return value.value
         if isinstance(value, TypedNull):
             # Use the TypedNull's type info if available
             type_name = getattr(value, "type_name", expected_type or "STRING")
