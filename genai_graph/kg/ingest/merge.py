@@ -10,6 +10,8 @@ Uses Kuzu's DataFrame MERGE capability for efficient batch operations:
 
 from __future__ import annotations
 
+import json
+import re
 from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any
@@ -87,7 +89,7 @@ def _df_to_arrow(
             arrays.append(pa.Array.from_pandas(df[col]))
         names.append(col)
 
-    return pa.table(dict(zip(names, arrays)))
+    return pa.table(dict(zip(names, arrays, strict=False)))
 
 
 # A single node's properties as a dictionary
@@ -563,8 +565,6 @@ def _prepare_node_dataframe(
                 # No embedded struct definition — the schema stores this as STRING.
                 # Serialize to JSON so Ladybug doesn't encounter a Python dict in an
                 # object-dtype column (which triggers UNREACHABLE_CODE in numpy_type.cpp).
-                import json
-
                 return json.dumps(value, default=str) if value else None
         elif isinstance(value, list):
             return [clean_value(item, field_name=field_name, expected_type=expected_type) for item in value]
@@ -604,8 +604,6 @@ def _prepare_node_dataframe(
     # This is necessary because pandas uses dtype=object for Python list cells,
     # which Kuzu would otherwise infer as STRING.
     try:
-        import pyarrow as pa
-
         for col in list(df.columns):
             if df[col].dtype != object:
                 continue
@@ -754,7 +752,8 @@ def merge_nodes_batch(
             """
 
             # Convert to Arrow table to bypass Ladybug's buggy NumPy scanner
-            arrow_table = _df_to_arrow(df, struct_field_types=config.struct_field_types)
+            # NOTE: arrow_table is read by name from this frame by Ladybug's LOAD FROM scanner.
+            arrow_table = _df_to_arrow(df, struct_field_types=config.struct_field_types)  # noqa: F841
             kuzu_conn.execute(merge_query)
 
             # Collect DataFrame for parquet export if collector is active
@@ -787,8 +786,6 @@ def merge_nodes_batch(
             # Enhance error message with context
             if "Cannot find property" in error_msg:
                 # Extract property name from error
-                import re
-
                 match = re.search(r"Cannot find property (\w+)", error_msg)
                 if match:
                     missing_prop = match.group(1)
@@ -907,8 +904,6 @@ def merge_relationships_batch(
                     first_val = non_null_vals.iloc[0]
                     if isinstance(first_val, list):
                         # Convert list properties to JSON strings for Kuzu compatibility
-                        import json
-
                         df[col] = df[col].apply(lambda x: json.dumps(x) if isinstance(x, list) else x)
                     elif isinstance(first_val, bool):
                         # Convert None to False for boolean columns, then cast to bool
@@ -978,7 +973,8 @@ def merge_relationships_batch(
                     MATCH (from:{from_type} {{{from_key_field}: from_id}}), (to:{to_type} {{{to_key_field}: to_id}})
                     MERGE (from)-[:{rel_name}]->(to)
                 """
-                arrow_rel_table = _df_to_arrow(df)
+                # NOTE: arrow_rel_table is read by name from this frame by Ladybug's LOAD FROM scanner.
+                arrow_rel_table = _df_to_arrow(df)  # noqa: F841
                 kuzu_conn.execute(merge_rel_query)
                 total_created += len(df)
 

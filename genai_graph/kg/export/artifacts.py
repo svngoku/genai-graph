@@ -14,6 +14,8 @@ from datetime import datetime
 from typing import Any
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 from loguru import logger
 from pydantic import BaseModel
 from upath import UPath
@@ -1004,8 +1006,6 @@ def import_from_parquet(
             #   TypeError: data type 'list<item: double>[pyarrow]' not understood
             # Stripping the metadata makes pyarrow return plain object-dtype columns
             # (numpy arrays) which we can later re-wrap for Kuzu.
-            import pyarrow.parquet as pq
-
             raw_table = pq.read_table(str(parquet_path))
             df = raw_table.replace_schema_metadata({}).to_pandas()
             if df.empty:
@@ -1096,7 +1096,6 @@ def import_from_parquet(
             # plain object-dtype lists would be inferred as STRING by Kuzu.
             try:
                 import numpy as np
-                import pyarrow as pa
 
                 for col in list(df.columns):
                     if not col.endswith("_embedding"):
@@ -1146,7 +1145,8 @@ def import_from_parquet(
             on_match_set = ", ".join([f"n.{c} = {c}" for c in other_cols]) if other_cols else ""
 
             # Convert to Arrow table to bypass Ladybug's buggy NumPy scanner
-            arrow_df = pa.Table.from_pandas(df)
+            # NOTE: arrow_df is read by name from this frame by Ladybug's LOAD FROM scanner.
+            arrow_df = pa.Table.from_pandas(df)  # noqa: F841
 
             if on_create_set:
                 merge_query = f"""
@@ -1192,7 +1192,8 @@ def import_from_parquet(
                     retry_other_cols = [c for c in df.columns if c != pk_field]
                     retry_on_create = ", ".join([f"n.{c} = {c}" for c in retry_other_cols]) if retry_other_cols else ""
                     retry_on_match = ", ".join([f"n.{c} = {c}" for c in retry_other_cols]) if retry_other_cols else ""
-                    retry_arrow = pa.Table.from_pandas(df)
+                    # NOTE: retry_arrow is read by name from this frame by Ladybug's LOAD FROM scanner.
+                    retry_arrow = pa.Table.from_pandas(df)  # noqa: F841
                     if retry_on_create:
                         retry_query = f"""
                             LOAD FROM retry_arrow
@@ -1250,7 +1251,8 @@ def import_from_parquet(
                         props_str = ""
 
                     # Create relationships using MATCH + CREATE
-                    arrow_merge_df = pa.Table.from_pandas(merge_df)
+                    # NOTE: arrow_merge_df is read by name from this frame by Ladybug's LOAD FROM scanner.
+                    arrow_merge_df = pa.Table.from_pandas(merge_df)  # noqa: F841
                     create_query = f"""
                         LOAD FROM arrow_merge_df
                         MATCH (a:{from_type} {{{from_key}: from_id}}), (b:{to_type} {{{to_key}: to_id}})
