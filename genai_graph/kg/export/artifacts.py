@@ -870,6 +870,48 @@ def validate_parquet_cache(config_name: str) -> tuple[bool, list[str]]:
     return False, current.mismatch_reasons(manifest)
 
 
+def _parse_struct_field_types(type_str: str) -> dict[str, str]:
+    """Parse field names and types from a Kuzu STRUCT type string, preserving order.
+
+    Example:
+        >>> _parse_struct_field_types("STRUCT(objectives STRING[], scope STRING)")
+        {'objectives': 'STRING[]', 'scope': 'STRING'}
+
+    Returns:
+        Ordered dict of field_name -> kuzu_type
+    """
+    if not type_str.startswith("STRUCT(") or not type_str.endswith(")"):
+        return {}
+
+    inner = type_str[len("STRUCT(") : -1]
+
+    fields: dict[str, str] = {}
+    depth = 0
+    current = ""
+    for ch in inner:
+        if ch in "([":
+            depth += 1
+            current += ch
+        elif ch in ")]":
+            depth -= 1
+            current += ch
+        elif ch == "," and depth == 0:
+            field_def = current.strip()
+            if field_def:
+                parts = field_def.split(None, 1)
+                fields[parts[0]] = parts[1] if len(parts) > 1 else "STRING"
+            current = ""
+        else:
+            current += ch
+
+    field_def = current.strip()
+    if field_def:
+        parts = field_def.split(None, 1)
+        fields[parts[0]] = parts[1] if len(parts) > 1 else "STRING"
+
+    return fields
+
+
 def _parse_struct_field_order(type_str: str) -> list[str]:
     """Parse field names from a Kuzu STRUCT type string, preserving order.
 
@@ -883,40 +925,7 @@ def _parse_struct_field_order(type_str: str) -> list[str]:
     Returns:
         Ordered list of field names
     """
-    if not type_str.startswith("STRUCT(") or not type_str.endswith(")"):
-        return []
-
-    # Extract the content between STRUCT( and )
-    inner = type_str[len("STRUCT(") : -1]
-
-    # Parse fields: split on commas but respect nested brackets (e.g., STRING[])
-    fields: list[str] = []
-    depth = 0
-    current = ""
-    for ch in inner:
-        if ch in "([":
-            depth += 1
-            current += ch
-        elif ch in ")]":
-            depth -= 1
-            current += ch
-        elif ch == "," and depth == 0:
-            field_def = current.strip()
-            if field_def:
-                # Field name is the first word before the type
-                field_name = field_def.split()[0]
-                fields.append(field_name)
-            current = ""
-        else:
-            current += ch
-
-    # Don't forget the last field
-    field_def = current.strip()
-    if field_def:
-        field_name = field_def.split()[0]
-        fields.append(field_name)
-
-    return fields
+    return list(_parse_struct_field_types(type_str).keys())
 
 
 def _reorder_struct_dict(d: dict[str, Any], expected_fields: list[str]) -> dict[str, Any]:
@@ -1024,6 +1033,7 @@ def import_from_parquet(
             # Check for missing columns in the table schema and add them if needed
             # This handles schema evolution when importing from different sources
             struct_col_fields: dict[str, list[str]] = {}  # col_name -> expected field order
+            struct_col_types: dict[str, dict[str, str]] = {}  # col_name -> {sub_field: kuzu_type}
             try:
                 info_result = kuzu_conn.execute(f"CALL table_info('{node_type}') RETURN *")
                 info_df = info_result.get_as_df() if hasattr(info_result, "get_as_df") else pd.DataFrame()
@@ -1037,6 +1047,9 @@ def import_from_parquet(
                             expected_fields = _parse_struct_field_order(col_type)
                             if expected_fields:
                                 struct_col_fields[row["name"]] = expected_fields
+                            parsed_types = _parse_struct_field_types(col_type)
+                            if parsed_types:
+                                struct_col_types[row["name"]] = parsed_types
 
                 for col in df.columns:
                     if col not in existing_cols:
@@ -1154,9 +1167,13 @@ def import_from_parquet(
             on_create_set = ", ".join([f"n.{c} = {c}" for c in other_cols]) if other_cols else ""
             on_match_set = ", ".join([f"n.{c} = {c}" for c in other_cols]) if other_cols else ""
 
-            # Convert to Arrow table to bypass Ladybug's buggy NumPy scanner
+            # Convert to Arrow table to bypass Ladybug's buggy NumPy scanner.
+            # Use struct_col_types so struct columns preserve schema-defined field order
+            # (pa.Table.from_pandas alphabetises struct dict keys).
             # NOTE: arrow_df is read by name from this frame by Ladybug's LOAD FROM scanner.
-            arrow_df = pa.Table.from_pandas(df)  # noqa: F841
+            from genai_graph.kg.ingest.merge import _df_to_arrow
+
+            arrow_df = _df_to_arrow(df, struct_field_types=struct_col_types or None)  # noqa: F841
 
             if on_create_set:
                 merge_query = f"""
@@ -1203,7 +1220,7 @@ def import_from_parquet(
                     retry_on_create = ", ".join([f"n.{c} = {c}" for c in retry_other_cols]) if retry_other_cols else ""
                     retry_on_match = ", ".join([f"n.{c} = {c}" for c in retry_other_cols]) if retry_other_cols else ""
                     # NOTE: retry_arrow is read by name from this frame by Ladybug's LOAD FROM scanner.
-                    retry_arrow = pa.Table.from_pandas(df)  # noqa: F841
+                    retry_arrow = _df_to_arrow(df, struct_field_types=struct_col_types or None)  # noqa: F841
                     if retry_on_create:
                         retry_query = f"""
                             LOAD FROM retry_arrow
