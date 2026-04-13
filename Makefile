@@ -60,9 +60,9 @@ test-install: .pythonpath  ## Quick smoke-test: call a fake LLM via the CLI
 ##############################
 ##  Graph Tools
 ##############################
-.PHONY: kuzu-explorer baml-generate
+.PHONY: ladybug-explorer baml-generate
 
-kuzu-explorer:  ## Start KuzuDB explorer at http://localhost:8000
+ladybug-explorer:  ## Start Ladybug DB explorer at http://localhost:8000 (compatible with Ladybug/Kuzu databases)
 	docker run --rm -p 8000:8000 \
 		-v /home/tcl/kuzu:/database \
 		-e KUZU_FILE=ekg_database.db \

@@ -33,6 +33,14 @@ class JsonArtifact(BaseModel):
     }
 
 
+class LineageImportError(BaseModel):
+    """Describes a failed subgraph import encountered during lineage building."""
+
+    factory_path: str
+    error: str
+    hint: str | None = None
+
+
 class MarkdownLineage(BaseModel):
     """Lineage information for a markdown document and its derived artifacts."""
 
@@ -46,7 +54,34 @@ class MarkdownLineage(BaseModel):
     }
 
 
-def build_lineage_for_manager(manager: KgManager) -> list[MarkdownLineage]:
+def _detect_baml_version_mismatch(exc: Exception) -> str | None:
+    """Return a user-facing hint when *exc* is a BAML version mismatch error.
+
+    Returns a hint string when the exception message indicates that
+    ``baml-py`` and the generated client are on different versions,
+    or None if the exception is unrelated to BAML versioning.
+    """
+    msg = str(exc)
+    if "baml" not in msg.lower():
+        return None
+    import re
+
+    # Match patterns like: version "0.219.0" ... baml-py: 0.220.0
+    gen_match = re.search(r"baml_client generator[^:]*:\s*([\d.]+)", msg)
+    pkg_match = re.search(r"baml-py:\s*([\d.]+)", msg)
+    if gen_match and pkg_match:
+        gen_ver = gen_match.group(1)
+        pkg_ver = pkg_match.group(1)
+        return (
+            f"BAML version mismatch: client was generated with {gen_ver} but baml-py {pkg_ver} is installed. "
+            f"Run `uv run baml-cli generate --from genai_graph/ekg/baml_src/` to regenerate the client."
+        )
+    if "baml" in msg.lower() and ("version" in msg.lower() or "out of date" in msg.lower()):
+        return "BAML version mismatch detected. Run `uv run baml-cli generate --from genai_graph/ekg/baml_src/` to regenerate the client."
+    return None
+
+
+def build_lineage_for_manager(manager: KgManager) -> tuple[list[MarkdownLineage], list[LineageImportError]]:
     """Build data lineage for all JSON-backed subgraphs of a KG manager.
 
     The function inspects the active profile configuration, instantiates
@@ -55,7 +90,9 @@ def build_lineage_for_manager(manager: KgManager) -> list[MarkdownLineage]:
     ``manifest.json`` files.
 
     Returns:
-        List of MarkdownLineage entries, one per Markdown file.
+        Tuple of (lineage_entries, import_errors). ``import_errors`` is a list
+        of :class:`LineageImportError` instances for any subgraphs that could
+        not be imported — callers should surface these to the user.
     """
 
     # Ensure JSON file discovery is fresh even if JsonFileBackedFactory
@@ -69,6 +106,7 @@ def build_lineage_for_manager(manager: KgManager) -> list[MarkdownLineage]:
     # Aggregate lineage by markdown file so that multiple JSON files that
     # originate from the same document are grouped together.
     by_markdown: dict[UPath, MarkdownLineage] = {}
+    import_errors: list[LineageImportError] = []
 
     for graph_cfg in graphs_cfg:
         factory_path = graph_cfg.get("factory") if isinstance(graph_cfg, dict) else None
@@ -78,7 +116,12 @@ def build_lineage_for_manager(manager: KgManager) -> list[MarkdownLineage]:
         try:
             imported = import_from_qualified(factory_path)
         except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("Cannot import subgraph factory %s: %s", factory_path, exc)
+            hint = _detect_baml_version_mismatch(exc)
+            if hint:
+                logger.warning("Cannot import subgraph factory {} — {}", factory_path, hint)
+            else:
+                logger.warning("Cannot import subgraph factory {}: {}", factory_path, exc)
+            import_errors.append(LineageImportError(factory_path=factory_path, error=str(exc), hint=hint))
             continue
 
         if not isinstance(imported, type) or not issubclass(imported, JsonFileBackedFactory):
@@ -90,7 +133,8 @@ def build_lineage_for_manager(manager: KgManager) -> list[MarkdownLineage]:
         try:
             subgraph = imported(**constructor_kwargs)  # type: ignore[call-arg]
         except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("Failed to instantiate subgraph %s: %s", factory_path, exc)
+            logger.warning("Failed to instantiate subgraph {}: {}", factory_path, exc)
+            import_errors.append(LineageImportError(factory_path=factory_path, error=str(exc)))
             continue
 
         for json_path in subgraph.get_all_file_paths():
@@ -116,7 +160,7 @@ def build_lineage_for_manager(manager: KgManager) -> list[MarkdownLineage]:
                 if lineage.source_path and not existing.source_path:
                     existing.source_path = lineage.source_path
 
-    return sorted(by_markdown.values(), key=lambda lineage: str(lineage.markdown_path))
+    return sorted(by_markdown.values(), key=lambda lineage: str(lineage.markdown_path)), import_errors
 
 
 def _build_lineage_for_json(
@@ -150,7 +194,7 @@ def _build_lineage_for_json(
     )
 
     if markdown_path is None:
-        logger.debug("No markdown lineage found in manifest for JSON file %s", json_path)
+        logger.debug("No markdown lineage found in manifest for JSON file {}", json_path)
         markdown_path, source_path = _guess_lineage_from_paths(json_path, data_root=data_root)
         if markdown_path is None and source_path is None:
             return None
@@ -208,7 +252,7 @@ def _resolve_related_path(
         raw = manifest_path.read_text(encoding="utf-8")
         data = json.loads(raw)
     except Exception as exc:  # pragma: no cover - defensive
-        logger.warning("Failed to read or parse manifest %s: %s", manifest_path, exc)
+        logger.warning("Failed to read or parse manifest {}: {}", manifest_path, exc)
         return None
 
     target_stem = target_path.stem.lower()

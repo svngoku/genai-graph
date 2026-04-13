@@ -329,7 +329,7 @@ class KgManager(BaseModel):
         with open(str(self.outcomes_file), "a") as f:
             f.write(outcome.model_dump_json() + "\n")
 
-        logger.debug("[KG %s@%s] outcome: %s - %s", self.profile, self.tag, operation, status)
+        logger.debug("[KG {}@{}] outcome: {} - {}", self.profile, self.tag, operation, status)
 
     def log_warnings(self, warnings: list[str]) -> None:
         """Append a block of warnings to the warnings log file."""
@@ -343,7 +343,7 @@ class KgManager(BaseModel):
             f.write(f"\n=== Warnings at {timestamp} ===\n")
             f.writelines(f"{warning}\n" for warning in warnings)
 
-        logger.debug("[KG %s@%s] logged %d warnings", self.profile, self.tag, len(warnings))
+        logger.debug("[KG {}@{}] logged {} warnings", self.profile, self.tag, len(warnings))
 
     def get_recent_outcomes(self, limit: int = 10) -> list[KgOutcome]:
         """Return the most recent outcome entries (newest first)."""
@@ -359,7 +359,7 @@ class KgManager(BaseModel):
                 try:
                     outcomes.append(KgOutcome.model_validate_json(line))
                 except Exception as exc:  # pragma: no cover - defensive
-                    logger.warning("Failed to parse outcome line: %s", exc)
+                    logger.warning("Failed to parse outcome line: {}", exc)
 
         return outcomes[-limit:][::-1]
 
@@ -379,7 +379,7 @@ class KgManager(BaseModel):
 
         if self.base_path.exists():
             shutil.rmtree(str(self.base_path))
-            logger.info("Cleared all data for KG '%s@%s'", self.profile, self.tag)
+            logger.info("Cleared all data for KG '{}@{}'", self.profile, self.tag)
 
     def get_info(self) -> dict[str, Any]:
         """Return information about this KG's artifacts and logs."""
@@ -469,7 +469,7 @@ class KgManager(BaseModel):
 
         return info
 
-    def get_data_lineage(self) -> list["MarkdownLineage"]:
+    def get_data_lineage(self) -> "tuple[list[MarkdownLineage], list[LineageImportError]]":
         """Return data lineage entries for JSON/Markdown/source artifacts.
 
         This delegates to :mod:`genai_graph.kg.ingest.lineage` so that
@@ -478,11 +478,14 @@ class KgManager(BaseModel):
         callers.
 
         Returns:
-            List of MarkdownLineage objects describing source documents and
-            associated JSON files for the active KG profile.
+            Tuple of (lineage_entries, import_errors). ``import_errors`` contains
+            details on any subgraphs that could not be imported (e.g. due to a
+            BAML version mismatch), with actionable hints where available.
         """
-        from genai_graph.kg.ingest.lineage import build_lineage_for_manager
+        from genai_graph.kg.ingest.lineage import LineageImportError, MarkdownLineage, build_lineage_for_manager
 
+        _ = LineageImportError  # re-exported for callers
+        _ = MarkdownLineage  # re-exported for callers
         return build_lineage_for_manager(self)
 
     # ------------------------------------------------------------------

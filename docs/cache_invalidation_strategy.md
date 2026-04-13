@@ -8,7 +8,7 @@
 
 The Knowledge Graph system caches imported graph data in Parquet format to improve performance when building dependent KG configurations. However, when the BAML schema changes (e.g., reordering fields in a struct), the cached Parquet files become incompatible with the new schema, causing "Binder exception: Expression has data type STRUCT(...) but expected STRUCT(...)" errors.
 
-**Root Cause:** Pandas/PyArrow does not preserve Pydantic model field order when serializing struct types to Parquet. The schema defined in BAML/Pydantic specifies one field order, but the Parquet serialization may use a different order (e.g., alphabetical). When Kuzu tries to import this cached data, the struct field order mismatch causes a hard error.
+**Root Cause:** Pandas/PyArrow does not preserve Pydantic model field order when serializing struct types to Parquet. The schema defined in BAML/Pydantic specifies one field order, but the Parquet serialization may use a different order (e.g., alphabetical). When Ladybug tries to import this cached data, the struct field order mismatch causes a hard error.
 
 **Immediate Solution:** Added `--clear-all-caches` flag to force regeneration of all Parquet caches.
 
@@ -38,7 +38,7 @@ The cached Parquet file may contain:
 STRUCT(objectives STRING[], requirements STRING[], scope STRING, success_metrics STRING[])
 ```
 
-But Kuzu expects (based on current BAML schema):
+But Ladybug expects (based on current BAML schema):
 ```
 STRUCT(objectives STRING[], scope STRING, requirements STRING[], success_metrics STRING[])
 ```

@@ -35,15 +35,15 @@
 ```uv run cli neo4j subset '${paths.stratnav_db}/26-01-2018/sn-v3-q4-2026-01-28.jsonl'  '${paths.stratnav_db}/subset/sn-subset.jsonl' --max-nodes 20 --max-rels 20  ```
 
 ### import 
-```uv run cli neo4j import '${paths.stratnav_db}/subset/sn-subset.jsonl' --db '${paths.stratnav_db}/subset/kuzu_db' -f```
-```uv run cli neo4j import '${paths.stratnav_db}/26-01-2018/sn-v3-q4-2026-01-28.jsonl' --db '${paths.stratnav_db}/26-01-2018/sn-v3-q4-2026-01-28/kuzu_db' -f```
+```uv run cli neo4j import '${paths.stratnav_db}/subset/sn-subset.jsonl' --db '${paths.stratnav_db}/subset/ladybug_db' -f```
+```uv run cli neo4j import '${paths.stratnav_db}/26-01-2018/sn-v3-q4-2026-01-28.jsonl' --db '${paths.stratnav_db}/26-01-2018/sn-v3-q4-2026-01-28/ladybug_db' -f```
 
 
 ### Query the database
-```uv run cli neo4j query "MATCH (n) RETURN labels(n), count(*)" --db '${paths.stratnav_db}/subset/kuzu_db'  ```
+```uv run cli neo4j query "MATCH (n) RETURN labels(n), count(*) " --db '${paths.stratnav_db}/subset/ladybug_db'  ```
 
 ### Get database info
-```uv run cli neo4j info --db --db '${paths.stratnav_db}/subset/kuzu_db' ```
+```uv run cli neo4j info --db --db '${paths.stratnav_db}/subset/ladybug_db' ```
 
 
 ```uv run cli kg delete -f ; uv run cli kg add-doc --key fake-cnes-1 --subgraph ArchitectureDocument```

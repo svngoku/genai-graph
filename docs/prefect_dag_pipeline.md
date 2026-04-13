@@ -23,7 +23,7 @@ create_kg_flow
 ├── 1. delete_backend_task          (optional — --delete-first)
 ├── 2. resolve_config_task          → (config_name, kg_cfg)
 │      └── resolve_import_dag()     → ImportDag (topological sort)
-├── 3. initialize_backend_task      → KgBackend (Kuzu)
+├── 3. initialize_backend_task      → KgBackend (Ladybug)
 │
 ├── 4. Import phase (serial — one-at-a-time)
 │      ├── import_kg_task("crm_export")
@@ -37,7 +37,7 @@ create_kg_flow
 ├── 5. load_factories_task          → list[GraphBundle]
 ├── 6. create_schema_task           → bundles with schema
 │
-├── 7. Ingestion phase (serial — Kuzu single-writer)
+├── 7. Ingestion phase (serial — Ladybug single-writer)
 │      ├── ingest_bundle_task(bundle_0)
 │      ├── ingest_bundle_task(bundle_1)
 │      └── ...
@@ -83,16 +83,16 @@ D is built once.
 
 ### Concurrency Model
 
-**Kuzu constraint:** Kuzu is an embedded database with a single-writer lock.
+**Ladybug constraint:** Ladybug is an embedded database with a single-writer lock.
 Multiple threads cannot write simultaneously.
 
 The pipeline uses `ThreadPoolTaskRunner(max_workers=4)`:
 
 | Phase | Concurrency | Reason |
 |-------|-------------|--------|
-| Import | Serial | Each import may trigger a sub-flow that writes to Kuzu |
-| Schema creation | Serial | Writes to Kuzu catalog |
-| Ingestion | Serial (per-bundle) | Kuzu single-writer constraint |
+| Import | Serial | Each import may trigger a sub-flow that writes to Ladybug |
+| Schema creation | Serial | Writes to Ladybug catalog |
+| Ingestion | Serial (per-bundle) | Ladybug single-writer constraint |
 | **Export** | **Parallel** | Read-only tasks — no DB mutation |
 
 The `ParquetCollector` (which accumulates DataFrames during ingestion) is **thread-safe**
@@ -282,7 +282,7 @@ genai_graph/orchestration/
 Prefect's default cache policy attempts to serialize task inputs for hash computation.
 Several objects passed between tasks are inherently unpicklable:
 
-- `KgBackend` (Kuzu) — contains weakrefs to the database connection
+- `KgBackend` (Ladybug) — contains weakrefs to the database connection
 - `ParquetCollector` — contains a `threading.Lock`
 - `GraphBundle` — contains factory instances with complex state
 
@@ -296,22 +296,22 @@ Rather than implementing custom `cache_key_fn` for each task, all tasks use
 
 ### Why `ThreadPoolTaskRunner` (Not `ConcurrentTaskRunner`)
 
-Kuzu is an embedded database — it runs in the same process. Using process-based
+Ladybug is an embedded database — it runs in the same process. Using process-based
 concurrency would require serializing the database connection, which isn't possible.
 A thread pool shares the process's address space while allowing concurrent I/O for
 export tasks.
 
 ### Why Serial Ingestion
 
-Kuzu enforces a single-writer constraint. While the `ThreadPoolTaskRunner` has 4 workers,
+Ladybug enforces a single-writer constraint. While the `ThreadPoolTaskRunner` has 4 workers,
 ingestion tasks are submitted **one at a time** (each `.submit().result()` blocks before
 the next). Only the export phase exploits parallelism.
 
-### Why Not Async Kuzu
+### Why Not Async Ladybug
 
-Kuzu v0.11.3 offers `AsyncConnection`, but it is backed by a thread pool internally —
-there is no true async I/O. The engineering cost of converting the entire pipeline to
-async would not yield meaningful performance gains given the single-writer constraint.
+Ladybug v0.15+ offers async support, but much of the pipeline is optimized for sync operations.
+The engineering cost of converting the entire pipeline to async would not yield meaningful
+performance gains given the single-writer constraint.
 
 ## Testing
 

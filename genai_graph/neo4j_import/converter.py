@@ -1,7 +1,7 @@
-"""Converter for Neo4j JSONL exports to Kuzu-compatible JSON files.
+"""Converter for Neo4j JSONL exports to Ladybug-compatible JSON files.
 
 Transforms Neo4j JSONL exports into separate JSON files for nodes and relationships
-that can be imported into Kuzu using COPY FROM statements.
+that can be imported into Ladybug (Kuzu-compatible maintained fork) using COPY FROM statements.
 """
 
 from __future__ import annotations
@@ -30,7 +30,11 @@ class ConversionStats(BaseModel):
 
 
 class Neo4jToKuzuConverter:
-    """Converts Neo4j JSONL exports to Kuzu-compatible JSON files."""
+    """Converts Neo4j JSONL exports to Ladybug-compatible JSON files.
+
+    Note: Ladybug is a maintained fork of Kuzu with full API compatibility.
+    The generated JSON files are compatible with both Kuzu and Ladybug databases.
+    """
 
     def __init__(self, jsonl_path: str | Path) -> None:
         """Initialize the converter with a JSONL file path."""

@@ -134,7 +134,7 @@ def export_html(
         destination = output_dir / f"{config_name}_graph.html"
 
     generate_html(backend, destination_file_path=str(destination))
-    logger.debug("Exported KG HTML visualization to '%s'", destination)
+    logger.debug("Exported KG HTML visualization to '{}'", destination)
 
     return HtmlExportResult(config_name=config_name, output_path=destination)
 
@@ -163,7 +163,7 @@ def export_schema(config_name: str) -> UPath:
     destination = manager.get_schema_path_for(config_name)
     destination.write_text(schema_content, encoding="utf-8")
 
-    logger.debug("Exported KG schema to '%s'", destination)
+    logger.debug("Exported KG schema to '{}'", destination)
 
     return destination
 
@@ -204,7 +204,7 @@ def export_schema_json(config_name: str) -> UPath:
     destination = manager.get_schema_json_path_for(config_name)
     destination.write_text(json.dumps(schema_data, indent=2), encoding="utf-8")
 
-    logger.debug("Exported KG schema JSON to '%s'", destination)
+    logger.debug("Exported KG schema JSON to '{}'", destination)
 
     return destination
 
@@ -233,7 +233,7 @@ def export_schema_html(config_name: str) -> UPath:
     destination = manager.get_schema_html_path_for(config_name)
     generate_schema_html(schema_data, destination_file_path=str(destination))
 
-    logger.debug("Exported KG schema HTML visualization to '%s'", destination)
+    logger.debug("Exported KG schema HTML visualization to '{}'", destination)
 
     return destination
 
@@ -485,7 +485,7 @@ def export_info(config_name: str, backend: KgBackend) -> UPath:
     destination = manager.get_info_path_for(config_name)
     destination.write_text("\n".join(lines), encoding="utf-8")
 
-    logger.debug("Exported KG info to '%s'", destination)
+    logger.debug("Exported KG info to '{}'", destination)
 
     return destination
 
@@ -817,7 +817,7 @@ def compute_fingerprints_for_config(config_name: str) -> CacheFingerprints:
                     content_parts.append(buffer_digest(key.encode()))
 
         except Exception as exc:
-            logger.debug("Could not compute fingerprint for %s: %s", factory_path, exc)
+            logger.debug("Could not compute fingerprint for {}: {}", factory_path, exc)
 
     # Combine per-factory hashes into single values
     result = CacheFingerprints()

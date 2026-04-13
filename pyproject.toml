@@ -38,6 +38,7 @@ dependencies = [
     "baml-lib>=0.42.0",
     "chonkie>=1.5.2",
     "tokenizers>=0.21.0",           # Hugging Face tokenizers (for chonkie)
+    "ladybug>=0.15.3",
 ]
 
 [project.urls]

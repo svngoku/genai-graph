@@ -52,7 +52,7 @@ def _get_data_roots() -> list[UPath]:
                 resolved = resolve_config_path(subgraph_cfg["data_root"])
                 roots.append(UPath(resolved))
     except Exception as exc:
-        logger.warning("Could not extract data_roots: %s", exc)
+        logger.warning("Could not extract data_roots: {}", exc)
 
     return roots
 
@@ -80,7 +80,7 @@ def _get_available_kg_configs() -> list[str]:
         manager = get_kg_manager()
         return sorted(manager.ekg_config.kg_configs.keys())
     except Exception as exc:  # pragma: no cover - defensive
-        logger.warning("Could not load KG configurations: %s", exc)
+        logger.warning("Could not load KG configurations: {}", exc)
         return ["default"]
 
 
@@ -459,10 +459,18 @@ def main() -> None:
     # Load lineage information for the active configuration
     try:
         manager = get_kg_manager()
-        lineage_entries = manager.get_data_lineage()
+        lineage_entries, import_errors = manager.get_data_lineage()
     except Exception as exc:  # pragma: no cover - defensive
         st.error(f"Failed to collect data lineage: {exc}")
         return
+
+    if import_errors:
+        with st.expander(f"⚠️ {len(import_errors)} subgraph(s) could not be loaded", expanded=not lineage_entries):
+            for err in import_errors:
+                if err.hint:
+                    st.warning(f"**{err.factory_path}**  \n💡 {err.hint}")
+                else:
+                    st.warning(f"**{err.factory_path}**  \n```\n{err.error}\n```")
 
     if not lineage_entries:
         st.info(

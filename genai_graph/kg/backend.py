@@ -196,22 +196,25 @@ class KgBackend(QueryExecutor, ABC):
 
 
 class KuzuBackend(KgBackend):
-    """Kuzu graph database backend implementation."""
+    """Ladybug graph database backend implementation.
+
+    Ladybug is a maintained fork of Kuzu with full API compatibility.
+    """
 
     def __init__(self) -> None:
-        """Initialize Kuzu backend."""
+        """Initialize Ladybug backend."""
         self.db: Any = None
         self.conn: Any = None
 
     def connect(self, connection_string: str) -> None:
-        """Connect to Kuzu database."""
-        import kuzu
+        """Connect to Ladybug database."""
+        import ladybug
 
-        self.db = kuzu.Database(connection_string)
-        self.conn = kuzu.Connection(self.db)
+        self.db = ladybug.Database(connection_string)
+        self.conn = ladybug.Connection(self.db)
 
     def execute(self, query: str, parameters: dict[str, Any] | None = None) -> Any:
-        """Execute a Cypher query on Kuzu."""
+        """Execute a Cypher query on Ladybug."""
         if not self.conn:
             raise RuntimeError("Not connected to database")
         return self.conn.execute(query, parameters)
@@ -222,7 +225,7 @@ class KuzuBackend(KgBackend):
         fields: dict[str, str],
         primary_key: str,
     ) -> None:
-        """Create a node table in Kuzu (idempotent)."""
+        """Create a node table in Ladybug (idempotent)."""
         fields_str = ", ".join([f"{name} {type_}" for name, type_ in fields.items()])
         create_sql = f"CREATE NODE TABLE IF NOT EXISTS {table_name}({fields_str}, PRIMARY KEY({primary_key}))"
         self.execute(create_sql)
@@ -234,7 +237,7 @@ class KuzuBackend(KgBackend):
         to_table: str,
         properties: dict[str, str] | None = None,
     ) -> None:
-        """Create a relationship table in Kuzu (idempotent)."""
+        """Create a relationship table in Ladybug (idempotent)."""
         if properties:
             props_str = ", " + ", ".join([f"{name} {type_}" for name, type_ in properties.items()])
         else:
@@ -243,14 +246,14 @@ class KuzuBackend(KgBackend):
         self.execute(create_rel_sql)
 
     def drop_table(self, table_name: str) -> None:
-        """Drop a table in Kuzu."""
+        """Drop a table in Ladybug."""
         try:
             self.execute(f"DROP TABLE {table_name};")
         except Exception:
             pass
 
     def insert_node(self, table_name: str, data: dict[str, Any]) -> None:
-        """Insert a node in Kuzu.
+        """Insert a node in Ladybug.
 
         DEPRECATED: Use merge_node() instead for incremental graph construction.
         This method creates duplicate nodes and should only be used for initial loads.
@@ -301,7 +304,7 @@ class KuzuBackend(KgBackend):
         to_key: str,
         properties: dict[str, Any] | None = None,
     ) -> None:
-        """Insert a relationship in Kuzu."""
+        """Insert a relationship in Ladybug."""
         from_key_escaped = from_key.replace("'", "\\'")
         to_key_escaped = to_key.replace("'", "\\'")
 
@@ -350,7 +353,7 @@ class KuzuBackend(KgBackend):
         return (True, str(merge_value))
 
     def ensure_vector_extension(self) -> None:
-        """Install and load the Kuzu vector extension."""
+        """Install and load the Ladybug vector extension."""
         try:
             self.execute("INSTALL VECTOR;")
             self.execute("LOAD VECTOR;")
@@ -371,7 +374,7 @@ class KuzuBackend(KgBackend):
         pu: float = 0.05,
         efc: int = 200,
     ) -> None:
-        """Create a vector index on a FLOAT[] field in Kuzu.
+        """Create a vector index on a FLOAT[] field in Ladybug.
 
         Args:
             table_name: Table containing the vector field
@@ -416,7 +419,7 @@ class KuzuBackend(KgBackend):
             raise
 
     def drop_vector_index(self, table_name: str, index_name: str) -> None:
-        """Drop a vector index from Kuzu.
+        """Drop a vector index from Ladybug.
 
         Args:
             table_name: Table containing the index
@@ -448,7 +451,7 @@ class KuzuBackend(KgBackend):
             efs: Number of candidate vertices to consider during search. Default: 200
 
         Returns:
-            Kuzu query result with node and distance columns
+            Ladybug query result with node and distance columns
         """
         from loguru import logger
 
@@ -470,8 +473,8 @@ class KuzuBackend(KgBackend):
             raise
 
     def close(self) -> None:
-        """Close Kuzu connection."""
-        # Kuzu doesn't require explicit closing
+        """Close Ladybug connection."""
+        # Ladybug doesn't require explicit closing
         self.db = None
         self.conn = None
 

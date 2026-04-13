@@ -172,3 +172,22 @@ class QueryInput(BaseModel):
 3. **Use** `model_dump_json()` instead of `json.dumps()` for Pydantic models
 4. **Remove** legacy/backward compatibility code when safe
 5. **Use** modern Python 3.10+ type hints (`str | None`, `list[str]`)
+
+## Knowledge Graph Backend
+
+This project uses **Ladybug** as the graph database backend. Ladybug is a maintained fork of Kuzu with full API compatibility and identical Cypher query support.
+
+### Important Notes for LLM Integration
+
+- Ladybug and Kuzu databases are fully compatible at the data and schema level
+- All Cypher queries work identically on both platforms
+- Existing Kuzu knowledge base documents and examples can be used directly
+- The `KuzuBackend` class in `genai_graph/kg/backend.py` has been updated to use Ladybug
+- JSON import/export formats are identical between the two systems
+
+### Resources
+
+- **Ladybug Repository**: https://github.com/LadybugDB/ladybug
+- **Ladybug Documentation**: Available in the GitHub repository
+- **Cypher Query Support**: Full Cypher dialect support (compatible with Kuzu syntax)
+- **Neo4j Import**: Use the `cli neo4j import` command to convert Neo4j exports to Ladybug format

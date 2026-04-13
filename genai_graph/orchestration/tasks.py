@@ -63,7 +63,7 @@ def _query_existing_pks(backend: KgBackend, gf: GraphFilter) -> set[str]:
             return set()
         return {str(v) for v in df["pk"].dropna()}
     except Exception as exc:
-        logger.warning("filter_by_existing query failed (%s): %s", gf, exc)
+        logger.warning("filter_by_existing query failed ({}): {}", gf, exc)
         return set()
 
 

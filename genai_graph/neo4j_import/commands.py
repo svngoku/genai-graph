@@ -1,7 +1,7 @@
-"""CLI commands for Neo4j to Kuzu import.
+"""CLI commands for Neo4j to Ladybug import.
 
 This module provides the ``neo4j`` top-level command for importing Neo4j JSONL exports
-into Kuzu graph database.
+into Ladybug graph database (Kuzu-compatible, maintained fork).
 """
 
 from __future__ import annotations
@@ -21,10 +21,10 @@ console = Console()
 
 
 class Neo4jCommands(CliTopCommand):
-    """Commands for importing Neo4j exports into Kuzu."""
+    """Commands for importing Neo4j exports into Ladybug (Kuzu-compatible)."""
 
     def get_description(self) -> tuple[str, str]:
-        return "neo4j", "Neo4j to Kuzu import commands."
+        return "neo4j", "Neo4j to Ladybug import commands (Ladybug is a maintained fork of Kuzu)."
 
     def register_sub_commands(self, cli_app: typer.Typer) -> None:
         """Register ``neo4j`` subcommands on the given Typer application."""
@@ -40,7 +40,7 @@ class Neo4jCommands(CliTopCommand):
                 typer.Option(
                     "--output",
                     "-o",
-                    help="Output file for Kuzu schema statements.",
+                    help="Output file for Ladybug schema statements.",
                 ),
             ] = None,
             show_summary: Annotated[
@@ -51,11 +51,11 @@ class Neo4jCommands(CliTopCommand):
                 ),
             ] = True,
         ) -> None:
-            """Analyze a Neo4j JSONL export and generate Kuzu schema.
+            """Analyze a Neo4j JSONL export and generate Ladybug schema.
 
             Reads the JSONL file, extracts all node labels, relationship types,
             and their properties, then generates CREATE NODE TABLE and CREATE REL TABLE
-            statements for Kuzu.
+            statements for Ladybug (Kuzu-compatible).
 
             Examples:
                 ```bash
@@ -122,10 +122,10 @@ class Neo4jCommands(CliTopCommand):
                 typer.Argument(help="Output directory for JSON files."),
             ],
         ) -> None:
-            """Convert Neo4j JSONL export to Kuzu-compatible JSON files.
+            """Convert Neo4j JSONL export to Ladybug-compatible JSON files.
 
             Creates separate JSON files for each node label and relationship type
-            that can be imported into Kuzu using COPY FROM statements.
+            that can be imported into Ladybug using COPY FROM statements.
 
             Examples:
                 ```bash
@@ -133,7 +133,7 @@ class Neo4jCommands(CliTopCommand):
                 cli neo4j convert ./export.jsonl ./output
 
                 # Use config variables
-                cli neo4j convert '${paths.stratnav_db}/somedb.jsonl' '${paths.data_root}/kuzu_import'
+                cli neo4j convert '${paths.stratnav_db}/somedb.jsonl' '${paths.data_root}/ladybug_import'
                 ```
             """
             from genai_tk.utils.file_patterns import resolve_config_path

@@ -2,11 +2,11 @@
 
 ## Overview
 
-This document describes the implementation of flexible PRIMARY KEY support in GraphNode, allowing users to specify custom primary keys for Kuzu database tables.
+This document describes the implementation of flexible PRIMARY KEY support in GraphNode, allowing users to specify custom primary keys for Ladybug (Kuzu-compatible) database tables.
 
 ## Feature: `key_from` Parameter
 
-The `GraphNode` class now supports a `key_from` parameter that determines the PRIMARY KEY for the generated Kuzu table.
+The `GraphNode` class now supports a `key_from` parameter that determines the PRIMARY KEY for the generated Ladybug table.
 
 ### Supported Values
 

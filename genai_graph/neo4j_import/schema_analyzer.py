@@ -1,7 +1,7 @@
 """Schema analyzer for Neo4j JSONL exports.
 
 Analyzes the JSONL export to extract node labels, relationship types, and their properties
-to generate Kuzu CREATE NODE TABLE and CREATE REL TABLE statements.
+to generate Ladybug (Kuzu-compatible) CREATE NODE TABLE and CREATE REL TABLE statements.
 """
 
 from __future__ import annotations

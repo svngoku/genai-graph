@@ -44,7 +44,7 @@ def _get_data_roots() -> list[Path]:
         if ekg_data:
             roots.append(Path(ekg_data))
     except Exception as exc:
-        logger.warning("Could not extract data_roots: %s", exc)
+        logger.warning("Could not extract data_roots: {}", exc)
     return roots
 
 
@@ -66,7 +66,7 @@ def _get_available_kg_configs() -> list[str]:
         manager = get_kg_manager()
         return sorted(manager.ekg_config.kg_configs.keys())
     except Exception as exc:
-        logger.warning("Could not load KG configurations: %s", exc)
+        logger.warning("Could not load KG configurations: {}", exc)
         return ["default"]
 
 
@@ -169,11 +169,11 @@ def _discover_table_subgraphs() -> list[TableInfo]:
                 )
 
             except Exception as exc:
-                logger.warning("Could not process subgraph %s: %s", factory_path, exc)
+                logger.warning("Could not process subgraph {}: {}", factory_path, exc)
                 continue
 
     except Exception as exc:
-        logger.error("Failed to discover table subgraphs: %s", exc)
+        logger.error("Failed to discover table subgraphs: {}", exc)
 
     return tables
 
@@ -205,7 +205,7 @@ def _load_table_data(table_info: TableInfo) -> pd.DataFrame:
         frames = [pd.read_parquet(str(p)) for p in parquet_files]
         return pd.concat(frames, ignore_index=True)
     except Exception as exc:
-        logger.error("Failed to load table %s: %s", table_info.table_name, exc)
+        logger.error("Failed to load table {}: {}", table_info.table_name, exc)
         return pd.DataFrame()
 
 
@@ -330,7 +330,7 @@ def _render_import_history(table_info: TableInfo, data_roots: list[Path]) -> Non
                 }
             )
         except Exception as exc:
-            logger.warning("Could not read meta file %s: %s", meta_path, exc)
+            logger.warning("Could not read meta file {}: {}", meta_path, exc)
 
     if history_data:
         df = pd.DataFrame(history_data)
@@ -404,7 +404,7 @@ def _get_data_roots() -> list[Path]:
         if ekg_data:
             roots.append(Path(ekg_data))
     except Exception as exc:
-        logger.warning("Could not extract data_roots: %s", exc)
+        logger.warning("Could not extract data_roots: {}", exc)
     return roots
 
 
@@ -426,7 +426,7 @@ def _get_available_kg_configs() -> list[str]:
         manager = get_kg_manager()
         return sorted(manager.ekg_config.kg_configs.keys())
     except Exception as exc:
-        logger.warning("Could not load KG configurations: %s", exc)
+        logger.warning("Could not load KG configurations: {}", exc)
         return ["default"]
 
 
@@ -541,11 +541,11 @@ def _discover_table_subgraphs() -> list[TableInfo]:
                 )
 
             except Exception as exc:
-                logger.warning("Could not process subgraph %s: %s", factory_path, exc)
+                logger.warning("Could not process subgraph {}: {}", factory_path, exc)
                 continue
 
     except Exception as exc:
-        logger.error("Failed to discover table subgraphs: %s", exc)
+        logger.error("Failed to discover table subgraphs: {}", exc)
 
     return tables
 
@@ -560,7 +560,7 @@ def _load_table_data(table_info: TableInfo) -> pd.DataFrame:
             df = pd.read_sql(text(f"SELECT * FROM {table_info.table_name}"), conn)
         return df
     except Exception as exc:
-        logger.error("Failed to load table %s: %s", table_info.table_name, exc)
+        logger.error("Failed to load table {}: {}", table_info.table_name, exc)
         return pd.DataFrame()
 
 

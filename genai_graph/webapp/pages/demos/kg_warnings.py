@@ -24,7 +24,7 @@ def _get_available_kg_configs() -> list[str]:
         manager = get_kg_manager()
         return sorted(manager.ekg_config.kg_configs.keys())
     except Exception as exc:  # pragma: no cover - defensive
-        logger.warning("Could not load KG configurations: %s", exc)
+        logger.warning("Could not load KG configurations: {}", exc)
         return ["default"]
 
 

@@ -10,7 +10,7 @@ This document describes how knowledge graphs are constructed from multiple heter
 
 ## Overview
 
-The KG construction pipeline combines data from multiple sources (Neo4j exports, databases, BAML extractions) into a unified Kuzu graph database. The process handles:
+The KG construction pipeline combines data from multiple sources (Neo4j exports, databases, BAML extractions) into a unified Ladybug graph database. The process handles:
 
 - **Type unification**: Different sources may define the same entity (e.g., `Account` vs `Customer`)
 - **Data deduplication**: MERGE operations prevent duplicate nodes and relationships
@@ -40,7 +40,7 @@ The KG construction pipeline combines data from multiple sources (Neo4j exports,
                                  │
                                  ▼
                     ┌────────────────────────┐
-                    │   Kuzu Database        │
+                    │  Ladybug Database      │
                     │  (MERGE from DataFrame)│
                     └────────────────────────┘
 ```
@@ -105,7 +105,7 @@ Two modules work together to ensure entities are shared across factories:
 - **`common_nodes.py`** — defines the canonical Pydantic **classes** (data schema)
 - **`canonical_nodes.py`** — defines the canonical `GraphNode` **singletons** (graph configuration: primary key, name field, index fields)
 
-**Key principle**: Nodes with the same class name write to the same Kuzu table, regardless of which factory imports them. The `canonical_nodes` singletons are the single source of truth for how each shared entity is stored.
+**Key principle**: Nodes with the same class name write to the same Ladybug table, regardless of which factory imports them. The `canonical_nodes` singletons are the single source of truth for how each shared entity is stored.
 
 ### Currently defined canonical types
 
@@ -158,7 +158,7 @@ Neo4jNodeMapping(
 )
 ```
 
-**Critical**: The canonical class `__name__` must match the BAML type's `__name__` (e.g. both are `"Partner"`), so all factories write to the same Kuzu table.
+**Critical**: The canonical class `__name__` must match the BAML type's `__name__` (e.g. both are `"Partner"`), so all factories write to the same Ladybug table.
 
 ### Example: Customer
 
@@ -226,9 +226,9 @@ When combining multiple graph factories, the `GraphRegistry.build_combined_schem
 
 Nodes and relationships are identified by name, not Python class identity. This allows different factories to contribute to the same graph structure.
 
-## Data Merging with Kuzu
+## Data Merging with Ladybug
 
-The ingest layer uses Kuzu's `MERGE` operations for deduplication. Primary keys determine when to create vs. update nodes.
+The ingest layer uses Ladybug's `MERGE` operations for deduplication. Primary keys determine when to create vs. update nodes.
 
 ### Nodes
 ```cypher
@@ -277,7 +277,7 @@ stratnav_subset_rainbow_crm:
 **Import process**:
 1. **Recursively creates schemas** from imported KG configurations
 2. **Detects schema changes** and adds missing columns via `ALTER TABLE ADD`
-3. **Converts array types** (numpy → Python lists) for Kuzu compatibility
+3. **Converts array types** (numpy → Python lists) for Ladybug compatibility
 4. **Imports data** using MERGE from parquet files (nodes first, then relationships)
 
 **Benefits**:

@@ -1,6 +1,6 @@
-"""Kuzu database manager for importing converted Neo4j data.
+"""Ladybug database manager for importing converted Neo4j data.
 
-Handles creating Kuzu databases and importing JSON files using COPY FROM statements.
+Handles creating Ladybug (Kuzu-compatible) databases and importing JSON files using COPY FROM statements.
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-import kuzu
+import ladybug
 from loguru import logger
 from pydantic import BaseModel, Field
 
@@ -28,16 +28,16 @@ class ImportStats(BaseModel):
 
 
 class KuzuImporter:
-    """Imports converted Neo4j data into a Kuzu database."""
+    """Imports converted Neo4j data into a Ladybug (Kuzu-compatible) database."""
 
     def __init__(self, db_path: str | Path) -> None:
-        """Initialize with the Kuzu database path."""
+        """Initialize with the Ladybug database path."""
         self.db_path = Path(db_path)
-        self.db: kuzu.Database | None = None
-        self.conn: kuzu.Connection | None = None
+        self.db: ladybug.Database | None = None
+        self.conn: ladybug.Connection | None = None
 
     def create_database(self, delete_existing: bool = False) -> None:
-        """Create or open the Kuzu database.
+        """Create or open the Ladybug database.
 
         Args:
             delete_existing: If True, delete existing database before creating.
@@ -50,10 +50,10 @@ class KuzuImporter:
                 self.db_path.unlink()
 
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        logger.info("Opening Kuzu database: {}", self.db_path)
+        logger.info("Opening Ladybug database: {}", self.db_path)
 
-        self.db = kuzu.Database(str(self.db_path))
-        self.conn = kuzu.Connection(self.db)
+        self.db = ladybug.Database(str(self.db_path))
+        self.conn = ladybug.Connection(self.db)
 
         # Load JSON extension
         self.conn.execute("INSTALL json;")
@@ -265,11 +265,11 @@ def import_neo4j_to_kuzu(
     json_output_dir: str | Path | None = None,
     delete_existing: bool = False,
 ) -> dict[str, Any]:
-    """Complete pipeline to import Neo4j JSONL export into Kuzu.
+    """Complete pipeline to import Neo4j JSONL export into Ladybug.
 
     Args:
         jsonl_path: Path to Neo4j JSONL export file.
-        db_path: Path for the Kuzu database.
+        db_path: Path for the Ladybug database.
         json_output_dir: Optional directory for intermediate JSON files.
             If None, uses a temp directory next to db_path.
         delete_existing: If True, delete existing database.
@@ -283,12 +283,12 @@ def import_neo4j_to_kuzu(
     db_path = Path(db_path)
 
     if json_output_dir is None:
-        json_output_dir = db_path.parent / "kuzu_json_import"
+        json_output_dir = db_path.parent / "ladybug_json_import"
 
     json_output_dir = Path(json_output_dir)
 
     logger.info("=" * 60)
-    logger.info("NEO4J TO KUZU IMPORT PIPELINE")
+    logger.info("NEO4J TO LADYBUG IMPORT PIPELINE")
     logger.info("=" * 60)
 
     # Step 1: Analyze and convert
@@ -298,13 +298,13 @@ def import_neo4j_to_kuzu(
     conversion_stats = converter.convert(json_output_dir)
 
     # Step 2: Generate schema
-    logger.info("\nStep 2: Generating Kuzu schema...")
+    logger.info("\nStep 2: Generating Ladybug schema...")
     analyzer = SchemaAnalyzer(jsonl_path)
     analyzer.schema = schema_info
     schema_statements = analyzer.generate_kuzu_schema()
 
     # Step 3: Create database and import
-    logger.info("\nStep 3: Creating Kuzu database and importing data...")
+    logger.info("\nStep 3: Creating Ladybug database and importing data...")
     importer = KuzuImporter(db_path)
     importer.create_database(delete_existing=delete_existing)
 

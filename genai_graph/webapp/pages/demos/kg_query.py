@@ -20,6 +20,7 @@ import streamlit as st
 import yaml
 from loguru import logger
 from streamlit import session_state as sss
+from streamlit_monaco import st_monaco
 
 from genai_graph.kg.backend import create_backend_from_config
 from genai_graph.kg.query import text2cypher_chain
@@ -170,32 +171,37 @@ def main() -> None:
         with col1:
             with st.popover("📋 Examples"):
                 st.markdown("**Example Queries**")
-                st.markdown("*Click to copy the query*")
                 for example in examples:
                     st.markdown(f"**{example['name']}**")
                     st.caption(example["description"])
                     st.code(example["cypher"], language="cypher")
+                    if st.button("⬆️ Load", key=f"load_{example['name']}"):
+                        sss.cypher_query = example["cypher"]
+                        st.rerun()
                     st.markdown("---")
 
         with col2:
             st.markdown("**Cypher Query**")
 
-        # Editable Cypher query input
-        st.text_area(
-            "Query",
-            height=200,
-            help="Enter Cypher query (see Examples for templates)",
-            key="cypher_query",
-            label_visibility="collapsed",
+        # Editable Cypher query input — value is read on Execute, not on every keystroke
+        edited = st_monaco(
+            value=sss.cypher_query,
+            height="200px",
+            language="cypher",
+            theme="vs-dark",
+            minimap=False,
+            lineNumbers=True,
         )
 
         with col3:
             execute_btn = st.button("▶️ Execute", type="primary", key="execute_cypher", use_container_width=True)
 
-        if execute_btn and sss.cypher_query:
+        if execute_btn:
+            # Capture whatever is currently in the editor (may be None if unchanged)
+            query = edited if edited is not None else sss.cypher_query
+            sss.cypher_query = query
             with st.spinner("Executing query..."):
-                # Execute the query
-                df, error = execute_cypher_query(sss.cypher_query, backend)
+                df, error = execute_cypher_query(query, backend)
 
                 if error:
                     st.error(error)
@@ -270,7 +276,7 @@ def main() -> None:
                         chain = text2cypher_chain(
                             nl_query,
                             selected_subgraphs,
-                            llm_id=llm_id if llm_id else None,
+                            llm_id=llm_id or None,
                         )
                         generated_cypher = chain.invoke({})
                         sss.generated_cypher = generated_cypher
