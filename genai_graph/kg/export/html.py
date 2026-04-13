@@ -132,20 +132,30 @@ def _get_node_color(node_type: str, custom_colors: dict[str, str] | None = None)
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
-def _serialize_kuzu_id(kuzu_id: Any) -> str:
-    """Serialize a Kuzu internal ID to a consistent string format.
+def _normalize_graph_obj(obj: Any) -> Any:
+    """Normalize a node/relationship dict returned by the graph database.
 
-    Kuzu IDs can be dicts like {'offset': 0, 'table': 0} or simple values.
-    This ensures we get a consistent string representation.
+    Kuzu uses lowercase internal keys (_id, _label, _src, _dst).
+    Ladybug (the Kuzu fork) uses uppercase (_ID, _LABEL, _SRC, _DST).
+    This normalises to lowercase so the rest of the code works with either backend.
+    """
+    if not isinstance(obj, dict):
+        return obj
+    return {(k.lower() if k.startswith("_") else k): v for k, v in obj.items()}
+
+
+def _serialize_kuzu_id(kuzu_id: Any) -> str:
+    """Serialize a Kuzu/Ladybug internal ID to a consistent string format.
+
+    IDs are dicts like {'offset': 0, 'table': 0} or simple values.
 
     Args:
-        kuzu_id: The Kuzu internal ID (dict or other)
+        kuzu_id: The internal ID (dict or other)
 
     Returns:
         A consistent string representation
     """
     if isinstance(kuzu_id, dict):
-        # Kuzu returns IDs as {'offset': int, 'table': int}
         table = kuzu_id.get("table", 0)
         offset = kuzu_id.get("offset", 0)
         return f"{table}:{offset}"
@@ -237,18 +247,18 @@ def _fetch_graph_data(
 
         # Process all nodes and relationships from the query result
         for _, row in rel_df.iterrows():
-            src_node = row["n"]
-            dst_node = row["m"]
-            rel_obj = row["r"]
+            src_node = _normalize_graph_obj(row["n"])
+            dst_node = _normalize_graph_obj(row["m"])
+            rel_obj = _normalize_graph_obj(row["r"])
 
-            # Check if rel_obj is a Kuzu path object (variable-length path result)
+            # Check if rel_obj is a Kuzu/Ladybug path object (variable-length path result)
             # Path objects have structure: {'_nodes': [...], '_rels': [...]}
             is_path = isinstance(rel_obj, dict) and "_rels" in rel_obj and "_nodes" in rel_obj
 
             if is_path:
                 # Unpack path: process all intermediate nodes and relationships
-                path_nodes = rel_obj.get("_nodes", [])
-                path_rels = rel_obj.get("_rels", [])
+                path_nodes = [_normalize_graph_obj(n) for n in rel_obj.get("_nodes", [])]
+                path_rels = [_normalize_graph_obj(r) for r in rel_obj.get("_rels", [])]
 
                 # Build list of all nodes in path: src -> intermediates -> dst
                 all_path_nodes = [src_node] + path_nodes + [dst_node]
@@ -419,7 +429,7 @@ def _fetch_graph_data(
             isolated_df = connection.execute_get_as_df(isolated_query, union=False)
 
             for _, row in isolated_df.iterrows():
-                node_obj = row["n"]
+                node_obj = _normalize_graph_obj(row["n"])
                 if not isinstance(node_obj, dict):
                     continue
 
@@ -465,7 +475,7 @@ def _fetch_graph_data(
                     sup_df = connection.execute_get_as_df(sup_query, union=False)
 
                     for _, row in sup_df.iterrows():
-                        node_obj = row["n"]
+                        node_obj = _normalize_graph_obj(row["n"])
                         if not isinstance(node_obj, dict):
                             continue
 
