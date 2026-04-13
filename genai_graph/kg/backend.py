@@ -569,10 +569,10 @@ def create_backend(backend_type: str = "kuzu") -> KgBackend:
 def create_in_memory_backend() -> KgBackend:
     """Create an in-memory graph backend for temporary graphs/tests.
 
-    Currently returns a Kuzu-based backend connected to an in-memory database.
+    Currently returns a Ladybug-based backend connected to an in-memory database.
     """
     backend = KuzuBackend()
-    backend.connect(":memory.")
+    backend.connect(":memory:")
     return backend
 
 
