@@ -150,7 +150,7 @@ class KuzuImporter:
                 try:
                     stmt = f"COPY {table_name} FROM '{json_file}';"
                     logger.info("Importing nodes: {}", table_name)
-                    result = self.conn.execute(stmt)
+                    self.conn.execute(stmt)
 
                     # Count imported rows
                     count_result = self.conn.execute(f"MATCH (n:{table_name}) RETURN count(n)")
@@ -175,7 +175,7 @@ class KuzuImporter:
                 try:
                     stmt = f"COPY {file_stem} FROM '{json_file}';"
                     logger.info("Importing relationships: {}", file_stem)
-                    result = self.conn.execute(stmt)
+                    self.conn.execute(stmt)
 
                     # Count imported relationships
                     count_result = self.conn.execute(f"MATCH ()-[r:{file_stem}]->() RETURN count(r)")
@@ -210,7 +210,7 @@ class KuzuImporter:
 
         while result.has_next():
             row = result.get_next()
-            rows.append(dict(zip(columns, row)))
+            rows.append(dict(zip(columns, row, strict=False)))
 
         return rows
 

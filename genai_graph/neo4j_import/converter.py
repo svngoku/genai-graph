@@ -260,7 +260,7 @@ class SubsetCreator:
         selected_node_ids: set[str] = set()
         selected_nodes: list[dict] = []
 
-        for label, nodes in nodes_by_label.items():
+        for _label, nodes in nodes_by_label.items():
             # Shuffle and select
             random.shuffle(nodes)
             selected = nodes[:max_nodes_per_label]
@@ -276,7 +276,7 @@ class SubsetCreator:
         # Select relationships that connect selected nodes
         selected_rels: list[dict] = []
 
-        for rel_type, rels in rels_by_type.items():
+        for _rel_type, rels in rels_by_type.items():
             type_count = 0
             random.shuffle(rels)
 

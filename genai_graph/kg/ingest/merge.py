@@ -95,10 +95,17 @@ def _build_node_arrow_schema(
         seen.add(field_name)
         if field_name in struct_map:
             emb_cls = struct_map[field_name]
-            fields.append(pa.field(field_name, pa.struct([
-                pa.field(n, pydantic_annotation_to_arrow(fi.annotation))
-                for n, fi in emb_cls.model_fields.items()
-            ])))
+            fields.append(
+                pa.field(
+                    field_name,
+                    pa.struct(
+                        [
+                            pa.field(n, pydantic_annotation_to_arrow(fi.annotation))
+                            for n, fi in emb_cls.model_fields.items()
+                        ]
+                    ),
+                )
+            )
         elif field_name in emb_dims or field_name.endswith("_embedding"):
             fields.append(pa.field(field_name, pa.list_(pa.float64())))
         else:

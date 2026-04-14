@@ -354,7 +354,6 @@ def _get_relation_properties(node_class: Any, baml_docs: dict[str, Any]) -> list
     Returns list of (name, type, description) tuples.
     """
     properties = []
-    node_name = node_class.__name__
 
     if not hasattr(node_class, "model_fields"):
         return properties

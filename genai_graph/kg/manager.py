@@ -471,7 +471,7 @@ class KgManager(BaseModel):
 
         return info
 
-    def get_data_lineage(self) -> "tuple[list[MarkdownLineage], list[LineageImportError]]":
+    def get_data_lineage(self) -> "tuple[list[MarkdownLineage], list[LineageImportError]]":  # noqa: F821
         """Return data lineage entries for JSON/Markdown/source artifacts.
 
         This delegates to :mod:`genai_graph.kg.ingest.lineage` so that

@@ -16,6 +16,7 @@ from genai_tk.utils.config_mngr import global_config, import_from_qualified
 from genai_tk.utils.file_patterns import resolve_config_path
 from loguru import logger
 from pydantic import BaseModel
+from sqlalchemy import create_engine, text
 from streamlit import session_state as sss
 from upath import UPath
 

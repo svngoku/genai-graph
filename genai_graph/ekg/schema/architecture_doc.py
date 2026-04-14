@@ -13,7 +13,6 @@ from pydantic import BaseModel
 
 from genai_graph.ekg.baml_client.types import Solution, SWArchitectureDocument, TechnicalComponent
 from genai_graph.ekg.schema.canonical_nodes import CustomerNode, OpportunityNode, PersonNode
-from genai_graph.ekg.schema.common_nodes import L3  # L3 arch-doc node uses key_from="name" (no code available)
 from genai_graph.kg.factories import JsonFileBackedFactory
 from genai_graph.kg.schema import GraphNode, GraphRelation, GraphSchema
 

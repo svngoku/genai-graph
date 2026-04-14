@@ -284,9 +284,9 @@ def _fetch_graph_data(
                     node_dict = {}
                     for key, val in node_obj.items():
                         if key in ("_created_at", "_updated_at", "_original_name"):
-                            node_dict[key] = str(val).strip() if str(val).strip() else str(val)
+                            node_dict[key] = str(val).strip() or str(val)
                         elif not key.startswith("_") and val is not None:
-                            node_dict[key] = str(val).strip() if str(val).strip() else str(val)
+                            node_dict[key] = str(val).strip() or str(val)
 
                     # Generate display name and metadata
                     node_name = _get_node_display_name(node_dict, node_type)
@@ -366,9 +366,9 @@ def _fetch_graph_data(
                     node_dict = {}
                     for key, val in node_obj.items():
                         if key in ("_created_at", "_updated_at", "_original_name"):
-                            node_dict[key] = str(val).strip() if str(val).strip() else str(val)
+                            node_dict[key] = str(val).strip() or str(val)
                         elif not key.startswith("_") and val is not None:
-                            node_dict[key] = str(val).strip() if str(val).strip() else str(val)
+                            node_dict[key] = str(val).strip() or str(val)
 
                     # Generate display name and metadata
                     node_name = _get_node_display_name(node_dict, node_type)
@@ -449,9 +449,9 @@ def _fetch_graph_data(
                 node_dict = {}
                 for key, val in node_obj.items():
                     if key in ("_created_at", "_updated_at", "_original_name"):
-                        node_dict[key] = str(val).strip() if str(val).strip() else str(val)
+                        node_dict[key] = str(val).strip() or str(val)
                     elif not key.startswith("_") and val is not None:
-                        node_dict[key] = str(val).strip() if str(val).strip() else str(val)
+                        node_dict[key] = str(val).strip() or str(val)
 
                 # Generate display name and metadata
                 node_name = _get_node_display_name(node_dict, node_type)

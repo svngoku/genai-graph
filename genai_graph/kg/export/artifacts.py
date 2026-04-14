@@ -1105,7 +1105,7 @@ def import_from_parquet(
             # Convert numpy arrays to Python lists/values for Kuzu compatibility
             import numpy as np
 
-            def convert_numpy_recursive(obj):
+            def convert_numpy_recursive(obj: object) -> object:
                 """Recursively convert numpy types to Python native types."""
                 if isinstance(obj, np.ndarray):
                     return [convert_numpy_recursive(item) for item in obj.tolist()]
@@ -1136,8 +1136,9 @@ def import_from_parquet(
             # requires them in the exact schema order. See docs/cache_invalidation_strategy.md
             for col, expected_fields in struct_col_fields.items():
                 if col in df.columns and df[col].dtype == "object" and len(df) > 0:
+                    _fields = expected_fields  # bind loop variable for closure
                     df[col] = df[col].apply(
-                        lambda x: _reorder_struct_dict(x, expected_fields) if isinstance(x, dict) else x
+                        lambda x, ef=_fields: _reorder_struct_dict(x, ef) if isinstance(x, dict) else x
                     )
                     logger.debug(f"Reordered struct fields for {node_type}.{col}: {expected_fields}")
 
