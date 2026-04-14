@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import json
 import re
+import types as _types
 from datetime import datetime, timezone
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, get_args, get_origin
 
 import pyarrow as pa
 from loguru import logger
@@ -56,56 +57,43 @@ def _pydantic_annotation_to_arrow(annotation: Any) -> pa.DataType:
 
     Handles all types that appear in Pydantic node models:
     - Primitives: str, int, float, bool
-    - Optional[T] / T | None → unwrap to T
-    - list[T] / list[float] → pa.list_(T)
+    - Optional[T] / T | None → unwrap and recurse
+    - list[T] → pa.list_(T) recursively
     - Enum subclasses → pa.string()
-    - Pydantic sub-models (embedded structs) → pa.struct([...]) built recursively
+    - Pydantic sub-models (embedded structs) → pa.struct([...]) recursively
     - Unknown types → pa.string() fallback
     """
-    import types
     import typing
-    from enum import Enum as _Enum
-    from typing import get_args, get_origin
 
     if annotation is None or annotation is type(None):
         return pa.string()
 
     origin = get_origin(annotation)
-    actual = annotation
 
-    # Unwrap Optional[X] / Union[X, None] / X | None
-    if origin is typing.Union or (hasattr(types, "UnionType") and isinstance(annotation, types.UnionType)):
+    # Unwrap Optional[X] / Union[X, None] / X | None — then recurse
+    if origin is typing.Union or isinstance(annotation, _types.UnionType):
         non_none = [a for a in get_args(annotation) if a is not type(None)]
-        if non_none:
-            actual = non_none[0]
-            origin = get_origin(actual)
+        return _pydantic_annotation_to_arrow(non_none[0]) if non_none else pa.string()
 
     # list[T]
     if origin is list:
-        args = get_args(actual)
-        if args:
-            return pa.list_(_pydantic_annotation_to_arrow(args[0]))
-        return pa.list_(pa.string())
+        args = get_args(annotation)
+        return pa.list_(_pydantic_annotation_to_arrow(args[0]) if args else pa.string())
 
     # Primitives
-    if actual is str:
-        return pa.string()
-    if actual is float:
-        return pa.float64()
-    if actual is int:
-        return pa.int64()
-    if actual is bool:
-        return pa.bool_()
+    _PRIMITIVE_MAP = {str: pa.string(), float: pa.float64(), int: pa.int64(), bool: pa.bool_()}
+    if annotation in _PRIMITIVE_MAP:
+        return _PRIMITIVE_MAP[annotation]
 
     # Enum → stored as string
-    if isinstance(actual, type) and issubclass(actual, _Enum):
+    if isinstance(annotation, type) and issubclass(annotation, Enum):
         return pa.string()
 
     # Pydantic sub-model → embedded struct
-    if isinstance(actual, type) and hasattr(actual, "model_fields"):
+    if isinstance(annotation, type) and hasattr(annotation, "model_fields"):
         sub_fields = [
             pa.field(name, _pydantic_annotation_to_arrow(fi.annotation))
-            for name, fi in actual.model_fields.items()
+            for name, fi in annotation.model_fields.items()
         ]
         return pa.struct(sub_fields)
 
@@ -183,7 +171,6 @@ def _build_node_arrow_schema(
             fields.append(pa.field(ts, pa.string()))
 
     return pa.schema(fields)
-
 
 
 # A single node's properties as a dictionary
@@ -613,10 +600,8 @@ def _prepare_node_arrow_table(
 
     def _arrow_null_for(arrow_type: pa.DataType) -> Any:
         """Return the appropriate Python null value for an Arrow type."""
-        if pa.types.is_floating(arrow_type):
+        if pa.types.is_floating(arrow_type) or pa.types.is_integer(arrow_type):
             return float("nan")
-        if pa.types.is_integer(arrow_type):
-            return float("nan")  # Arrow integer nulls serialise fine via pa.array(..., from_pandas=True)
         if pa.types.is_list(arrow_type):
             return []
         return None
@@ -626,19 +611,13 @@ def _prepare_node_arrow_table(
         if isinstance(value, Enum):
             return value.value
 
-        if isinstance(value, TypedNull):
-            return _arrow_null_for(arrow_type) if arrow_type is not None else None
-
-        if value is None:
+        if value is None or isinstance(value, TypedNull):
             return _arrow_null_for(arrow_type) if arrow_type is not None else None
 
         if isinstance(value, dict):
             if arrow_type is not None and pa.types.is_struct(arrow_type):
                 # Reorder dict keys to match schema-defined struct field order
-                return {
-                    f.name: clean_value(value.get(f.name), f.type)
-                    for f in arrow_type
-                }
+                return {f.name: clean_value(value.get(f.name), f.type) for f in arrow_type}
             # Unknown dict (schema stores it as STRING) — serialise to JSON
             return json.dumps(value, default=str) if value else None
 
@@ -673,8 +652,7 @@ def _prepare_node_arrow_table(
         # Schema-driven path: iterate schema fields in order; include only schema fields
         # plus any extra *_embedding columns added dynamically (not in the Pydantic model).
         extra_embedding_cols = [
-            k for k in cleaned_nodes[0].keys()
-            if k.endswith("_embedding") and k not in schema.names
+            k for k in cleaned_nodes[0].keys() if k.endswith("_embedding") and k not in schema.names
         ]
 
         arrays: list[pa.Array] = []
@@ -694,13 +672,7 @@ def _prepare_node_arrow_table(
         return pa.table(dict(zip(names, arrays, strict=False)))
 
     # Fallback: no schema — infer types from data (dynamic Neo4j imports)
-    all_columns: list[str] = []
-    seen_cols: set[str] = set()
-    for node in cleaned_nodes:
-        for key in node:
-            if key not in seen_cols:
-                all_columns.append(key)
-                seen_cols.add(key)
+    all_columns = list(dict.fromkeys(k for node in cleaned_nodes for k in node))
 
     inferred_arrays: list[pa.Array] = []
     for col in all_columns:

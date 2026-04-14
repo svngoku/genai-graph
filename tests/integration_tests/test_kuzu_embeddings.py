@@ -739,11 +739,23 @@ class TestArrowTableFloatArrayType:
             name: str
             emb: list[float]
 
-        config = NodeTypeConfig.from_graph_node.__func__(  # type: ignore[attr-defined]
-            NodeTypeConfig,
-            type("G", (), {"node_class": MyNode, "key_from": "id",
-                           "embedded_struct_classes": [], "_embedding_field_dimensions": {}})()
-        ) if False else NodeTypeConfig(node_type="MyNode", primary_key_field="id")
+        config = (
+            NodeTypeConfig.from_graph_node.__func__(  # type: ignore[attr-defined]
+                NodeTypeConfig,
+                type(
+                    "G",
+                    (),
+                    {
+                        "node_class": MyNode,
+                        "key_from": "id",
+                        "embedded_struct_classes": [],
+                        "_embedding_field_dimensions": {},
+                    },
+                )(),
+            )
+            if False
+            else NodeTypeConfig(node_type="MyNode", primary_key_field="id")
+        )
 
         node_list = [
             {"id": "n1", "name": "A", "emb": [0.1, 0.2, 0.3]},
@@ -790,7 +802,6 @@ class TestArrowTableFloatArrayType:
 
     def test_float_list_column_survives_kuzu_load(self, temp_kuzu_db):
         """Test that an Arrow table with list<float64> can be loaded by Kuzu."""
-        import pyarrow as pa
         from pydantic import BaseModel
 
         from genai_graph.kg.ingest.merge import NodeTypeConfig, _build_node_arrow_schema, _prepare_node_arrow_table
