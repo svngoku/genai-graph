@@ -149,8 +149,8 @@ class TestComputeSimilarities:
         # Third call: the CREATE relationship execute (returns None)
         backend.execute.side_effect = [
             [("ta-uuid-1", fake_embedding)],  # MATCH NodeB (iterate over from)
-            [("L3-CODE-A", 0.1)],             # QUERY_VECTOR_INDEX → sim=0.9
-            None,                              # CREATE relationship
+            [("L3-CODE-A", 0.1)],  # QUERY_VECTOR_INDEX → sim=0.9
+            None,  # CREATE relationship
         ]
 
         result = matcher.compute_similarities(backend)

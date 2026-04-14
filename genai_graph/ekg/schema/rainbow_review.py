@@ -32,10 +32,7 @@ ReviewedOpportunityNode: GraphNode = GraphNode(
     node_class=ReviewedOpportunity,
     extra_classes=[FinancialMetrics, CompetitiveLandscape, KeyStatementOfWorkElement],
     name_from=lambda data, _: (
-        "Review."
-        + str(data.get("opportunity", {}).get("opportunity_id", ""))
-        + "."
-        + str(data.get("start_date", ""))
+        "Review." + str(data.get("opportunity", {}).get("opportunity_id", "")) + "." + str(data.get("start_date", ""))
     ),
     key_from=lambda data, _: str(data.get("opportunity", {}).get("opportunity_id", "unknown")),
     description="Root node containing the complete reviewed opportunity",
@@ -52,9 +49,7 @@ RiskAnalysisNode: GraphNode = GraphNode(
 
 TechnicalApproachNode: GraphNode = GraphNode(
     node_class=TechnicalApproach,
-    name_from=lambda data, base: (
-        data.get("technical_stack") or data.get("architecture") or f"{base}_default"
-    ),
+    name_from=lambda data, base: data.get("technical_stack") or data.get("architecture") or f"{base}_default",
     key_from="AUTO_ID",
     description="Technical implementation approach and stack",
     index_fields=["architecture", "technical_stack"],

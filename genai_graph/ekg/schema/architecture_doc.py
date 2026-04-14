@@ -64,7 +64,7 @@ class ArchitectureDocumentGraph(JsonFileBackedFactory, BaseModel):
             PersonNode,
             SWArchitectureDocumentNode,
             TechnicalComponentNode,
-            SolutionNode
+            SolutionNode,
         ]
 
         # BAML properties matching p_*_ pattern (e.g., p_purpose_) are automatically
