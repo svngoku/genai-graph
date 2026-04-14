@@ -51,12 +51,139 @@ def _ladybug_type_to_arrow(type_str: str) -> pa.DataType:
     return pa.string()  # fallback
 
 
-def _is_float_list_column(values: list[Any]) -> bool:
-    """Check if a list of values represents a float-list (embedding) column."""
-    for v in values:
-        if v is not None:
-            return isinstance(v, list) and bool(v) and isinstance(v[0], (int, float)) and not isinstance(v[0], bool)
-    return False
+def _pydantic_annotation_to_arrow(annotation: Any) -> pa.DataType:
+    """Convert a Python type annotation directly to a PyArrow DataType.
+
+    Handles all types that appear in Pydantic node models:
+    - Primitives: str, int, float, bool
+    - Optional[T] / T | None → unwrap to T
+    - list[T] / list[float] → pa.list_(T)
+    - Enum subclasses → pa.string()
+    - Pydantic sub-models (embedded structs) → pa.struct([...]) built recursively
+    - Unknown types → pa.string() fallback
+    """
+    import types
+    import typing
+    from enum import Enum as _Enum
+    from typing import get_args, get_origin
+
+    if annotation is None or annotation is type(None):
+        return pa.string()
+
+    origin = get_origin(annotation)
+    actual = annotation
+
+    # Unwrap Optional[X] / Union[X, None] / X | None
+    if origin is typing.Union or (hasattr(types, "UnionType") and isinstance(annotation, types.UnionType)):
+        non_none = [a for a in get_args(annotation) if a is not type(None)]
+        if non_none:
+            actual = non_none[0]
+            origin = get_origin(actual)
+
+    # list[T]
+    if origin is list:
+        args = get_args(actual)
+        if args:
+            return pa.list_(_pydantic_annotation_to_arrow(args[0]))
+        return pa.list_(pa.string())
+
+    # Primitives
+    if actual is str:
+        return pa.string()
+    if actual is float:
+        return pa.float64()
+    if actual is int:
+        return pa.int64()
+    if actual is bool:
+        return pa.bool_()
+
+    # Enum → stored as string
+    if isinstance(actual, type) and issubclass(actual, _Enum):
+        return pa.string()
+
+    # Pydantic sub-model → embedded struct
+    if isinstance(actual, type) and hasattr(actual, "model_fields"):
+        sub_fields = [
+            pa.field(name, _pydantic_annotation_to_arrow(fi.annotation))
+            for name, fi in actual.model_fields.items()
+        ]
+        return pa.struct(sub_fields)
+
+    return pa.string()  # fallback
+
+
+def _build_node_arrow_schema(
+    node_class: type,
+    embedded_struct_classes: list[type] | None = None,
+    embedding_field_dimensions: dict[str, int] | None = None,
+    primary_key_field: str = "id",
+) -> pa.Schema:
+    """Build an explicit PyArrow schema for a graph node class.
+
+    The schema is derived entirely from the Pydantic model's type annotations,
+    making it the single source of truth for column names and types.
+
+    Field rules:
+    - Struct fields (Pydantic sub-models listed in ``embedded_struct_classes``)
+      are typed as ``pa.struct(...)`` with sub-fields in model-definition order
+    - Embedding fields (``*_embedding``) are typed as ``pa.list_(pa.float64())``
+      regardless of the annotation
+    - All other fields follow ``_pydantic_annotation_to_arrow``
+    - Timestamp sentinels ``_created_at`` and ``_updated_at`` are appended as
+      ``pa.string()`` if not already in the model
+
+    Args:
+        node_class: Pydantic class whose ``model_fields`` define the columns
+        embedded_struct_classes: Sub-model classes stored as Ladybug STRUCT columns
+        embedding_field_dimensions: Maps field name → vector dimension (used to
+            distinguish fixed-size ARRAY fields; currently informs the type as
+            ``pa.list_(pa.float64())`` regardless of size)
+        primary_key_field: The primary key field name (not altered by this fn)
+
+    Returns:
+        ``pa.Schema`` with one field per column in model-definition order,
+        followed by ``_created_at`` and ``_updated_at`` if absent.
+    """
+    from genai_graph.kg.schema.core import find_embedded_field_for_class
+
+    embedded_struct_classes = embedded_struct_classes or []
+    embedding_field_dimensions = embedding_field_dimensions or {}
+
+    # Build a set of field names that map to embedded structs so we can
+    # give them an explicit pa.struct(...) type with schema-ordered sub-fields.
+    struct_field_map: dict[str, type] = {}
+    for emb_cls in embedded_struct_classes:
+        field_name = find_embedded_field_for_class(node_class, emb_cls)
+        if field_name:
+            struct_field_map[field_name] = emb_cls
+
+    fields: list[pa.Field] = []
+    seen: set[str] = set()
+
+    if hasattr(node_class, "model_fields"):
+        for field_name, field_info in node_class.model_fields.items():
+            seen.add(field_name)
+            if field_name in struct_field_map:
+                # Embedded struct: build pa.struct from sub-model fields in definition order
+                emb_cls = struct_field_map[field_name]
+                sub_fields = [
+                    pa.field(sf_name, _pydantic_annotation_to_arrow(sf_info.annotation))
+                    for sf_name, sf_info in emb_cls.model_fields.items()
+                ]
+                fields.append(pa.field(field_name, pa.struct(sub_fields)))
+            elif field_name in embedding_field_dimensions or field_name.endswith("_embedding"):
+                # Embedding vectors are always list<float64>
+                fields.append(pa.field(field_name, pa.list_(pa.float64())))
+            else:
+                fields.append(pa.field(field_name, _pydantic_annotation_to_arrow(field_info.annotation)))
+
+    # Always include timestamp sentinels
+    for ts in ("_created_at", "_updated_at"):
+        if ts not in seen:
+            fields.append(pa.field(ts, pa.string()))
+
+    return pa.schema(fields)
+
 
 
 # A single node's properties as a dictionary
@@ -289,57 +416,53 @@ class NodeMergeResult(BaseModel):
 class NodeTypeConfig(BaseModel):
     """Configuration for how a node type should be merged.
 
-    Encapsulates the primary key field and type hints for merge operations.
+    Encapsulates the primary key field and the explicit Arrow schema for merge operations.
+    The schema is derived from the Pydantic node class and serves as the single source
+    of truth for column names, types, struct field order, and embedding columns.
     """
 
-    model_config = {"extra": "forbid"}
+    model_config = {"arbitrary_types_allowed": True, "extra": "forbid"}
 
     node_type: str
     primary_key_field: str = "id"
-    # Maps field name -> kuzu_type for top-level node fields (e.g., {"technical_stack": "STRING[]"})
-    field_types: dict[str, str] = Field(default_factory=dict)
-    # Maps struct field name -> dict of {sub_field_name: kuzu_type}
-    struct_field_types: dict[str, dict[str, str]] = Field(default_factory=dict)
+    # Explicit Arrow schema: one field per node property in schema-definition order.
+    # Struct columns carry pa.struct(...) types with sub-fields in the exact order
+    # Ladybug expects; embedding columns carry pa.list_(pa.float64()).
+    # None only for dynamically-created configs (e.g. Neo4j imports with no Pydantic model).
+    arrow_schema: pa.Schema | None = None
+
+    @property
+    def field_names(self) -> set[str]:
+        """Set of all field names defined in the Arrow schema."""
+        if self.arrow_schema is None:
+            return set()
+        return set(self.arrow_schema.names)
+
+    @property
+    def struct_field_names(self) -> set[str]:
+        """Set of field names whose Arrow type is a struct."""
+        if self.arrow_schema is None:
+            return set()
+        return {f.name for f in self.arrow_schema if pa.types.is_struct(f.type)}
 
     @classmethod
     def from_graph_node(cls, node: GraphNode) -> NodeTypeConfig:
         """Create config from a GraphNode definition."""
-        from genai_graph.kg.schema.doc_generator import _get_kuzu_type_for_field
-
         node_type = node.node_class.__name__
         key_from = node.key_from
+        primary_key_field = "id" if (key_from == "AUTO_ID" or callable(key_from)) else key_from
 
-        if key_from == "AUTO_ID" or callable(key_from):
-            primary_key_field = "id"
-        else:
-            primary_key_field = key_from
-
-        # Extract type information for top-level node fields
-        field_types: dict[str, str] = {}
-        if hasattr(node.node_class, "model_fields"):
-            for field_name, field_info in node.node_class.model_fields.items():
-                kuzu_type = _get_kuzu_type_for_field(field_info.annotation)
-                field_types[field_name] = kuzu_type
-
-        # Extract type information for embedded struct classes
-        struct_field_types: dict[str, dict[str, str]] = {}
-        for emb_class in getattr(node, "embedded_struct_classes", []) or []:
-            # Find the field name that holds this embedded class
-            from genai_graph.kg.schema.core import find_embedded_field_for_class
-
-            field_name = find_embedded_field_for_class(node.node_class, emb_class)
-            if field_name and hasattr(emb_class, "model_fields"):
-                emb_field_types: dict[str, str] = {}
-                for sub_field_name, sub_field_info in emb_class.model_fields.items():
-                    kuzu_type = _get_kuzu_type_for_field(sub_field_info.annotation)
-                    emb_field_types[sub_field_name] = kuzu_type
-                struct_field_types[field_name] = emb_field_types
+        arrow_schema = _build_node_arrow_schema(
+            node_class=node.node_class,
+            embedded_struct_classes=list(getattr(node, "embedded_struct_classes", None) or []),
+            embedding_field_dimensions=dict(getattr(node, "_embedding_field_dimensions", None) or {}),
+            primary_key_field=primary_key_field,
+        )
 
         return cls(
             node_type=node_type,
             primary_key_field=primary_key_field,
-            field_types=field_types,
-            struct_field_types=struct_field_types,
+            arrow_schema=arrow_schema,
         )
 
 
@@ -458,144 +581,137 @@ def _format_value_for_cypher(value: Any) -> str:
 
 
 # =============================================================================
-# DataFrame-based batch merge operations
+# Arrow table construction for batch merge
 # =============================================================================
 
 
 def _prepare_node_arrow_table(
     node_list: list[dict[str, Any]],
-    key_field: str,
-    field_types: dict[str, str] | None = None,
-    struct_field_types: dict[str, dict[str, str]] | None = None,
+    config: NodeTypeConfig,
 ) -> pa.Table:
-    """Prepare a PyArrow Table from a list of node dictionaries for batch merge.
+    """Build a PyArrow Table from node dicts using the config's explicit Arrow schema.
 
-    Builds a ``pa.Table`` directly from cleaned dictionaries, bypassing pandas
-    entirely so that Ladybug's Arrow scanner is used (avoiding NumPy scanner
-    issues with pandas 3.x ``StringDtype``).
+    The schema drives everything:
+    - Column selection and order come from ``config.arrow_schema``
+    - Struct columns are built with the exact sub-field types and order from the schema
+    - Numeric null handling is derived from the Arrow type (float64 → NaN, int64 → NaN)
+    - No runtime type inference — the schema is the authoritative contract
 
-    Handles data cleaning:
-    - Removes excluded metadata fields
-    - Adds timestamps if not present
-    - Converts TypedNull markers to appropriate values based on expected type
-    - Uses float('nan') for numeric fields and keeps None/empty for strings
-    - Produces struct columns with schema-defined field order
-    - Detects embedding columns (list[float]) and types them as list<float64>
+    If ``config.arrow_schema`` is None (dynamic/unregistered node type), columns are
+    inferred from the data directly with no type coercion.
 
     Args:
         node_list: List of node data dictionaries
-        key_field: Primary key field name
-        field_types: Optional mapping of top-level field names to their Kuzu types
-                    e.g., {"technical_stack": "STRING[]", "margin": "DOUBLE"}
-        struct_field_types: Optional mapping of struct field names to their sub-field types
-                           e.g., {"financials": {"tcv": "DOUBLE", "name": "STRING"}}
+        config: NodeTypeConfig carrying the Arrow schema and primary key field
 
     Returns:
-        PyArrow Table ready for LOAD FROM MERGE operation
+        PyArrow Table ready for ``LOAD FROM arrow_table`` MERGE operation
     """
     from genai_graph.kg.ingest.extract import TypedNull
 
-    field_types = field_types or {}
-    struct_field_types = struct_field_types or {}
+    schema = config.arrow_schema
 
-    def clean_value(value: Any, field_name: str | None = None, expected_type: str | None = None) -> Any:
-        """Recursively clean values for DataFrame/Kuzu compatibility.
+    def _arrow_null_for(arrow_type: pa.DataType) -> Any:
+        """Return the appropriate Python null value for an Arrow type."""
+        if pa.types.is_floating(arrow_type):
+            return float("nan")
+        if pa.types.is_integer(arrow_type):
+            return float("nan")  # Arrow integer nulls serialise fine via pa.array(..., from_pandas=True)
+        if pa.types.is_list(arrow_type):
+            return []
+        return None
 
-        Uses type hints when available to determine appropriate null representation:
-        - DOUBLE/INT64: Use float('nan') for None values
-        - STRING[]: Use empty list [] for None values
-        - STRING: Keep None as-is (Kuzu handles this correctly)
-        """
-        # Convert enum values to their primitive value (str/int) so Ladybug's numpy
-        # scanner doesn't encounter Python Enum objects in object-dtype columns.
+    def clean_value(value: Any, arrow_type: pa.DataType | None) -> Any:
+        """Recursively clean a value to match the expected Arrow type."""
         if isinstance(value, Enum):
             return value.value
+
         if isinstance(value, TypedNull):
-            # Use the TypedNull's type info if available
-            type_name = getattr(value, "type_name", expected_type or "STRING")
-            if type_name in ("DOUBLE", "INT64"):
-                return float("nan")
-            elif type_name.endswith("[]"):
-                return []  # Array types should be empty list, not None
-            return None  # String/other types
-        elif value is None:
-            # Use expected_type to determine null representation
-            if expected_type in ("DOUBLE", "INT64"):
-                return float("nan")
-            elif expected_type and expected_type.endswith("[]"):
-                return []  # Array types: None → empty list
-            return None  # String/other types stay as None
-        elif isinstance(value, dict):
-            # Look up struct field types if this is a known struct field
-            sub_field_types = struct_field_types.get(field_name, {}) if field_name else {}
-            if sub_field_types:
-                # Embedded STRUCT with defined sub-field types — keep as dict for Ladybug STRUCT column.
-                # IMPORTANT: iterate in sub_field_types order (from schema), not value.items() order,
-                # because Ladybug requires struct fields in the exact order defined in the schema.
+            return _arrow_null_for(arrow_type) if arrow_type is not None else None
+
+        if value is None:
+            return _arrow_null_for(arrow_type) if arrow_type is not None else None
+
+        if isinstance(value, dict):
+            if arrow_type is not None and pa.types.is_struct(arrow_type):
+                # Reorder dict keys to match schema-defined struct field order
                 return {
-                    k: clean_value(value.get(k), field_name=k, expected_type=sub_field_types.get(k))
-                    for k in sub_field_types
+                    f.name: clean_value(value.get(f.name), f.type)
+                    for f in arrow_type
                 }
-            else:
-                # No embedded struct definition — the schema stores this as STRING.
-                # Serialize to JSON so Ladybug doesn't encounter a Python dict in an
-                # object-dtype column (which triggers UNREACHABLE_CODE in numpy_type.cpp).
-                return json.dumps(value, default=str) if value else None
-        elif isinstance(value, list):
-            return [clean_value(item, field_name=field_name, expected_type=expected_type) for item in value]
+            # Unknown dict (schema stores it as STRING) — serialise to JSON
+            return json.dumps(value, default=str) if value else None
+
+        if isinstance(value, list):
+            inner_type = arrow_type.value_type if (arrow_type is not None and pa.types.is_list(arrow_type)) else None
+            return [clean_value(item, inner_type) for item in value]
+
         return value
 
     if not node_list:
-        return pa.table({})
+        return pa.table({}) if schema is None else pa.table({f.name: pa.array([], type=f.type) for f in schema})
 
-    # Fields to exclude
-    excluded_metadata_fields = {"created_at", "updated_at", "dedup_key"}
-
-    # Clean each node dict
-    cleaned_nodes = []
+    excluded = {"created_at", "updated_at", "dedup_key"}
     timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
+    # Clean all rows
+    cleaned_nodes: list[dict[str, Any]] = []
     for node_data in node_list:
-        cleaned = {}
+        cleaned: dict[str, Any] = {}
         for key, value in node_data.items():
-            if key in excluded_metadata_fields:
+            if key in excluded:
                 continue
-            # Clean values using type hints - check top-level field_types first
-            expected_type = field_types.get(key)
-            cleaned[key] = clean_value(value, field_name=key, expected_type=expected_type)
-
-        # Ensure timestamps are present
+            arrow_type = schema.field(key).type if (schema is not None and key in schema.names) else None
+            cleaned[key] = clean_value(value, arrow_type)
         if "_created_at" not in cleaned:
             cleaned["_created_at"] = timestamp
         if "_updated_at" not in cleaned:
             cleaned["_updated_at"] = timestamp
-
         cleaned_nodes.append(cleaned)
 
-    # Collect all column names in order of first appearance
+    if schema is not None:
+        # Schema-driven path: iterate schema fields in order; include only schema fields
+        # plus any extra *_embedding columns added dynamically (not in the Pydantic model).
+        extra_embedding_cols = [
+            k for k in cleaned_nodes[0].keys()
+            if k.endswith("_embedding") and k not in schema.names
+        ]
+
+        arrays: list[pa.Array] = []
+        names: list[str] = []
+
+        for field in schema:
+            values = [node.get(field.name) for node in cleaned_nodes]
+            arrays.append(pa.array(values, type=field.type, from_pandas=True))
+            names.append(field.name)
+
+        # Dynamically-added embedding columns (index_fields injected by extract pipeline)
+        for col in extra_embedding_cols:
+            values = [node.get(col) for node in cleaned_nodes]
+            arrays.append(pa.array(values, type=pa.list_(pa.float64())))
+            names.append(col)
+
+        return pa.table(dict(zip(names, arrays, strict=False)))
+
+    # Fallback: no schema — infer types from data (dynamic Neo4j imports)
     all_columns: list[str] = []
-    seen: set[str] = set()
+    seen_cols: set[str] = set()
     for node in cleaned_nodes:
         for key in node:
-            if key not in seen:
+            if key not in seen_cols:
                 all_columns.append(key)
-                seen.add(key)
+                seen_cols.add(key)
 
-    # Build Arrow arrays column by column
-    arrays: list[pa.Array] = []
+    inferred_arrays: list[pa.Array] = []
     for col in all_columns:
         values = [node.get(col) for node in cleaned_nodes]
-        if col in struct_field_types:
-            # Build with explicit struct type to preserve schema-defined field order
-            arrow_fields = [(f, _ladybug_type_to_arrow(t)) for f, t in struct_field_types[col].items()]
-            arrays.append(pa.array(values, type=pa.struct(arrow_fields)))
-        elif _is_float_list_column(values):
-            # Embedding columns: explicit list<float64> type
-            arrays.append(pa.array(values, type=pa.list_(pa.float64())))
+        # Still give embedding columns the correct list<float64> type
+        if col.endswith("_embedding"):
+            inferred_arrays.append(pa.array(values, type=pa.list_(pa.float64())))
         else:
-            arrays.append(pa.array(values))
+            inferred_arrays.append(pa.array(values))
 
-    return pa.table(dict(zip(all_columns, arrays, strict=False)))
+    return pa.table(dict(zip(all_columns, inferred_arrays, strict=False)))
 
 
 def _get_columns_for_set_clause(
@@ -655,46 +771,17 @@ def merge_nodes_batch(
 
         type_stats = MergeStats(total=len(node_list))
 
-        # Prepare Arrow table with type hints for both top-level and struct fields
-        arrow_table = _prepare_node_arrow_table(
-            node_list,
-            primary_key_field,
-            field_types=config.field_types,
-            struct_field_types=config.struct_field_types,
-        )
+        # Prepare Arrow table using the config's explicit schema
+        arrow_table = _prepare_node_arrow_table(node_list, config)
 
         if arrow_table.num_rows == 0:
             result.stats[node_type] = type_stats
             continue
 
-        # Filter table to only include fields that are in the node schema
-        # This prevents errors when data contains extra fields not in the schema
-        # When field_types is empty (dynamic Neo4j imports), skip filtering to preserve all data
-        if config.field_types:
-            valid_fields = set(config.field_types.keys()) | {
-                primary_key_field,
-                "name",
-                "_created_at",
-                "_updated_at",
-                "_original_name",
-            }
-            # Also include struct field names from extra_classes
-            valid_fields.update(config.struct_field_types.keys())
-            # Also include dynamically-added embedding columns (not in the Pydantic model,
-            # but added by extract_graph_data for index_fields).
-            valid_fields.update(col for col in arrow_table.column_names if col.endswith("_embedding"))
-
-            # Filter columns to only valid fields
-            cols_to_keep = [col for col in arrow_table.column_names if col in valid_fields]
-            filtered_out = [col for col in arrow_table.column_names if col not in valid_fields]
-
-            if filtered_out:
-                logger.debug(
-                    f"Filtering out {len(filtered_out)} extra columns from {node_type} data "
-                    f"not in schema: {', '.join(filtered_out[:5])}{'...' if len(filtered_out) > 5 else ''}"
-                )
-
-            arrow_table = arrow_table.select(cols_to_keep)
+        # The schema-driven path already limits columns to those defined in the Arrow
+        # schema plus dynamically-added *_embedding columns. No additional filtering
+        # needed when a schema is present. For the schema-less fallback (dynamic Neo4j
+        # imports), also skip filtering to preserve all data.
 
         # Get columns for SET clauses
         on_create_cols, on_match_cols = _get_columns_for_set_clause(arrow_table.column_names, primary_key_field)
@@ -907,8 +994,8 @@ def merge_relationships_batch(
             else:
                 # Build Arrow table directly for batch LOAD FROM
                 # NOTE: arrow_rel_table is read by name from this frame by Ladybug's LOAD FROM scanner.
-                arrow_rel_table = pa.table(
-                    {  # noqa: F841
+                arrow_rel_table = pa.table(  # noqa: F841
+                    {
                         "from_id": [row["from_id"] for row in row_data],
                         "to_id": [row["to_id"] for row in row_data],
                     }

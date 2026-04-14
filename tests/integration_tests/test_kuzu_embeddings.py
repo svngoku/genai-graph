@@ -729,33 +729,47 @@ class TestArrowTableFloatArrayType:
 
     def test_float_list_column_gets_arrow_type(self):
         """Test that a float-list column is typed as list<float64> in the Arrow table."""
+        import pyarrow as pa
+        from pydantic import BaseModel
 
-        from genai_graph.kg.ingest.merge import _prepare_node_arrow_table
+        from genai_graph.kg.ingest.merge import NodeTypeConfig, _prepare_node_arrow_table
+
+        class MyNode(BaseModel):
+            id: str
+            name: str
+            emb: list[float]
+
+        config = NodeTypeConfig.from_graph_node.__func__(  # type: ignore[attr-defined]
+            NodeTypeConfig,
+            type("G", (), {"node_class": MyNode, "key_from": "id",
+                           "embedded_struct_classes": [], "_embedding_field_dimensions": {}})()
+        ) if False else NodeTypeConfig(node_type="MyNode", primary_key_field="id")
 
         node_list = [
             {"id": "n1", "name": "A", "emb": [0.1, 0.2, 0.3]},
             {"id": "n2", "name": "B", "emb": [0.4, 0.5, 0.6]},
         ]
-        table = _prepare_node_arrow_table(node_list, key_field="id")
+        # No schema: fallback path — emb ends with no special name so use inferred
+        # Use schema-less config; the fallback still handles *_embedding; for plain
+        # 'emb' the fallback infers from data.
+        table = _prepare_node_arrow_table(node_list, config)
 
-        import pyarrow as pa
-
-        # The 'emb' column should be list<float64>
+        # The 'emb' column should be a list type (inferred from data as list<double>)
         emb_type = table.schema.field("emb").type
         assert pa.types.is_list(emb_type), f"Expected list type, got {emb_type}"
-        # Values should be preserved
         emb0 = table.column("emb")[0].as_py()
         assert emb0 == pytest.approx([0.1, 0.2, 0.3])
 
     def test_float_list_column_with_none_values(self):
         """Test that None entries in float-list columns become null in Arrow table."""
-        from genai_graph.kg.ingest.merge import _prepare_node_arrow_table
+        from genai_graph.kg.ingest.merge import NodeTypeConfig, _prepare_node_arrow_table
 
+        config = NodeTypeConfig(node_type="MyNode", primary_key_field="id")
         node_list = [
             {"id": "n1", "name": "A", "emb": [0.1, 0.2]},
             {"id": "n2", "name": "B", "emb": None},
         ]
-        table = _prepare_node_arrow_table(node_list, key_field="id")
+        table = _prepare_node_arrow_table(node_list, config)
 
         # n1 should have the embedding, n2 should be null
         emb_col = table.column("emb")
@@ -764,19 +778,22 @@ class TestArrowTableFloatArrayType:
 
     def test_string_list_column_stays_string(self):
         """Test that string-list columns are not misidentified as float arrays."""
-        from genai_graph.kg.ingest.merge import _prepare_node_arrow_table
+        from genai_graph.kg.ingest.merge import NodeTypeConfig, _prepare_node_arrow_table
 
+        config = NodeTypeConfig(node_type="MyNode", primary_key_field="id")
         node_list = [
             {"id": "n1", "name": "A", "tags": ["alpha", "beta"]},
         ]
-        table = _prepare_node_arrow_table(node_list, key_field="id")
-        # The tags column should be a list of strings
+        table = _prepare_node_arrow_table(node_list, config)
         tags = table.column("tags")[0].as_py()
         assert tags == ["alpha", "beta"]
 
     def test_float_list_column_survives_kuzu_load(self, temp_kuzu_db):
         """Test that an Arrow table with list<float64> can be loaded by Kuzu."""
-        from genai_graph.kg.ingest.merge import _prepare_node_arrow_table
+        import pyarrow as pa
+        from pydantic import BaseModel
+
+        from genai_graph.kg.ingest.merge import NodeTypeConfig, _build_node_arrow_schema, _prepare_node_arrow_table
 
         backend, _ = temp_kuzu_db
         backend.execute(
@@ -789,12 +806,19 @@ class TestArrowTableFloatArrayType:
             """
         )
 
-        # Only non-null embeddings — Kuzu FLOAT[3] cannot accept null lists via LOAD FROM
+        class EmbNode(BaseModel):
+            id: str
+            name: str
+            emb: list[float]
+
+        schema = _build_node_arrow_schema(EmbNode, primary_key_field="id")
+        config = NodeTypeConfig(node_type="EmbNode", primary_key_field="id", arrow_schema=schema)
+
         node_list = [
             {"id": "e1", "name": "Alpha", "emb": [0.1, 0.2, 0.3]},
             {"id": "e2", "name": "Beta", "emb": [0.4, 0.5, 0.6]},
         ]
-        arrow_table = _prepare_node_arrow_table(node_list, key_field="id", field_types={"emb": "FLOAT[]"})  # noqa: F841
+        arrow_table = _prepare_node_arrow_table(node_list, config)  # noqa: F841
 
         kuzu_conn = backend.conn
         kuzu_conn.execute(
