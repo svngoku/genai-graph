@@ -6,7 +6,7 @@ This document describes how knowledge graphs are constructed from multiple heter
 
 - **[BAML Extraction Guide](baml_extraction_guide.md)** - Extract data from text documents using BAML
 - **[Primary Key Implementation](primary_key_implementation.md)** - Node deduplication strategy
-- **[KG Create Enhancements](kg_create_enhancements.md)** - Advanced KG creation features
+- **[Cache Management](cache_management.md)** - Parquet cache invalidation and rebuilds
 
 ## Overview
 
@@ -323,26 +323,36 @@ kg_configs:
 ## CLI Commands
 
 ```bash
-# Create specific KG
-cli kg create --kg stratnav_subset_rainbow_crm
+# Create default KG (uses kg_config from config)
+cli kg create
 
-# Create all KGs
+# Create one or more specific KGs
+cli kg create --kg stratnav_subset_rainbow_crm
+cli kg create --kg rainbow_add_crm --kg stratnav_subset_rainbow_crm
+
+# Create all KGs defined in ekg.yaml
 cli kg create --all-graphs
 
-# Rebuild from scratch (clear parquet cache)
-cli kg create --kg my_kg --delete-first
+# Force-rebuild: re-ingest even if parquet fingerprints match
+cli kg create --kg my_kg --force-rebuild
 
-# View schema details
-cli kg schema --kg my_kg
+# Clear all parquet caches (fixes struct field-order mismatches)
+cli kg create --kg my_kg --clear-all-caches
+
+# View schema (reads the auto-generated schema artifact)
+cli kg schema
 
 # Execute Cypher queries
-cli kg cypher --kg my_kg "MATCH (c:Customer) RETURN c.name LIMIT 10"
+cli kg cypher "MATCH (c:Customer) RETURN c.name LIMIT 10"
 
-# Export to Neo4j
-cli kg export --kg my_kg --format neo4j
+# Natural-language query (Text-to-Cypher)
+cli kg query "Which customers have the most opportunities?"
 
-# View HTML visualization
-# Automatically generated at: /home/tcl/kg_outputs/{kg_name}/{kg_name}-dev.html
+# Open HTML visualization in browser
+cli kg view
+
+# Display database info and statistics
+cli kg info
 ```
 
 ## Data Source Priority
@@ -380,7 +390,7 @@ The report includes:
 2. Follow the link in `{profile}-{tag}-info.md`
 3. Check CLI output at the end of KG creation
 
-See [KG Create Enhancements](kg_create_enhancements.md#warnings-reporting) for detailed examples and usage.
+Warnings are printed at the end of `cli kg create` and saved to `{kg_outputs}/{profile}-{tag}-warnings.md`.
 
 ### Common Warning Types
 
@@ -463,10 +473,9 @@ Embedded field 'financials' on class ReviewedOpportunity has incompatible type l
 **Cause**: Schema mismatch between parquet data and current schema definition.  
 **Solution**: Clear parquet caches and rebuild source graphs:
 ```bash
-rm -rf /home/tcl/kg_outputs/*/parquet
-cli kg create --kg source_graph --delete-first
-cli kg create --kg target_graph --delete-first
+cli kg create --kg target_graph --clear-all-caches
 ```
+See [Cache Management](cache_management.md) for details.
 
 #### "Failed to import X relationships: Binder exception"
 **Cause**: Missing relationship properties in parquet due to schema evolution.  

@@ -1,14 +1,10 @@
-# PRIMARY KEY Implementation
+# Primary Key Configuration (`key_from`)
 
-## Overview
+`GraphNode` supports a `key_from` parameter that determines the PRIMARY KEY for the
+generated Ladybug table. It controls both the table DDL and the MERGE deduplication
+behaviour at ingest time.
 
-This document describes the implementation of flexible PRIMARY KEY support in GraphNode, allowing users to specify custom primary keys for Ladybug (Kuzu-compatible) database tables.
-
-## Feature: `key_from` Parameter
-
-The `GraphNode` class now supports a `key_from` parameter that determines the PRIMARY KEY for the generated Ladybug table.
-
-### Supported Values
+## `key_from` Options
 
 1. **`"AUTO_ID"`** (default): Uses Kuzu's SERIAL type for auto-incrementing integer IDs
 2. **Field name (string)**: Uses an existing model field as the PRIMARY KEY

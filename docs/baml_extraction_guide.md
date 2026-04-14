@@ -1,78 +1,62 @@
 # BAML Extraction and Graph Factory Creation Guide
 
-This guide describes how to modify BAML extraction schemas and create graph factories to build knowledge graphs from text documents.
+This guide covers genai-graph–specific patterns for creating graph factories that consume
+BAML-extracted data. For BAML setup fundamentals (writing `.baml` files, generating Python
+types, configuring the LLM client, and running `cli baml extract`), see the
+[genai-tk BAML documentation](../../genai-tk/docs/baml.md).
 
 ## Quick Reference
 
 | Task | Files to Modify | Command |
 |------|----------------|---------|
-| Add/modify extracted fields | `baml_src/schema/*.baml` | `baml-cli generate` |
-| Update graph schema | `ekg/schema/*_review.py` | N/A |
+| Add/modify extracted fields | `genai_graph/ekg/baml_src/schema/*.baml` | `cd genai_graph/ekg && baml-cli generate` |
+| Update graph schema | `genai_graph/ekg/schema/*_review.py` | N/A |
 | Configure KG | `config/ekg.yaml` | N/A |
-| Extract from documents | N/A | `cli baml extract` |
-| Build knowledge graph | N/A | `cli kg create` |
+| Extract from documents | N/A | `cli baml extract <root_dir> <output_dir> --function ExtractRainbow` |
+| Build knowledge graph | N/A | `cli kg create --kg <name>` |
 
 ## Architecture Overview
 
 ```
 Text Documents (MD/PDF)
-    ↓
-BAML Extraction (LLM) → JSON files
+    ↓  cli tools markdownize
+Markdown files
+    ↓  cli baml extract
+JSON files  (BAML-extracted, one per document)
     ↓
 JsonFileBackedFactory → Pydantic Models
     ↓
 GraphSchema → Node/Relationship Configuration
     ↓
-Kuzu Graph Database
+Ladybug Graph Database
 ```
 
 ## Step 1: Define BAML Schema
 
-BAML schemas define what information to extract from documents using LLMs.
-
 **Location**: `genai_graph/ekg/baml_src/schema/*.baml`
 
-### Example: Adding a New Field
+Add or modify class definitions using standard BAML syntax. For BAML language reference
+(types, annotations, enums, etc.) see the [genai-tk BAML docs](../../genai-tk/docs/baml.md).
+
+**Example** — adding a field to an existing class:
 
 ```baml
 // In rainbow_review.baml
 class ReviewedOpportunity {
   opportunity Opportunity
   start_date string? @description("Planned start date")
-  
-  // Add new field here
-  statement_of_work KeyStatementOfWorkElement? @description("Key requirements and objectives")
-  
+  statement_of_work KeyStatementOfWorkElement? @description("Key requirements")
   team Person[] @description("Team members")
 }
 
-// Define the new class
 class KeyStatementOfWorkElement {
   objectives string[]? @description("Key business objectives")
-  scope string? @description("Scope of work description")
+  scope string? @description("Scope of work")
   requirements string[]? @description("Key requirements")
-  success_metrics string[]? @description("Success criteria")
 }
 ```
 
-### BAML Class Types
-
-- **Simple types**: `string`, `int`, `float`, `bool`
-- **Optional**: `string?` (can be null)
-- **Arrays**: `string[]`, `Person[]`
-- **Nested objects**: `KeyStatementOfWorkElement` (reference to another class)
-- **Enums**: `OpportunityStatus` (predefined values)
-- **Maps**: `map<string, string>` (key-value pairs)
-
-### Field Annotations
-
-- `@description("text")` - Helps LLM understand what to extract
-- `@alias("alternate name")` - Use different name in output
-- `@@description(#"multi-line"#)` - Class-level description
-
-### Generate Python Types
-
-After modifying BAML files:
+After modifying `.baml` files, regenerate Python types:
 
 ```bash
 cd genai_graph/ekg
@@ -430,7 +414,6 @@ been created first (either earlier in `--all-graphs` or manually).
 ## Step 4: Extract Data from Documents
 
 ```bash
-# Extract with BAML
 cli baml extract \
   '${paths.rainbow_md}/real' \
   '${paths.rainbow_json}' \
@@ -439,22 +422,18 @@ cli baml extract \
   --force
 ```
 
-This runs LLM extraction on markdown files and generates JSON.
+This runs LLM extraction on markdown files and generates one JSON file per document.
 
 ## Step 5: Build Knowledge Graph
 
 ```bash
-# Build single KG
-export KG_CONFIG=my_kg
-cli kg create
-
-# Build all KGs
-cli kg create --all-graphs
-
-# Or specify directly
+# Build a specific KG
 cli kg create --kg my_kg
 
-# View in browser
+# Build all KGs defined in ekg.yaml
+cli kg create --all-graphs
+
+# Open HTML visualization in browser
 cli kg view
 ```
 
@@ -650,14 +629,11 @@ created and no relationship endpoints reference them.
 
 ### Testing
 ```bash
-# Build test KG
-export KG_CONFIG=my_kg
-cli kg create
-
-# View in browser
+# Build and view a test KG
+cli kg create --kg my_kg
 cli kg view
 
-# Build all KGs (regression test)
+# Regression: build all KGs
 cli kg create --all-graphs
 ```
 
@@ -677,11 +653,11 @@ cli kg create --all-graphs
 
 ### Issue: "Cannot find property X for n"
 **Cause**: Schema evolved but old parquet caches exist  
-**Solution**: Delete parquet caches and rebuild:
+**Solution**: Clear parquet caches and rebuild:
 ```bash
-rm -rf /home/tcl/kg_outputs/*/parquet
-cli kg create --all-graphs
+cli kg create --all-graphs --clear-all-caches
 ```
+See [Cache Management](cache_management.md) for details.
 
 ### Issue: "No graphs are registered in the GraphRegistry"
 **Cause**: Factory import failed (syntax error, missing dependency, etc.)  

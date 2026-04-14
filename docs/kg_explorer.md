@@ -43,14 +43,14 @@ The KG Explorer is a Streamlit page that provides an interactive interface for e
 
 1. Make sure you have a Knowledge Graph database set up:
    ```bash
-   uv run cli kg create
-   uv run cli kg add-doc --key <your-key>
+   cli kg create --kg <your-kg-name>
    ```
 
 2. Launch the Streamlit app:
    ```bash
-   cd /home/tcl/prj/genai-graph
-   streamlit run genai_graph/webapp/main.py
+   make webapp
+   # or directly:
+   uv run streamlit run genai_graph/main/streamlit.py
    ```
 
 3. Navigate to "KG Explorer" in the sidebar
@@ -115,8 +115,8 @@ The KG Explorer uses the default graph database configuration. To change it, mod
 The KG Explorer uses the `generate_html()` function with a custom query parameter to visualize Cypher query results:
 
 ```python
-from genai_graph.core.graph_backend import create_backend_from_config
-from genai_graph.core.graph_html import generate_html
+from genai_graph.kg.backend import create_backend_from_config
+from genai_graph.kg.export.html import generate_html
 
 backend = create_backend_from_config("default")
 html = generate_html(

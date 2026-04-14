@@ -1,53 +1,138 @@
-# Agentic Graph Rag 
+# GenAI Graph
 
+Knowledge graph construction pipeline built on top of [genai-tk](../genai-tk/README.md).
 
+Combines heterogeneous data sources (Neo4j exports, database/Excel files, LLM-extracted
+documents via BAML) into a unified [Ladybug](https://github.com/LadybugDB/ladybug) graph
+database with Streamlit and CLI interfaces.
 
-## CLI Examples :
-### PPT tp PDF
-- ```uv run cli tools ppt2pdf '${paths.rainbow_ppt}' '${paths.rainbow_pdf}' --force --recursive- ```
+---
 
-### PDF to Markdown
-- ```uv run cli tools markdownize  '${paths.rainbow_pdf}' '${paths.rainbow_md}.real'  --include "*Pizza Service*"  --mistral-ocr  --force --recursive  ```
+## Documentation
 
-### Markdown to JSON
-- ```cli baml extract  '${paths.rainbow_md}/real' '${paths.rainbow_json}'  --function ExtractRainbow  --include "*CNES_TMA_VENUS*.md"  --force``
+| Doc | Topic |
+|-----|-------|
+| [docs/graph_construction.md](docs/graph_construction.md) | Architecture, factories, canonical types, schema merging, CLI reference |
+| [docs/baml_extraction_guide.md](docs/baml_extraction_guide.md) | BAML schema → JSON → graph factory patterns |
+| [docs/primary_key_implementation.md](docs/primary_key_implementation.md) | `key_from` options: field, AUTO_ID, lambda, None-skip |
+| [docs/prefect_dag_pipeline.md](docs/prefect_dag_pipeline.md) | Prefect DAG internals, import ordering, concurrency model |
+| [docs/kg_explorer.md](docs/kg_explorer.md) | KG Explorer Streamlit page (Cypher UI, Text-to-Cypher) |
+| [docs/cache_management.md](docs/cache_management.md) | Parquet cache invalidation: when and how to clear |
+| [Agents_Skills.md](Agents_Skills.md) | Step-by-step procedures for common codebase tasks |
 
-### Markdown to Vector
-- ```cli rag add-files '${paths.rainbow_md}/real' ```
+For BAML tool fundamentals (writing `.baml`, generating types, CLI) see the
+[genai-tk BAML docs](../genai-tk/docs/baml.md).
 
-### Markdown to Graph
-- ``` export KG_CONFIG=simple_with_db; cli kg create;cli kg view
+---
 
-### RAG query
-- ```cli rag query "CNES" --filter '{"file_hash": "1fa730def69ff25e"}'  ```
+## Quick Start
 
-# Fake Rainbow JSON
-- ```cli baml run FakeRainbowJson -i "Project for ESA; Marc Ferrer as sales lead in Atos team" --out-dir '${paths.rainbow_json}/fake' --out-file fake_esa_1.json ```
+```bash
+# Install
+uv sync
 
-# Fake ADD JSON
-- ```cli baml run FakeArchitectureJson -i "IT platform for CNES with 3-tier, Java based"  --out-dir '${paths.add_json}/fake' --out-file fake_add_CNES_1.json ```
+# Run Streamlit app
+make webapp
 
-# Neo4j Import
-### Analyze schema
-```uv run cli neo4j analyze '${paths.stratnav_db}/26-01-2018/sn-v3-q4-2026-01-28.jsonl' -o '${paths.stratnav_db}/26-01-2018/schema.cypher' ```
+# CLI help
+uv run cli --help
+```
 
-### Create subset for testing (with optional anonymization)
-```uv run cli neo4j subset '${paths.stratnav_db}/26-01-2018/sn-v3-q4-2026-01-28.jsonl'  '${paths.stratnav_db}/subset/sn-subset.jsonl' --max-nodes 20 --max-rels 20  ```
+---
 
-### import 
-```uv run cli neo4j import '${paths.stratnav_db}/subset/sn-subset.jsonl' --db '${paths.stratnav_db}/subset/ladybug_db' -f```
-```uv run cli neo4j import '${paths.stratnav_db}/26-01-2018/sn-v3-q4-2026-01-28.jsonl' --db '${paths.stratnav_db}/26-01-2018/sn-v3-q4-2026-01-28/ladybug_db' -f```
+## Document Pipeline
 
+End-to-end pipeline from raw documents to a queryable knowledge graph:
 
-### Query the database
-```uv run cli neo4j query "MATCH (n) RETURN labels(n), count(*) " --db '${paths.stratnav_db}/subset/ladybug_db'  ```
+```bash
+# 1. Convert PDFs / PowerPoints to Markdown
+cli tools ppt2pdf '${paths.rainbow_ppt}' '${paths.rainbow_pdf}' --recursive
+cli tools markdownize '${paths.rainbow_pdf}' '${paths.rainbow_md}' --recursive
 
-### Get database info
-```uv run cli neo4j info --db --db '${paths.stratnav_db}/subset/ladybug_db' ```
+# 2. Extract structured data with BAML (LLM)
+cli baml extract '${paths.rainbow_md}' '${paths.rainbow_json}' \
+  --function ExtractRainbow \
+  --include "*.md" \
+  --recursive
 
+# 3. Build the knowledge graph
+cli kg create --kg my_kg
 
-```uv run cli kg delete -f ; uv run cli kg add-doc --key fake-cnes-1 --subgraph ArchitectureDocument```
+# 4. View in browser
+cli kg view
+```
 
+---
 
-```uv run cli kg delete -f ; uv run cli kg add-doc --key cnes-venus-tma --g ReviewedOpportunity ; uv run cli kg add-doc --key fake-cnes-1 -g ArchitectureDocument; uv run cli kg export-html``
+## Knowledge Graph CLI
+
+```bash
+# Create / rebuild
+cli kg create                        # Uses kg_config from config
+cli kg create --kg <name>            # Specific KG
+cli kg create --all-graphs           # All KGs in ekg.yaml
+cli kg create --kg <name> --force-rebuild        # Ignore fingerprint cache
+cli kg create --kg <name> --clear-all-caches     # Clear parquet caches first
+
+# Inspect
+cli kg schema                        # Node/relationship schema
+cli kg info                          # DB stats and subgraph overview
+cli kg cypher "MATCH (n) RETURN labels(n), count(*)"
+cli kg query "Which customers have the most opportunities?"
+cli kg view                          # Open HTML visualization in browser
+```
+
+---
+
+## Neo4j Import
+
+```bash
+# Analyze a Neo4j JSONL export
+cli neo4j analyze path/to/export.jsonl -o path/to/schema.cypher
+
+# Create a small test subset
+cli neo4j subset path/to/export.jsonl path/to/subset.jsonl \
+  --max-nodes 20 --max-rels 20
+
+# Import into Ladybug
+cli neo4j import path/to/export.jsonl --db path/to/ladybug_db -f
+
+# Query the imported database
+cli neo4j query "MATCH (n) RETURN labels(n), count(*)" --db path/to/ladybug_db
+
+# Database info
+cli neo4j info --db path/to/ladybug_db
+```
+
+---
+
+## Fake Data Generation
+
+Generate fake JSON files for testing:
+
+```bash
+# Fake Rainbow (opportunity review) JSON
+cli baml run FakeRainbowJson \
+  -i "Project for ESA; Marc Ferrer as sales lead" \
+  --out-dir '${paths.rainbow_json}/fake' \
+  --out-file fake_esa_1.json
+
+# Fake Architecture Document JSON
+cli baml run FakeArchitectureJson \
+  -i "IT platform for CNES with 3-tier, Java based" \
+  --out-dir '${paths.add_json}/fake' \
+  --out-file fake_add_CNES_1.json
+```
+
+---
+
+## Development
+
+```bash
+make install-dev   # Install with dev dependencies
+make fmt           # Format with ruff
+make lint          # Lint with ruff
+make test          # Run all tests
+make webapp        # Launch Streamlit app
+```
 
