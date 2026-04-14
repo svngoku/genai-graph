@@ -2,6 +2,7 @@
 
 import pytest
 from pydantic import BaseModel
+from unittest.mock import MagicMock
 
 from genai_graph.kg.schema import GraphNode
 
@@ -95,3 +96,79 @@ def test_computed_key_empty_error():
 
     error_msg = str(exc_info.value)
     assert "Computed key is empty" in error_msg
+
+
+# ---------------------------------------------------------------------------
+# merge_nodes_batch error-enhancement path
+# ---------------------------------------------------------------------------
+
+
+class _SchemaNode(BaseModel):
+    id: str
+    name: str
+    score: float
+
+
+class TestMergeNodesBatchErrorHandler:
+    """Cover the 'Cannot find property' error-enhancement branch in merge_nodes_batch.
+
+    This branch reads config.field_names; a regression would raise AttributeError
+    instead of the expected RuntimeError from the DB call.
+    """
+
+    def _make_conn(self, side_effect: Exception) -> MagicMock:
+        """Build a mock KgBackend whose inner .conn.execute raises side_effect."""
+        inner = MagicMock()
+        inner.execute.side_effect = side_effect
+        conn = MagicMock()
+        conn.conn = inner
+        return conn
+
+    def test_cannot_find_property_logs_schema_fields(self):
+        """Error-enhancement path must not raise AttributeError on config.field_names.
+
+        Regression test: before the fix, the except block accessed config.field_types
+        (removed attribute) and raised AttributeError, masking the real DB error.
+        """
+        from genai_graph.kg.ingest.merge import (
+            NodeDataCollection,
+            NodeTypeConfig,
+            NodeTypeRegistry,
+            _build_node_arrow_schema,
+            merge_nodes_batch,
+        )
+
+        schema = _build_node_arrow_schema(_SchemaNode, primary_key_field="id")
+        config = NodeTypeConfig(node_type="_SchemaNode", primary_key_field="id", arrow_schema=schema)
+        registry = NodeTypeRegistry()
+        registry.register(config)
+
+        nodes = NodeDataCollection()
+        nodes.add("_SchemaNode", {"id": "n1", "name": "A", "score": 1.0})
+
+        conn = self._make_conn(RuntimeError("Cannot find property bad_field in node _SchemaNode"))
+
+        # Must re-raise the original RuntimeError, NOT an AttributeError
+        with pytest.raises(RuntimeError, match="Cannot find property"):
+            merge_nodes_batch(conn, nodes, registry)
+
+    def test_generic_error_logged_without_attribute_error(self):
+        """Generic (non-property) errors must propagate without AttributeError."""
+        from genai_graph.kg.ingest.merge import (
+            NodeDataCollection,
+            NodeTypeConfig,
+            NodeTypeRegistry,
+            merge_nodes_batch,
+        )
+
+        config = NodeTypeConfig(node_type="_SchemaNode", primary_key_field="id")
+        registry = NodeTypeRegistry()
+        registry.register(config)
+
+        nodes = NodeDataCollection()
+        nodes.add("_SchemaNode", {"id": "n1", "name": "A", "score": 1.0})
+
+        conn = self._make_conn(RuntimeError("Some unrelated DB failure"))
+
+        with pytest.raises(RuntimeError, match="Some unrelated DB failure"):
+            merge_nodes_batch(conn, nodes, registry)
