@@ -11,11 +11,10 @@ from pydantic import BaseModel
 
 from genai_graph.kg.ingest.arrow_utils import (
     arrow_type_contains_struct,
-    build_node_arrow_schema,
     ladybug_type_to_arrow,
     pydantic_annotation_to_arrow,
 )
-
+from genai_graph.kg.ingest.merge import _build_node_arrow_schema as build_node_arrow_schema
 
 # ---------------------------------------------------------------------------
 # pydantic_annotation_to_arrow

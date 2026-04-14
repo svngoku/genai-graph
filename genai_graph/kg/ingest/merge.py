@@ -21,7 +21,10 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from genai_graph.kg.backend import KgBackend
-from genai_graph.kg.ingest.arrow_utils import build_node_arrow_schema as _build_node_arrow_schema
+from genai_graph.kg.ingest.arrow_utils import (
+    arrow_type_contains_struct,
+    pydantic_annotation_to_arrow,
+)
 from genai_graph.kg.manager import KgManager
 
 if TYPE_CHECKING:
@@ -32,6 +35,82 @@ if TYPE_CHECKING:
 # =============================================================================
 # Type definitions for node data structures
 # =============================================================================
+
+
+def _build_node_arrow_schema(
+    node_class: type,
+    primary_key_field: str = "id",
+    excluded_fields: set[str] | None = None,
+    embedded_struct_classes: list[type] | None = None,
+    embedding_field_dimensions: dict[str, int] | None = None,
+) -> pa.Schema:
+    """Build a ``pa.Schema`` for a Pydantic node class that mirrors the Ladybug table.
+
+    Column rules (applied in order):
+
+    1. **Sentinel columns** — ``primary_key_field``, ``"name"``, ``"_original_name"``
+       are always prepended as ``pa.string()``, deduplicated when
+       ``primary_key_field == "name"``.
+    2. **Excluded fields** — skipped (``p_*_`` edge-property sentinels and
+       relationship-target sub-model fields from
+       ``GraphSchema._compute_excluded_fields``).
+    3. **Embedded structs** — sub-models in ``embedded_struct_classes`` become
+       ``pa.struct(...)`` columns in model-definition order.
+    4. **Embedding vectors** — ``*_embedding`` fields become ``pa.list_(pa.float64())``.
+    5. **Un-listed struct-typed fields** — skipped (safety net for rel targets).
+    6. **Everything else** — type from :func:`~arrow_utils.pydantic_annotation_to_arrow`.
+    7. **Timestamp sentinels** — ``_created_at`` / ``_updated_at`` appended if absent.
+
+    Args:
+        node_class: Pydantic class whose ``model_fields`` define the columns.
+        primary_key_field: Primary key column name.
+        excluded_fields: Column names to skip (p_*_ sentinels + rel targets).
+        embedded_struct_classes: Sub-model classes stored inline as STRUCT columns.
+        embedding_field_dimensions: Field name → vector dimension (flags a field as
+            an embedding; stored type is always ``list<float64>``).
+
+    Returns:
+        ``pa.Schema`` ready for LOAD FROM MERGE operations.
+    """
+    from genai_graph.kg.schema.core import find_embedded_field_for_class
+
+    excluded = excluded_fields or set()
+    struct_map: dict[str, type] = {
+        field_name: emb_cls
+        for emb_cls in (embedded_struct_classes or [])
+        if (field_name := find_embedded_field_for_class(node_class, emb_cls))
+    }
+    emb_dims = embedding_field_dimensions or {}
+    fields: list[pa.Field] = []
+    seen: set[str] = set()
+
+    for name in dict.fromkeys([primary_key_field, "name", "_original_name"]):
+        if name not in excluded:
+            fields.append(pa.field(name, pa.string()))
+            seen.add(name)
+
+    for field_name, field_info in getattr(node_class, "model_fields", {}).items():
+        if field_name in seen or field_name in excluded:
+            continue
+        seen.add(field_name)
+        if field_name in struct_map:
+            emb_cls = struct_map[field_name]
+            fields.append(pa.field(field_name, pa.struct([
+                pa.field(n, pydantic_annotation_to_arrow(fi.annotation))
+                for n, fi in emb_cls.model_fields.items()
+            ])))
+        elif field_name in emb_dims or field_name.endswith("_embedding"):
+            fields.append(pa.field(field_name, pa.list_(pa.float64())))
+        else:
+            arrow_type = pydantic_annotation_to_arrow(field_info.annotation)
+            if not arrow_type_contains_struct(arrow_type):
+                fields.append(pa.field(field_name, arrow_type))
+
+    for ts in ("_created_at", "_updated_at"):
+        if ts not in seen:
+            fields.append(pa.field(ts, pa.string()))
+
+    return pa.schema(fields)
 
 
 # A single node's properties as a dictionary
