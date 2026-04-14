@@ -930,7 +930,7 @@ def _pandas_to_arrow_with_structs(
     matches the Ladybug schema definition (Ladybug rejects mismatched order).
     This is used only in the parquet import path where data arrives as pandas.
     """
-    from genai_graph.kg.ingest.merge import _ladybug_type_to_arrow
+    from genai_graph.kg.ingest.arrow_utils import ladybug_type_to_arrow
 
     if not struct_field_types:
         return pa.Table.from_pandas(df)
@@ -938,7 +938,7 @@ def _pandas_to_arrow_with_structs(
     schema_overrides: dict[str, pa.DataType] = {}
     for col_name, sub_fields in struct_field_types.items():
         if col_name in df.columns:
-            arrow_fields = [(fname, _ladybug_type_to_arrow(ftype)) for fname, ftype in sub_fields.items()]
+            arrow_fields = [(fname, ladybug_type_to_arrow(ftype)) for fname, ftype in sub_fields.items()]
             schema_overrides[col_name] = pa.struct(arrow_fields)
 
     if not schema_overrides:
