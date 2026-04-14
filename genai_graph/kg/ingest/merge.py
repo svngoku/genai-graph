@@ -92,8 +92,7 @@ def _pydantic_annotation_to_arrow(annotation: Any) -> pa.DataType:
     # Pydantic sub-model → embedded struct
     if isinstance(annotation, type) and hasattr(annotation, "model_fields"):
         sub_fields = [
-            pa.field(name, _pydantic_annotation_to_arrow(fi.annotation))
-            for name, fi in annotation.model_fields.items()
+            pa.field(name, _pydantic_annotation_to_arrow(fi.annotation)) for name, fi in annotation.model_fields.items()
         ]
         return pa.struct(sub_fields)
 
@@ -816,7 +815,7 @@ def merge_nodes_batch(
                 match = re.search(r"Cannot find property (\w+)", error_msg)
                 if match:
                     missing_prop = match.group(1)
-                    schema_fields = list(config.field_types.keys())[:10]
+                    schema_fields = list(config.field_names)[:10]
                     logger.error(
                         f"Schema mismatch for {node_type}: property '{missing_prop}' not in database schema. "
                         f"Schema fields: {', '.join(schema_fields)}. "
