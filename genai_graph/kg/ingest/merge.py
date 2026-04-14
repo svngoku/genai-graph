@@ -12,16 +12,16 @@ from __future__ import annotations
 
 import json
 import re
-import types as _types
 from datetime import datetime, timezone
 from enum import Enum
-from typing import TYPE_CHECKING, Any, get_args, get_origin
+from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 from loguru import logger
 from pydantic import BaseModel, Field
 
 from genai_graph.kg.backend import KgBackend
+from genai_graph.kg.ingest.arrow_utils import build_node_arrow_schema as _build_node_arrow_schema
 from genai_graph.kg.manager import KgManager
 
 if TYPE_CHECKING:
@@ -32,189 +32,6 @@ if TYPE_CHECKING:
 # =============================================================================
 # Type definitions for node data structures
 # =============================================================================
-
-
-def _ladybug_type_to_arrow(type_str: str) -> pa.DataType:
-    """Map a Ladybug/Kuzu type string to a PyArrow data type."""
-    type_str = type_str.strip()
-    if type_str.endswith("[]"):
-        inner = type_str[:-2]
-        return pa.list_(_ladybug_type_to_arrow(inner))
-    upper = type_str.upper()
-    if upper == "STRING":
-        return pa.string()
-    if upper in ("DOUBLE", "FLOAT"):
-        return pa.float64()
-    if upper in ("INT64", "INT32", "INT16"):
-        return pa.int64()
-    if upper == "BOOL":
-        return pa.bool_()
-    return pa.string()  # fallback
-
-
-def _pydantic_annotation_to_arrow(annotation: Any) -> pa.DataType:
-    """Convert a Python type annotation directly to a PyArrow DataType.
-
-    Handles all types that appear in Pydantic node models:
-    - Primitives: str, int, float, bool
-    - Optional[T] / T | None → unwrap and recurse
-    - list[T] → pa.list_(T) recursively
-    - Enum subclasses → pa.string()
-    - Pydantic sub-models (embedded structs) → pa.struct([...]) recursively
-    - Unknown types → pa.string() fallback
-    """
-    import typing
-
-    if annotation is None or annotation is type(None):
-        return pa.string()
-
-    origin = get_origin(annotation)
-
-    # Unwrap Optional[X] / Union[X, None] / X | None — then recurse
-    if origin is typing.Union or isinstance(annotation, _types.UnionType):
-        non_none = [a for a in get_args(annotation) if a is not type(None)]
-        return _pydantic_annotation_to_arrow(non_none[0]) if non_none else pa.string()
-
-    # list[T]
-    if origin is list:
-        args = get_args(annotation)
-        return pa.list_(_pydantic_annotation_to_arrow(args[0]) if args else pa.string())
-
-    # Primitives
-    _PRIMITIVE_MAP = {str: pa.string(), float: pa.float64(), int: pa.int64(), bool: pa.bool_()}
-    if annotation in _PRIMITIVE_MAP:
-        return _PRIMITIVE_MAP[annotation]
-
-    # Enum → stored as string
-    if isinstance(annotation, type) and issubclass(annotation, Enum):
-        return pa.string()
-
-    # Pydantic sub-model → embedded struct
-    if isinstance(annotation, type) and hasattr(annotation, "model_fields"):
-        sub_fields = [
-            pa.field(name, _pydantic_annotation_to_arrow(fi.annotation)) for name, fi in annotation.model_fields.items()
-        ]
-        return pa.struct(sub_fields)
-
-    return pa.string()  # fallback
-
-
-def _arrow_type_contains_struct(arrow_type: pa.DataType) -> bool:
-    """Return True if the Arrow type is (or contains) a struct type.
-
-    Used to detect Pydantic sub-model fields that represent separate graph nodes
-    (relationship targets) rather than inline stored properties.  Only struct types
-    that are *explicitly* listed as embedded_struct_classes should become STRUCT columns;
-    all others should be excluded from the node Arrow schema.
-    """
-    if pa.types.is_struct(arrow_type):
-        return True
-    if pa.types.is_list(arrow_type):
-        return _arrow_type_contains_struct(arrow_type.value_type)
-    return False
-
-
-def _build_node_arrow_schema(
-    node_class: type,
-    embedded_struct_classes: list[type] | None = None,
-    embedding_field_dimensions: dict[str, int] | None = None,
-    primary_key_field: str = "id",
-    excluded_fields: set[str] | None = None,
-) -> pa.Schema:
-    """Build an explicit PyArrow schema for a graph node class.
-
-    The schema is derived entirely from the Pydantic model's type annotations,
-    making it the single source of truth for column names and types.
-
-    Field rules:
-    - Fields in ``excluded_fields`` are skipped (edge properties, relationship targets)
-    - Struct fields (Pydantic sub-models listed in ``embedded_struct_classes``)
-      are typed as ``pa.struct(...)`` with sub-fields in model-definition order
-    - Embedding fields (``*_embedding``) are typed as ``pa.list_(pa.float64())``
-      regardless of the annotation
-    - Fields whose resolved Arrow type contains a struct but are NOT in
-      ``embedded_struct_classes`` are also skipped (safety net for relationship
-      targets not yet in ``excluded_fields``)
-    - All other fields follow ``_pydantic_annotation_to_arrow``
-    - Timestamp sentinels ``_created_at`` and ``_updated_at`` are appended as
-      ``pa.string()`` if not already in the model
-
-    Args:
-        node_class: Pydantic class whose ``model_fields`` define the columns
-        embedded_struct_classes: Sub-model classes stored as Ladybug STRUCT columns
-        embedding_field_dimensions: Maps field name → vector dimension
-        primary_key_field: The primary key field name (not altered by this fn)
-        excluded_fields: Field names to skip entirely (populated by
-            ``GraphSchema._compute_excluded_fields`` to exclude edge-property
-            ``p_*_`` sentinels and relationship-target sub-model fields)
-
-    Returns:
-        ``pa.Schema`` with one field per column in model-definition order,
-        followed by ``_created_at`` and ``_updated_at`` if absent.
-    """
-    from genai_graph.kg.schema.core import find_embedded_field_for_class
-
-    embedded_struct_classes = embedded_struct_classes or []
-    embedding_field_dimensions = embedding_field_dimensions or {}
-    excluded_fields = excluded_fields or set()
-
-    # Build a set of field names that map to embedded structs so we can
-    # give them an explicit pa.struct(...) type with schema-ordered sub-fields.
-    struct_field_map: dict[str, type] = {}
-    for emb_cls in embedded_struct_classes:
-        field_name = find_embedded_field_for_class(node_class, emb_cls)
-        if field_name:
-            struct_field_map[field_name] = emb_cls
-
-    fields: list[pa.Field] = []
-    seen: set[str] = set()
-
-    # Prepend sentinel columns that may not exist on the Pydantic model.
-    # Mirror the order used by extract.py::create_schema so the Ladybug table
-    # definition matches the Arrow table column order.
-    # Use dict.fromkeys to deduplicate while preserving order (e.g. when
-    # primary_key_field == "name", avoid adding "name" twice).
-    for sentinel_name in dict.fromkeys([primary_key_field, "name", "_original_name"]):
-        if sentinel_name not in excluded_fields:
-            fields.append(pa.field(sentinel_name, pa.string()))
-            seen.add(sentinel_name)
-
-    if hasattr(node_class, "model_fields"):
-        for field_name, field_info in node_class.model_fields.items():
-            if field_name in seen:
-                continue  # already added as a sentinel column; don't double-add
-            seen.add(field_name)
-            # Primary exclusion: skip fields explicitly excluded by GraphSchema
-            # (edge-property p_*_ sentinels and relationship-target sub-models)
-            if field_name in excluded_fields:
-                continue
-            if field_name in struct_field_map:
-                # Embedded struct: build pa.struct from sub-model fields in definition order
-                emb_cls = struct_field_map[field_name]
-                sub_fields = [
-                    pa.field(sf_name, _pydantic_annotation_to_arrow(sf_info.annotation))
-                    for sf_name, sf_info in emb_cls.model_fields.items()
-                ]
-                fields.append(pa.field(field_name, pa.struct(sub_fields)))
-            elif field_name in embedding_field_dimensions or field_name.endswith("_embedding"):
-                # Embedding vectors are always list<float64>
-                fields.append(pa.field(field_name, pa.list_(pa.float64())))
-            else:
-                arrow_type = _pydantic_annotation_to_arrow(field_info.annotation)
-                # Skip fields whose type resolves to a struct (or list-of-struct): these are
-                # Pydantic sub-models that represent separate graph nodes linked via relationships,
-                # NOT stored as properties on this node table.  Only sub-models explicitly listed
-                # in embedded_struct_classes (handled above) become STRUCT columns.
-                if _arrow_type_contains_struct(arrow_type):
-                    continue
-                fields.append(pa.field(field_name, arrow_type))
-
-    # Always include timestamp sentinels
-    for ts in ("_created_at", "_updated_at"):
-        if ts not in seen:
-            fields.append(pa.field(ts, pa.string()))
-
-    return pa.schema(fields)
 
 
 # A single node's properties as a dictionary
@@ -485,10 +302,10 @@ class NodeTypeConfig(BaseModel):
 
         arrow_schema = _build_node_arrow_schema(
             node_class=node.node_class,
+            primary_key_field=primary_key_field,
+            excluded_fields=set(node.excluded_fields),
             embedded_struct_classes=list(getattr(node, "embedded_struct_classes", None) or []),
             embedding_field_dimensions=dict(getattr(node, "_embedding_field_dimensions", None) or {}),
-            primary_key_field=primary_key_field,
-            excluded_fields=set(node.excluded_fields),  # p_*_ sentinels + rel-target sub-models
         )
 
         return cls(
