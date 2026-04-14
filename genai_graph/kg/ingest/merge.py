@@ -809,20 +809,25 @@ def merge_nodes_batch(
 
         except Exception as e:
             error_msg = str(e)
-            # Enhance error message with context
-            if "Cannot find property" in error_msg:
-                # Extract property name from error
-                match = re.search(r"Cannot find property (\w+)", error_msg)
-                if match:
-                    missing_prop = match.group(1)
-                    schema_fields = list(config.field_names)[:10]
-                    logger.error(
-                        f"Schema mismatch for {node_type}: property '{missing_prop}' not in database schema. "
-                        f"Schema fields: {', '.join(schema_fields)}. "
-                        f"This usually means the field exists in data but wasn't defined in the node's Pydantic model."
-                    )
-            else:
+            # Enhance error message with context — wrapped in its own try/except
+            # so a bug in this block can never mask the original exception.
+            try:
+                if "Cannot find property" in error_msg:
+                    match = re.search(r"Cannot find property (\w+)", error_msg)
+                    if match:
+                        missing_prop = match.group(1)
+                        schema_fields = list(config.field_names)[:10]
+                        logger.error(
+                            f"Schema mismatch for {node_type}: property '{missing_prop}' not in database schema. "
+                            f"Schema fields: {', '.join(schema_fields)}. "
+                            f"This usually means the field exists in data but wasn't defined in the node's Pydantic model."
+                        )
+                else:
+                    logger.error(f"Error in batch merge for {node_type}: {e}")
+            except Exception as fmt_exc:  # noqa: BLE001
+                # Error-formatting failure: log it separately, then re-raise the original
                 logger.error(f"Error in batch merge for {node_type}: {e}")
+                logger.warning(f"(Error formatter also failed: {fmt_exc})")
             raise
 
         result.stats[node_type] = type_stats

@@ -172,3 +172,38 @@ class TestMergeNodesBatchErrorHandler:
 
         with pytest.raises(RuntimeError, match="Some unrelated DB failure"):
             merge_nodes_batch(conn, nodes, registry)
+
+    def test_broken_formatter_does_not_mask_original_error(self):
+        """A bug in the error-formatter must NEVER replace the original exception.
+
+        This is the root cause of the original issue: the except block accessed
+        config.field_types (gone after refactor), which raised AttributeError and
+        replaced the real DB error in the caller's error log. The formatter is now
+        wrapped in its own try/except so the original exception always propagates.
+        """
+        from unittest.mock import patch
+
+        from genai_graph.kg.ingest.merge import (
+            NodeDataCollection,
+            NodeTypeConfig,
+            NodeTypeRegistry,
+            _build_node_arrow_schema,
+            merge_nodes_batch,
+        )
+
+        schema = _build_node_arrow_schema(_SchemaNode, primary_key_field="id")
+        config = NodeTypeConfig(node_type="_SchemaNode", primary_key_field="id", arrow_schema=schema)
+        registry = NodeTypeRegistry()
+        registry.register(config)
+
+        nodes = NodeDataCollection()
+        nodes.add("_SchemaNode", {"id": "n1", "name": "A", "score": 1.0})
+
+        # DB raises the real error
+        conn = self._make_conn(RuntimeError("Cannot find property broken_col in _SchemaNode"))
+
+        # Simulate a future regression: field_names is deleted/broken
+        with patch.object(type(config), "field_names", new_callable=lambda: property(lambda self: (_ for _ in ()).throw(AttributeError("field_names gone")))):
+            # The ORIGINAL RuntimeError must still propagate, NOT AttributeError from formatter
+            with pytest.raises(RuntimeError, match="Cannot find property"):
+                merge_nodes_batch(conn, nodes, registry)

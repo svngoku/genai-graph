@@ -234,7 +234,8 @@ def add_documents_to_graph(
 
             full_msg = f"Failed to process key {key}: {error_msg}{hint}"
             logger.error(full_msg)
-            logger.debug(traceback.format_exc())
+            # Always log the full traceback at ERROR so it's visible without debug logging
+            logger.error("Full traceback:\n" + traceback.format_exc())
 
             # Propagate to KgManager so failures appear in the warnings report
             if context:
