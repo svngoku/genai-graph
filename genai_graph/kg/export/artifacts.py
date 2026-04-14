@@ -670,39 +670,31 @@ def save_parquet_from_collector(
     node_tables: list[str] = []
     rel_tables: list[str] = []
 
-    # Export node DataFrames
-    for node_type, df in collector.nodes.items():
-        if df.empty:
+    # Export node tables
+    for node_type, table in collector.nodes.items():
+        if table.num_rows == 0:
             continue
         try:
             parquet_path = nodes_dir / f"{node_type}.parquet"
-            # Use _df_to_arrow with struct_field_types so that struct columns in
-            # the parquet file have fields in schema-defined order.  Plain
-            # df.to_parquet() alphabetises dict keys which breaks Ladybug on import.
-            struct_types = collector.node_struct_field_types.get(node_type)
-            if struct_types:
-                from genai_graph.kg.ingest.merge import _df_to_arrow
-
-                arrow_table = _df_to_arrow(df, struct_field_types=struct_types)
-                pq.write_table(arrow_table, str(parquet_path))
-            else:
-                df.to_parquet(str(parquet_path), index=False)
-            total_nodes += len(df)
+            # Struct field order is already baked into the Arrow schema,
+            # so pq.write_table preserves it correctly.
+            pq.write_table(table, str(parquet_path))
+            total_nodes += table.num_rows
             node_tables.append(node_type)
-            logger.debug(f"Saved {len(df)} {node_type} nodes to parquet from collector")
+            logger.debug(f"Saved {table.num_rows} {node_type} nodes to parquet from collector")
         except Exception as exc:
             logger.warning(f"Failed to save {node_type} nodes to parquet: {exc}")
 
-    # Export relationship DataFrames
-    for rel_type, df in collector.relationships.items():
-        if df.empty:
+    # Export relationship tables
+    for rel_type, table in collector.relationships.items():
+        if table.num_rows == 0:
             continue
         try:
             parquet_path = rels_dir / f"{rel_type}.parquet"
-            df.to_parquet(str(parquet_path), index=False)
-            total_rels += len(df)
+            pq.write_table(table, str(parquet_path))
+            total_rels += table.num_rows
             rel_tables.append(rel_type)
-            logger.debug(f"Saved {len(df)} {rel_type} relationships to parquet from collector")
+            logger.debug(f"Saved {table.num_rows} {rel_type} relationships to parquet from collector")
         except Exception as exc:
             logger.warning(f"Failed to save {rel_type} relationships to parquet: {exc}")
 
@@ -926,6 +918,42 @@ def _parse_struct_field_order(type_str: str) -> list[str]:
         Ordered list of field names
     """
     return list(_parse_struct_field_types(type_str).keys())
+
+
+def _pandas_to_arrow_with_structs(
+    df: pd.DataFrame,
+    struct_field_types: dict[str, dict[str, str]] | None = None,
+) -> pa.Table:
+    """Convert a pandas DataFrame to a PyArrow Table with struct type enforcement.
+
+    For struct columns, an explicit Arrow schema is built so that field order
+    matches the Ladybug schema definition (Ladybug rejects mismatched order).
+    This is used only in the parquet import path where data arrives as pandas.
+    """
+    from genai_graph.kg.ingest.merge import _ladybug_type_to_arrow
+
+    if not struct_field_types:
+        return pa.Table.from_pandas(df)
+
+    schema_overrides: dict[str, pa.DataType] = {}
+    for col_name, sub_fields in struct_field_types.items():
+        if col_name in df.columns:
+            arrow_fields = [(fname, _ladybug_type_to_arrow(ftype)) for fname, ftype in sub_fields.items()]
+            schema_overrides[col_name] = pa.struct(arrow_fields)
+
+    if not schema_overrides:
+        return pa.Table.from_pandas(df)
+
+    arrays = []
+    names = []
+    for col in df.columns:
+        if col in schema_overrides:
+            arrays.append(pa.array(df[col].tolist(), type=schema_overrides[col]))
+        else:
+            arrays.append(pa.Array.from_pandas(df[col]))
+        names.append(col)
+
+    return pa.table(dict(zip(names, arrays, strict=False)))
 
 
 def _reorder_struct_dict(d: dict[str, Any], expected_fields: list[str]) -> dict[str, Any]:
@@ -1171,9 +1199,7 @@ def import_from_parquet(
             # Use struct_col_types so struct columns preserve schema-defined field order
             # (pa.Table.from_pandas alphabetises struct dict keys).
             # NOTE: arrow_df is read by name from this frame by Ladybug's LOAD FROM scanner.
-            from genai_graph.kg.ingest.merge import _df_to_arrow
-
-            arrow_df = _df_to_arrow(df, struct_field_types=struct_col_types or None)  # noqa: F841
+            arrow_df = _pandas_to_arrow_with_structs(df, struct_field_types=struct_col_types or None)  # noqa: F841
 
             if on_create_set:
                 merge_query = f"""
@@ -1194,7 +1220,7 @@ def import_from_parquet(
 
             # Also add to collector if active (so the KG's parquet export includes imported data)
             if collector is not None:
-                collector.add_nodes(node_type, df)
+                collector.add_nodes(node_type, arrow_df)
 
         except Exception as exc:
             # Check for struct field order mismatch error
@@ -1220,7 +1246,9 @@ def import_from_parquet(
                     retry_on_create = ", ".join([f"n.{c} = {c}" for c in retry_other_cols]) if retry_other_cols else ""
                     retry_on_match = ", ".join([f"n.{c} = {c}" for c in retry_other_cols]) if retry_other_cols else ""
                     # NOTE: retry_arrow is read by name from this frame by Ladybug's LOAD FROM scanner.
-                    retry_arrow = _df_to_arrow(df, struct_field_types=struct_col_types or None)  # noqa: F841
+                    retry_arrow = _pandas_to_arrow_with_structs(  # noqa: F841
+                        df, struct_field_types=struct_col_types or None
+                    )
                     if retry_on_create:
                         retry_query = f"""
                             LOAD FROM retry_arrow
@@ -1240,7 +1268,7 @@ def import_from_parquet(
                         f"(dimension mismatch: dropped {embedding_cols})"
                     )
                     if collector is not None:
-                        collector.add_nodes(node_type, df)
+                        collector.add_nodes(node_type, retry_arrow)
                 except Exception as retry_exc:
                     logger.error(f"Failed to import {node_type} nodes even without embeddings: {retry_exc}")
             else:
@@ -1294,13 +1322,7 @@ def import_from_parquet(
 
                     # Also add to collector if active (so the KG's parquet export includes imported data)
                     if collector is not None:
-                        # Re-add the metadata columns for proper export
-                        export_df = merge_df.copy()
-                        export_df["_from_type"] = from_type
-                        export_df["_to_type"] = to_type
-                        export_df["_from_key_field"] = from_key
-                        export_df["_to_key_field"] = to_key
-                        collector.add_relationships(rel_type, export_df)
+                        collector.add_relationships(rel_type, pa.Table.from_pandas(group_df))
 
         except Exception as exc:
             logger.error(f"Failed to import {rel_type} relationships: {exc}")

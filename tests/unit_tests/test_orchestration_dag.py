@@ -393,7 +393,7 @@ class TestKgFactoryConfigFingerprint:
 
 class TestParquetCollectorThreadSafety:
     def test_concurrent_add_nodes(self) -> None:
-        import pandas as pd
+        import pyarrow as pa
 
         from genai_graph.kg.ingest.merge import ParquetCollector
 
@@ -402,8 +402,8 @@ class TestParquetCollectorThreadSafety:
 
         def add_nodes(thread_id: int) -> None:
             barrier.wait()
-            df = pd.DataFrame({"name": [f"node_{thread_id}"]})
-            collector.add_nodes("Person", df)
+            table = pa.table({"name": [f"node_{thread_id}"]})
+            collector.add_nodes("Person", table)
 
         threads = [threading.Thread(target=add_nodes, args=(i,)) for i in range(4)]
         for t in threads:
@@ -414,7 +414,7 @@ class TestParquetCollectorThreadSafety:
         assert collector.get_node_count() == 4
 
     def test_concurrent_add_relationships(self) -> None:
-        import pandas as pd
+        import pyarrow as pa
 
         from genai_graph.kg.ingest.merge import ParquetCollector
 
@@ -423,8 +423,8 @@ class TestParquetCollectorThreadSafety:
 
         def add_rels(thread_id: int) -> None:
             barrier.wait()
-            df = pd.DataFrame({"from_id": [f"a_{thread_id}"], "to_id": [f"b_{thread_id}"]})
-            collector.add_relationships("KNOWS", df)
+            table = pa.table({"from_id": [f"a_{thread_id}"], "to_id": [f"b_{thread_id}"]})
+            collector.add_relationships("KNOWS", table)
 
         threads = [threading.Thread(target=add_rels, args=(i,)) for i in range(4)]
         for t in threads:

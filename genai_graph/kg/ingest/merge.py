@@ -3,9 +3,9 @@
 This module provides utilities for adding nodes and edges to the graph,
 handling automatic merging based on key fields (typically 'name').
 
-Uses Kuzu's DataFrame MERGE capability for efficient batch operations:
-- LOAD FROM df MERGE (n:NodeType {key: key}) for batch node merging
-- LOAD FROM df MATCH ... CREATE for batch relationship creation
+Uses Ladybug's LOAD FROM capability with PyArrow tables for efficient batch operations:
+- LOAD FROM arrow_table MERGE (n:NodeType {key: key}) for batch node merging
+- LOAD FROM arrow_table MATCH ... CREATE for batch relationship creation
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-import pandas as pd
 import pyarrow as pa
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -52,44 +51,12 @@ def _ladybug_type_to_arrow(type_str: str) -> pa.DataType:
     return pa.string()  # fallback
 
 
-def _df_to_arrow(
-    df: pd.DataFrame,
-    struct_field_types: dict[str, dict[str, str]] | None = None,
-) -> pa.Table:
-    """Convert a pandas DataFrame to a PyArrow Table for Ladybug ingestion.
-
-    Ladybug's NumPy scanner doesn't handle pandas 3.x's default ``str`` dtype
-    (``StringDtype``), hitting UNREACHABLE_CODE in numpy_type.cpp. Converting to
-    a PyArrow Table bypasses the NumPy path entirely — Ladybug scans Arrow
-    tables natively.
-
-    For struct columns, an explicit Arrow schema is built so that field order
-    matches the Ladybug schema definition (Ladybug rejects mismatched order).
-    """
-    if not struct_field_types:
-        return pa.Table.from_pandas(df)
-
-    # Build explicit Arrow schema for struct columns
-    schema_overrides: dict[str, pa.DataType] = {}
-    for col_name, sub_fields in struct_field_types.items():
-        if col_name in df.columns:
-            arrow_fields = [(fname, _ladybug_type_to_arrow(ftype)) for fname, ftype in sub_fields.items()]
-            schema_overrides[col_name] = pa.struct(arrow_fields)
-
-    if not schema_overrides:
-        return pa.Table.from_pandas(df)
-
-    # Build per-column arrays with explicit types for struct columns
-    arrays = []
-    names = []
-    for col in df.columns:
-        if col in schema_overrides:
-            arrays.append(pa.array(df[col].tolist(), type=schema_overrides[col]))
-        else:
-            arrays.append(pa.Array.from_pandas(df[col]))
-        names.append(col)
-
-    return pa.table(dict(zip(names, arrays, strict=False)))
+def _is_float_list_column(values: list[Any]) -> bool:
+    """Check if a list of values represents a float-list (embedding) column."""
+    for v in values:
+        if v is not None:
+            return isinstance(v, list) and bool(v) and isinstance(v[0], (int, float)) and not isinstance(v[0], bool)
+    return False
 
 
 # A single node's properties as a dictionary
@@ -181,7 +148,7 @@ class NodeDataCollection(BaseModel):
 
 
 class ParquetCollector(BaseModel):
-    """Collects DataFrames during merge operations for parquet export.
+    """Collects Arrow tables during merge operations for parquet export.
 
     This allows capturing the exact data being merged into the graph,
     avoiding the need to query it back out (which can hit Kuzu bugs).
@@ -190,12 +157,8 @@ class ParquetCollector(BaseModel):
     concurrent bundle preparation tasks can safely append data.
     """
 
-    nodes: dict[str, pd.DataFrame] = Field(default_factory=dict)
-    relationships: dict[str, pd.DataFrame] = Field(default_factory=dict)
-    # Struct field type info per node type, so parquet export can write
-    # struct columns with the correct (schema-defined) field order — pyarrow's
-    # default ``from_pandas`` path alphabetises dict keys which breaks Ladybug.
-    node_struct_field_types: dict[str, dict[str, dict[str, str]]] = Field(default_factory=dict)
+    nodes: dict[str, pa.Table] = Field(default_factory=dict)
+    relationships: dict[str, pa.Table] = Field(default_factory=dict)
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -206,31 +169,33 @@ class ParquetCollector(BaseModel):
 
         object.__setattr__(self, "_lock", threading.Lock())
 
-    def add_nodes(self, node_type: str, df: pd.DataFrame) -> None:
+    def add_nodes(self, node_type: str, table: pa.Table) -> None:
         """Add or append node data for a node type (thread-safe)."""
         lock = object.__getattribute__(self, "_lock")
         with lock:
             if node_type in self.nodes:
-                self.nodes[node_type] = pd.concat([self.nodes[node_type], df], ignore_index=True)
+                self.nodes[node_type] = pa.concat_tables([self.nodes[node_type], table], promote_options="default")
             else:
-                self.nodes[node_type] = df.copy()
+                self.nodes[node_type] = table
 
-    def add_relationships(self, rel_type: str, df: pd.DataFrame) -> None:
+    def add_relationships(self, rel_type: str, table: pa.Table) -> None:
         """Add or append relationship data for a relationship type (thread-safe)."""
         lock = object.__getattribute__(self, "_lock")
         with lock:
             if rel_type in self.relationships:
-                self.relationships[rel_type] = pd.concat([self.relationships[rel_type], df], ignore_index=True)
+                self.relationships[rel_type] = pa.concat_tables(
+                    [self.relationships[rel_type], table], promote_options="default"
+                )
             else:
-                self.relationships[rel_type] = df.copy()
+                self.relationships[rel_type] = table
 
     def get_node_count(self) -> int:
         """Get total node count across all types."""
-        return sum(len(df) for df in self.nodes.values())
+        return sum(t.num_rows for t in self.nodes.values())
 
     def get_relationship_count(self) -> int:
         """Get total relationship count across all types."""
-        return sum(len(df) for df in self.relationships.values())
+        return sum(t.num_rows for t in self.relationships.values())
 
 
 # Global collector instance - set by KG creation flow
@@ -497,19 +462,25 @@ def _format_value_for_cypher(value: Any) -> str:
 # =============================================================================
 
 
-def _prepare_node_dataframe(
+def _prepare_node_arrow_table(
     node_list: list[dict[str, Any]],
     key_field: str,
     field_types: dict[str, str] | None = None,
     struct_field_types: dict[str, dict[str, str]] | None = None,
-) -> pd.DataFrame:
-    """Prepare a DataFrame from a list of node dictionaries for batch merge.
+) -> pa.Table:
+    """Prepare a PyArrow Table from a list of node dictionaries for batch merge.
+
+    Builds a ``pa.Table`` directly from cleaned dictionaries, bypassing pandas
+    entirely so that Ladybug's Arrow scanner is used (avoiding NumPy scanner
+    issues with pandas 3.x ``StringDtype``).
 
     Handles data cleaning:
     - Removes excluded metadata fields
     - Adds timestamps if not present
     - Converts TypedNull markers to appropriate values based on expected type
     - Uses float('nan') for numeric fields and keeps None/empty for strings
+    - Produces struct columns with schema-defined field order
+    - Detects embedding columns (list[float]) and types them as list<float64>
 
     Args:
         node_list: List of node data dictionaries
@@ -520,7 +491,7 @@ def _prepare_node_dataframe(
                            e.g., {"financials": {"tcv": "DOUBLE", "name": "STRING"}}
 
     Returns:
-        DataFrame ready for LOAD FROM MERGE operation
+        PyArrow Table ready for LOAD FROM MERGE operation
     """
     from genai_graph.kg.ingest.extract import TypedNull
 
@@ -575,9 +546,9 @@ def _prepare_node_dataframe(
         return value
 
     if not node_list:
-        return pd.DataFrame()
+        return pa.table({})
 
-    # Fields to exclude from the DataFrame
+    # Fields to exclude
     excluded_metadata_fields = {"created_at", "updated_at", "dedup_key"}
 
     # Clean each node dict
@@ -601,48 +572,41 @@ def _prepare_node_dataframe(
 
         cleaned_nodes.append(cleaned)
 
-    df = pd.DataFrame(cleaned_nodes)
+    # Collect all column names in order of first appearance
+    all_columns: list[str] = []
+    seen: set[str] = set()
+    for node in cleaned_nodes:
+        for key in node:
+            if key not in seen:
+                all_columns.append(key)
+                seen.add(key)
 
-    # Cast float-list (embedding) columns to a pyarrow-backed dtype so Kuzu's
-    # LOAD FROM df scanner identifies them as list<float64> rather than STRING.
-    # This is necessary because pandas uses dtype=object for Python list cells,
-    # which Kuzu would otherwise infer as STRING.
-    try:
-        for col in list(df.columns):
-            if df[col].dtype != object:
-                continue
-            # Sample the first non-null value
-            non_null = df[col].dropna()
-            if non_null.empty:
-                continue
-            sample = non_null.iloc[0]
-            if (
-                isinstance(sample, list)
-                and sample
-                and isinstance(sample[0], (int, float))
-                and not isinstance(sample[0], bool)
-            ):
-                # Cast to an Arrow-backed dtype so Kuzu's LOAD FROM df scanner
-                # identifies the column as list<float64> instead of STRING.
-                # None/NaN → null (preserved by from_pandas=True in pa.array).
-                raw = [v if isinstance(v, list) else None for v in df[col]]
-                arrow_arr = pa.array(raw, type=pa.list_(pa.float64()), from_pandas=True)
-                df[col] = pd.Series(pd.arrays.ArrowExtensionArray(arrow_arr), index=df.index)
-    except Exception:
-        pass  # Non-critical: fall back to object dtype if arrow not available
+    # Build Arrow arrays column by column
+    arrays: list[pa.Array] = []
+    for col in all_columns:
+        values = [node.get(col) for node in cleaned_nodes]
+        if col in struct_field_types:
+            # Build with explicit struct type to preserve schema-defined field order
+            arrow_fields = [(f, _ladybug_type_to_arrow(t)) for f, t in struct_field_types[col].items()]
+            arrays.append(pa.array(values, type=pa.struct(arrow_fields)))
+        elif _is_float_list_column(values):
+            # Embedding columns: explicit list<float64> type
+            arrays.append(pa.array(values, type=pa.list_(pa.float64())))
+        else:
+            arrays.append(pa.array(values))
 
-    return df
+    return pa.table(dict(zip(all_columns, arrays, strict=False)))
 
 
 def _get_columns_for_set_clause(
-    df: pd.DataFrame,
+    columns: list[str],
     key_field: str,
     exclude_on_match: set[str] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Get column names for ON CREATE SET and ON MATCH SET clauses.
 
     Args:
-        df: DataFrame with node data
+        columns: List of column names
         key_field: Primary key field (excluded from SET)
         exclude_on_match: Fields to exclude from ON MATCH SET (like _created_at)
 
@@ -652,7 +616,7 @@ def _get_columns_for_set_clause(
     if exclude_on_match is None:
         exclude_on_match = {"_created_at"}  # Don't update creation timestamp on match
 
-    all_columns = [c for c in df.columns if c != key_field]
+    all_columns = [c for c in columns if c != key_field]
     on_match_columns = [c for c in all_columns if c not in exclude_on_match]
 
     return all_columns, on_match_columns
@@ -687,23 +651,23 @@ def merge_nodes_batch(
         config = registry.get(node_type)
         primary_key_field = config.primary_key_field
 
-        logger.debug(f"Merging {len(node_list)} {node_type} nodes via DataFrame...")
+        logger.debug(f"Merging {len(node_list)} {node_type} nodes via Arrow table...")
 
         type_stats = MergeStats(total=len(node_list))
 
-        # Prepare DataFrame with type hints for both top-level and struct fields
-        df = _prepare_node_dataframe(
+        # Prepare Arrow table with type hints for both top-level and struct fields
+        arrow_table = _prepare_node_arrow_table(
             node_list,
             primary_key_field,
             field_types=config.field_types,
             struct_field_types=config.struct_field_types,
         )
 
-        if df.empty:
+        if arrow_table.num_rows == 0:
             result.stats[node_type] = type_stats
             continue
 
-        # Filter DataFrame to only include fields that are in the node schema
+        # Filter table to only include fields that are in the node schema
         # This prevents errors when data contains extra fields not in the schema
         # When field_types is empty (dynamic Neo4j imports), skip filtering to preserve all data
         if config.field_types:
@@ -718,11 +682,11 @@ def merge_nodes_batch(
             valid_fields.update(config.struct_field_types.keys())
             # Also include dynamically-added embedding columns (not in the Pydantic model,
             # but added by extract_graph_data for index_fields).
-            valid_fields.update(col for col in df.columns if col.endswith("_embedding"))
+            valid_fields.update(col for col in arrow_table.column_names if col.endswith("_embedding"))
 
             # Filter columns to only valid fields
-            df_columns_to_keep = [col for col in df.columns if col in valid_fields]
-            filtered_out = [col for col in df.columns if col not in valid_fields]
+            cols_to_keep = [col for col in arrow_table.column_names if col in valid_fields]
+            filtered_out = [col for col in arrow_table.column_names if col not in valid_fields]
 
             if filtered_out:
                 logger.debug(
@@ -730,10 +694,10 @@ def merge_nodes_batch(
                     f"not in schema: {', '.join(filtered_out[:5])}{'...' if len(filtered_out) > 5 else ''}"
                 )
 
-            df = df[df_columns_to_keep]
+            arrow_table = arrow_table.select(cols_to_keep)
 
         # Get columns for SET clauses
-        on_create_cols, on_match_cols = _get_columns_for_set_clause(df, primary_key_field)
+        on_create_cols, on_match_cols = _get_columns_for_set_clause(arrow_table.column_names, primary_key_field)
 
         # Get the Kuzu connection (handle both KgBackend and raw connection)
         kuzu_conn = conn.conn if hasattr(conn, "conn") else conn  # type: ignore[union-attr]
@@ -746,7 +710,10 @@ def merge_nodes_batch(
             # Update the timestamp for ON MATCH
             timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             if "_updated_at" in on_match_cols:
-                df["_updated_at"] = timestamp
+                col_idx = arrow_table.column_names.index("_updated_at")
+                arrow_table = arrow_table.set_column(
+                    col_idx, "_updated_at", pa.array([timestamp] * arrow_table.num_rows)
+                )
 
             merge_query = f"""
                 LOAD FROM arrow_table
@@ -755,41 +722,30 @@ def merge_nodes_batch(
                 ON MATCH SET {on_match_set}
             """
 
-            # Convert to Arrow table to bypass Ladybug's buggy NumPy scanner and to
-            # enforce schema-defined struct field order.
             # NOTE: arrow_table is read by name from this frame by Ladybug's LOAD FROM scanner.
-            arrow_table = _df_to_arrow(df, struct_field_types=config.struct_field_types)  # noqa: F841
             kuzu_conn.execute(merge_query)
 
-            # Collect DataFrame for parquet export if collector is active.
-            # We save the original df (not arrow_table.to_pandas()) because the Arrow
-            # roundtrip produces Arrow-backed pandas dtype for embedding columns
-            # (list<item: double>[pyarrow]) which breaks downstream operations.
-            # Struct field ordering is handled at parquet write time via
-            # collector.node_struct_field_types.
+            # Collect Arrow table for parquet export if collector is active.
+            # Struct field order is already baked into the Arrow schema.
             collector = get_parquet_collector()
             if collector is not None:
-                collector.add_nodes(node_type, df)
-                if config.struct_field_types:
-                    collector.node_struct_field_types[node_type] = config.struct_field_types
+                collector.add_nodes(node_type, arrow_table)
 
             # Stats - we can't easily distinguish created vs matched in batch mode
-            type_stats.created = len(df)  # Approximation
+            type_stats.created = arrow_table.num_rows  # Approximation
 
-            # Build ID mapping
-            # For AUTO_ID nodes (primary_key_field="id"), relationships use 'name' as lookup key
-            # So we need to map name → UUID for relationship creation
-            for _, row in df.iterrows():
-                key_value = row.get(primary_key_field, "")
+            # Build ID mapping from Arrow columns
+            key_values = arrow_table.column(primary_key_field).to_pylist()
+            name_values = arrow_table.column("name").to_pylist() if "name" in arrow_table.column_names else None
+
+            for i, key_value in enumerate(key_values):
                 if key_value:
                     key_str = str(key_value)
-                    # Always map key → key (for non-AUTO_ID lookups)
                     result.id_mapping.add(node_type, key_str, key_str)
 
                     # For AUTO_ID nodes, also map name → UUID
-                    # (relationships use name as from_id/to_id but MATCH uses id)
-                    if primary_key_field == "id" and "name" in row:
-                        name_value = str(row["name"])
+                    if primary_key_field == "id" and name_values is not None:
+                        name_value = str(name_values[i])
                         if name_value and name_value != key_str:
                             result.id_mapping.add(node_type, name_value, key_str)
 
@@ -889,11 +845,11 @@ def merge_relationships_batch(
         from_key_field = rel_list[0]["from_key_field"]
         to_key_field = rel_list[0]["to_key_field"]
 
-        # Build DataFrame - remove key field info before creating DataFrame
-        df_data = []
-        property_cols = set()
+        # Build row data - remove key field info
+        row_data: list[dict[str, Any]] = []
+        property_cols: set[str] = set()
         for rel_data in rel_list:
-            row = {
+            row: dict[str, Any] = {
                 "from_id": rel_data["from_id"],
                 "to_id": rel_data["to_id"],
             }
@@ -901,51 +857,17 @@ def merge_relationships_batch(
                 if k not in ("from_id", "to_id", "from_key_field", "to_key_field"):
                     row[k] = v
                     property_cols.add(k)
-            df_data.append(row)
+            row_data.append(row)
 
-        df = pd.DataFrame(df_data)
-
-        # Fix DataFrame column types to handle None values properly
-        # Kuzu doesn't handle object dtype well - convert to proper types
-        # Also, Kuzu's LOAD FROM df requires all columns to exist and be properly typed
+        # Filter out properties that have all None/empty values
+        non_empty_prop_cols: set[str] = set()
         for col in property_cols:
-            if col in df.columns:
-                # Check column content to infer proper type
-                non_null_vals = df[col].dropna()
-                if len(non_null_vals) > 0:
-                    first_val = non_null_vals.iloc[0]
-                    if isinstance(first_val, list):
-                        # Convert list properties to JSON strings for Kuzu compatibility
-                        df[col] = df[col].apply(lambda x: json.dumps(x) if isinstance(x, list) else x)
-                    elif isinstance(first_val, bool):
-                        # Convert None to False for boolean columns, then cast to bool
-                        df[col] = df[col].fillna(False)
-                        df[col] = df[col].astype(bool)
-                    elif isinstance(first_val, (int, float)):
-                        # Keep numeric types as-is (NaN is handled)
-                        pass
-                    elif isinstance(first_val, str):
-                        # For string columns, fill None with empty string
-                        df[col] = df[col].fillna("")
-                else:
-                    # All values are None - fill with empty string for safety
-                    df[col] = df[col].fillna("")
+            for row in row_data:
+                val = row.get(col)
+                if val is not None and val != "":
+                    non_empty_prop_cols.add(col)
+                    break
 
-        # Filter out properties that have all NaN/None/empty values
-        # These cause issues with Kuzu's LOAD FROM df
-        non_empty_prop_cols = set()
-        for col in property_cols:
-            if col in df.columns:
-                # Check if column has any non-empty values
-                if df[col].notna().any():
-                    # For strings, also check if not all empty
-                    if df[col].dtype == object:
-                        if (df[col] != "").any():
-                            non_empty_prop_cols.add(col)
-                    else:
-                        non_empty_prop_cols.add(col)
-
-        # Use only non-empty property columns
         property_cols = non_empty_prop_cols
 
         # Use MERGE for relationships to avoid duplicates when the same relationship
@@ -953,10 +875,10 @@ def merge_relationships_batch(
         # This ensures (from)-[r:REL]->(to) is only created once per node pair.
         try:
             if property_cols:
-                # Kuzu's LOAD FROM df doesn't support inline property assignment
+                # Kuzu's LOAD FROM doesn't support inline property assignment
                 # in MERGE for relationships. Use row-by-row creation with SET.
                 prop_cols_list = sorted(property_cols)
-                for _, row in df.iterrows():
+                for row in row_data:
                     from_id_val = row["from_id"]
                     to_id_val = row["to_id"]
                     merge_q = (
@@ -972,34 +894,47 @@ def merge_relationships_batch(
                     for col in prop_cols_list:
                         val = row.get(col)
                         if val is not None and val != "":
+                            # Convert lists to JSON for storage
+                            if isinstance(val, list):
+                                val = json.dumps(val)
                             param_name = f"p_{col}"
                             set_parts.append(f"r.{col} = ${param_name}")
                             params[param_name] = val
                     if set_parts:
                         merge_q += " SET " + ", ".join(set_parts)
                     kuzu_conn.execute(merge_q, parameters=params)
-                total_created += len(df)
+                total_created += len(row_data)
             else:
+                # Build Arrow table directly for batch LOAD FROM
+                # NOTE: arrow_rel_table is read by name from this frame by Ladybug's LOAD FROM scanner.
+                arrow_rel_table = pa.table(
+                    {  # noqa: F841
+                        "from_id": [row["from_id"] for row in row_data],
+                        "to_id": [row["to_id"] for row in row_data],
+                    }
+                )
                 merge_rel_query = f"""
                     LOAD FROM arrow_rel_table
                     MATCH (from:{from_type} {{{from_key_field}: from_id}}), (to:{to_type} {{{to_key_field}: to_id}})
                     MERGE (from)-[:{rel_name}]->(to)
                 """
-                # NOTE: arrow_rel_table is read by name from this frame by Ladybug's LOAD FROM scanner.
-                arrow_rel_table = _df_to_arrow(df)  # noqa: F841
                 kuzu_conn.execute(merge_rel_query)
-                total_created += len(df)
+                total_created += len(row_data)
 
-            # Collect DataFrame for parquet export if collector is active
+            # Collect Arrow table for parquet export if collector is active
             collector = get_parquet_collector()
             if collector is not None:
-                # Add metadata columns for relationship type info
-                export_df = df.copy()
-                export_df["_from_type"] = from_type
-                export_df["_to_type"] = to_type
-                export_df["_from_key_field"] = from_key_field
-                export_df["_to_key_field"] = to_key_field
-                collector.add_relationships(rel_name, export_df)
+                export_cols: dict[str, list[Any]] = {
+                    "from_id": [row["from_id"] for row in row_data],
+                    "to_id": [row["to_id"] for row in row_data],
+                }
+                for col in property_cols:
+                    export_cols[col] = [row.get(col) for row in row_data]
+                export_cols["_from_type"] = [from_type] * len(row_data)
+                export_cols["_to_type"] = [to_type] * len(row_data)
+                export_cols["_from_key_field"] = [from_key_field] * len(row_data)
+                export_cols["_to_key_field"] = [to_key_field] * len(row_data)
+                collector.add_relationships(rel_name, pa.table(export_cols))
 
         except Exception as e:
             logger.error(f"Error in batch relationship creation for {rel_name}: {e}")

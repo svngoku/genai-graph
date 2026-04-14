@@ -724,59 +724,59 @@ class TestEmbeddingDeserialization:
 # ---------------------------------------------------------------------------
 
 
-class TestDataFrameFloatArrayType:
-    """Test that _prepare_node_dataframe casts list[float] to ArrowExtensionArray."""
+class TestArrowTableFloatArrayType:
+    """Test that _prepare_node_arrow_table types list[float] columns as list<float64>."""
 
-    def test_float_list_column_gets_arrow_dtype(self):
-        """Test that a float-list column is cast to pyarrow list<float64> dtype."""
+    def test_float_list_column_gets_arrow_type(self):
+        """Test that a float-list column is typed as list<float64> in the Arrow table."""
 
-        from genai_graph.kg.ingest.merge import _prepare_node_dataframe
+        from genai_graph.kg.ingest.merge import _prepare_node_arrow_table
 
         node_list = [
             {"id": "n1", "name": "A", "emb": [0.1, 0.2, 0.3]},
             {"id": "n2", "name": "B", "emb": [0.4, 0.5, 0.6]},
         ]
-        df = _prepare_node_dataframe(node_list, key_field="id")
+        table = _prepare_node_arrow_table(node_list, key_field="id")
 
-        # The 'emb' column should NOT be plain Python object dtype
-        assert df["emb"].dtype != object or hasattr(df["emb"].dtype, "pyarrow_dtype"), (
-            "Expected ArrowDtype for float-list column"
-        )
+        import pyarrow as pa
+
+        # The 'emb' column should be list<float64>
+        emb_type = table.schema.field("emb").type
+        assert pa.types.is_list(emb_type), f"Expected list type, got {emb_type}"
         # Values should be preserved
-        emb0 = list(df["emb"].iloc[0])
+        emb0 = table.column("emb")[0].as_py()
         assert emb0 == pytest.approx([0.1, 0.2, 0.3])
 
     def test_float_list_column_with_none_values(self):
-        """Test that None entries in float-list columns become null in ArrowExtensionArray."""
-        from genai_graph.kg.ingest.merge import _prepare_node_dataframe
+        """Test that None entries in float-list columns become null in Arrow table."""
+        from genai_graph.kg.ingest.merge import _prepare_node_arrow_table
 
         node_list = [
             {"id": "n1", "name": "A", "emb": [0.1, 0.2]},
             {"id": "n2", "name": "B", "emb": None},
         ]
-        df = _prepare_node_dataframe(node_list, key_field="id")
+        table = _prepare_node_arrow_table(node_list, key_field="id")
 
-        # n1 should have the embedding, n2 should have None/null
-        emb0 = df["emb"].iloc[0]
-        emb1 = df["emb"].iloc[1]
-        assert list(emb0) == pytest.approx([0.1, 0.2])
-        assert emb1 is None or (hasattr(emb1, "__len__") and len(emb1) == 0) or str(emb1) in ("<NA>", "None")
+        # n1 should have the embedding, n2 should be null
+        emb_col = table.column("emb")
+        assert emb_col[0].as_py() == pytest.approx([0.1, 0.2])
+        assert emb_col[1].as_py() is None
 
     def test_string_list_column_stays_string(self):
         """Test that string-list columns are not misidentified as float arrays."""
-        from genai_graph.kg.ingest.merge import _prepare_node_dataframe
+        from genai_graph.kg.ingest.merge import _prepare_node_arrow_table
 
         node_list = [
             {"id": "n1", "name": "A", "tags": ["alpha", "beta"]},
         ]
-        df = _prepare_node_dataframe(node_list, key_field="id")
-        # The tags column should remain as a list-of-strings
-        tags = df["tags"].iloc[0]
-        assert list(tags) == ["alpha", "beta"]
+        table = _prepare_node_arrow_table(node_list, key_field="id")
+        # The tags column should be a list of strings
+        tags = table.column("tags")[0].as_py()
+        assert tags == ["alpha", "beta"]
 
     def test_float_list_column_survives_kuzu_load(self, temp_kuzu_db):
-        """Test that a DataFrame with ArrowExtensionArray float-list can be loaded by Kuzu."""
-        from genai_graph.kg.ingest.merge import _prepare_node_dataframe
+        """Test that an Arrow table with list<float64> can be loaded by Kuzu."""
+        from genai_graph.kg.ingest.merge import _prepare_node_arrow_table
 
         backend, _ = temp_kuzu_db
         backend.execute(
@@ -789,17 +789,17 @@ class TestDataFrameFloatArrayType:
             """
         )
 
-        # Only non-null embeddings — Kuzu FLOAT[3] cannot accept null lists via LOAD FROM df
+        # Only non-null embeddings — Kuzu FLOAT[3] cannot accept null lists via LOAD FROM
         node_list = [
             {"id": "e1", "name": "Alpha", "emb": [0.1, 0.2, 0.3]},
             {"id": "e2", "name": "Beta", "emb": [0.4, 0.5, 0.6]},
         ]
-        df = _prepare_node_dataframe(node_list, key_field="id", field_types={"emb": "FLOAT[]"})
+        arrow_table = _prepare_node_arrow_table(node_list, key_field="id", field_types={"emb": "FLOAT[]"})  # noqa: F841
 
         kuzu_conn = backend.conn
         kuzu_conn.execute(
             """
-            LOAD FROM df
+            LOAD FROM arrow_table
             MERGE (n:EmbNode {id: id})
             ON CREATE SET n.name = name, n.emb = emb
             """
