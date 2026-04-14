@@ -1,8 +1,9 @@
 """Test improved error reporting for common KG creation issues."""
 
+from unittest.mock import MagicMock
+
 import pytest
 from pydantic import BaseModel
-from unittest.mock import MagicMock
 
 from genai_graph.kg.schema import GraphNode
 
@@ -203,7 +204,11 @@ class TestMergeNodesBatchErrorHandler:
         conn = self._make_conn(RuntimeError("Cannot find property broken_col in _SchemaNode"))
 
         # Simulate a future regression: field_names is deleted/broken
-        with patch.object(type(config), "field_names", new_callable=lambda: property(lambda self: (_ for _ in ()).throw(AttributeError("field_names gone")))):
+        with patch.object(
+            type(config),
+            "field_names",
+            new_callable=lambda: property(lambda self: (_ for _ in ()).throw(AttributeError("field_names gone"))),
+        ):
             # The ORIGINAL RuntimeError must still propagate, NOT AttributeError from formatter
             with pytest.raises(RuntimeError, match="Cannot find property"):
                 merge_nodes_batch(conn, nodes, registry)

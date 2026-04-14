@@ -99,11 +99,27 @@ def _pydantic_annotation_to_arrow(annotation: Any) -> pa.DataType:
     return pa.string()  # fallback
 
 
+def _arrow_type_contains_struct(arrow_type: pa.DataType) -> bool:
+    """Return True if the Arrow type is (or contains) a struct type.
+
+    Used to detect Pydantic sub-model fields that represent separate graph nodes
+    (relationship targets) rather than inline stored properties.  Only struct types
+    that are *explicitly* listed as embedded_struct_classes should become STRUCT columns;
+    all others should be excluded from the node Arrow schema.
+    """
+    if pa.types.is_struct(arrow_type):
+        return True
+    if pa.types.is_list(arrow_type):
+        return _arrow_type_contains_struct(arrow_type.value_type)
+    return False
+
+
 def _build_node_arrow_schema(
     node_class: type,
     embedded_struct_classes: list[type] | None = None,
     embedding_field_dimensions: dict[str, int] | None = None,
     primary_key_field: str = "id",
+    excluded_fields: set[str] | None = None,
 ) -> pa.Schema:
     """Build an explicit PyArrow schema for a graph node class.
 
@@ -111,10 +127,14 @@ def _build_node_arrow_schema(
     making it the single source of truth for column names and types.
 
     Field rules:
+    - Fields in ``excluded_fields`` are skipped (edge properties, relationship targets)
     - Struct fields (Pydantic sub-models listed in ``embedded_struct_classes``)
       are typed as ``pa.struct(...)`` with sub-fields in model-definition order
     - Embedding fields (``*_embedding``) are typed as ``pa.list_(pa.float64())``
       regardless of the annotation
+    - Fields whose resolved Arrow type contains a struct but are NOT in
+      ``embedded_struct_classes`` are also skipped (safety net for relationship
+      targets not yet in ``excluded_fields``)
     - All other fields follow ``_pydantic_annotation_to_arrow``
     - Timestamp sentinels ``_created_at`` and ``_updated_at`` are appended as
       ``pa.string()`` if not already in the model
@@ -122,10 +142,11 @@ def _build_node_arrow_schema(
     Args:
         node_class: Pydantic class whose ``model_fields`` define the columns
         embedded_struct_classes: Sub-model classes stored as Ladybug STRUCT columns
-        embedding_field_dimensions: Maps field name → vector dimension (used to
-            distinguish fixed-size ARRAY fields; currently informs the type as
-            ``pa.list_(pa.float64())`` regardless of size)
+        embedding_field_dimensions: Maps field name → vector dimension
         primary_key_field: The primary key field name (not altered by this fn)
+        excluded_fields: Field names to skip entirely (populated by
+            ``GraphSchema._compute_excluded_fields`` to exclude edge-property
+            ``p_*_`` sentinels and relationship-target sub-model fields)
 
     Returns:
         ``pa.Schema`` with one field per column in model-definition order,
@@ -135,6 +156,7 @@ def _build_node_arrow_schema(
 
     embedded_struct_classes = embedded_struct_classes or []
     embedding_field_dimensions = embedding_field_dimensions or {}
+    excluded_fields = excluded_fields or set()
 
     # Build a set of field names that map to embedded structs so we can
     # give them an explicit pa.struct(...) type with schema-ordered sub-fields.
@@ -147,9 +169,25 @@ def _build_node_arrow_schema(
     fields: list[pa.Field] = []
     seen: set[str] = set()
 
+    # Prepend sentinel columns that may not exist on the Pydantic model.
+    # Mirror the order used by extract.py::create_schema so the Ladybug table
+    # definition matches the Arrow table column order.
+    # Use dict.fromkeys to deduplicate while preserving order (e.g. when
+    # primary_key_field == "name", avoid adding "name" twice).
+    for sentinel_name in dict.fromkeys([primary_key_field, "name", "_original_name"]):
+        if sentinel_name not in excluded_fields:
+            fields.append(pa.field(sentinel_name, pa.string()))
+            seen.add(sentinel_name)
+
     if hasattr(node_class, "model_fields"):
         for field_name, field_info in node_class.model_fields.items():
+            if field_name in seen:
+                continue  # already added as a sentinel column; don't double-add
             seen.add(field_name)
+            # Primary exclusion: skip fields explicitly excluded by GraphSchema
+            # (edge-property p_*_ sentinels and relationship-target sub-models)
+            if field_name in excluded_fields:
+                continue
             if field_name in struct_field_map:
                 # Embedded struct: build pa.struct from sub-model fields in definition order
                 emb_cls = struct_field_map[field_name]
@@ -162,7 +200,14 @@ def _build_node_arrow_schema(
                 # Embedding vectors are always list<float64>
                 fields.append(pa.field(field_name, pa.list_(pa.float64())))
             else:
-                fields.append(pa.field(field_name, _pydantic_annotation_to_arrow(field_info.annotation)))
+                arrow_type = _pydantic_annotation_to_arrow(field_info.annotation)
+                # Skip fields whose type resolves to a struct (or list-of-struct): these are
+                # Pydantic sub-models that represent separate graph nodes linked via relationships,
+                # NOT stored as properties on this node table.  Only sub-models explicitly listed
+                # in embedded_struct_classes (handled above) become STRUCT columns.
+                if _arrow_type_contains_struct(arrow_type):
+                    continue
+                fields.append(pa.field(field_name, arrow_type))
 
     # Always include timestamp sentinels
     for ts in ("_created_at", "_updated_at"):
@@ -443,6 +488,7 @@ class NodeTypeConfig(BaseModel):
             embedded_struct_classes=list(getattr(node, "embedded_struct_classes", None) or []),
             embedding_field_dimensions=dict(getattr(node, "_embedding_field_dimensions", None) or {}),
             primary_key_field=primary_key_field,
+            excluded_fields=set(node.excluded_fields),  # p_*_ sentinels + rel-target sub-models
         )
 
         return cls(
