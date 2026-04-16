@@ -6,6 +6,10 @@ paths:
   rainbow_ppt: '${paths.ekg_data}/rainbow/ppt/'
   add_json: '${paths.ekg_data}/arch_doc/json/'
   stratnav_db: '${paths.ekg_data}/stratnav'
+  rfq_json: '${paths.ekg_data}/rfq/json/'
+  rfq_md: '${paths.ekg_data}/rfq/md/'
+  rfq_pdf: '${paths.ekg_data}/rfq/pdf/'
+
 kg_build:
   llms:
     default: gpt_oss120@openrouter

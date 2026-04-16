@@ -60,7 +60,10 @@ llm:
         - openrouter: mistralai/ministral-8b-latest
       capabilities: ['structured_outputs']  # not in models.dev; keep as explicit override
 
-    - model_id: mistral-nemo  # models.dev name; Mistral API uses 'open-mistral-nemo'
+    - model_id: mistral-medium  
       providers:
-        - mistral: open-mistral-nemo
+        - edenai: mistral/mistral-medium-latest 
 
+    - model_id: gpt-4.1-mini 
+      providers:
+        - edenai: openai/gpt-4.1-mini
