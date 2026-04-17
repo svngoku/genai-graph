@@ -32,7 +32,7 @@ ekg_local:
   embeddings_store:
     chroma_simple: &chroma_simple
       backend: Chroma 
-      embeddings: default
+      embeddings: bge-small-en@local
       table_name_prefix: embeddings
       config:
         storage: ${paths.data_root}/vector_store  # Updated: was 'chroma_path'
