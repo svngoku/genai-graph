@@ -684,7 +684,76 @@ def format_schema_description(schema: GraphSchema, baml_docs: dict[str, Any], pr
 
                 lines.append("")
 
+    # Vector-indexed fields section
+    vector_section = _format_vector_index_section(schema, baml_docs)
+    if vector_section:
+        lines.append("")
+        lines.append(vector_section)
+
     return "\n".join(lines)
+
+
+def _format_vector_index_section(schema: GraphSchema, baml_docs: dict[str, Any]) -> str:
+    """Generate a description of vector-indexed fields for hybrid RAG queries.
+
+    Iterates over all GraphNode configs in the schema, collecting fields
+    that have embedding indexes (declared via ``index_fields``).
+
+    Returns:
+        Markdown section describing available vector indexes, or empty string
+        if no vector-indexed fields exist.
+    """
+    entries: list[str] = []
+    for node in schema.nodes:
+        if not node.compute_embeddings:
+            continue
+        table_name = node.node_class.__name__
+        for field_name, model_override in node.index_field_specs:
+            index_name = f"{field_name}_index"
+            embedding_col = f"{field_name}_embedding"
+            # Get the source field description
+            field_info = node.node_class.model_fields.get(field_name)
+            desc = ""
+            if field_info:
+                desc = _get_field_description(node.node_class, field_name, field_info, baml_docs)
+            entry = f"- Table: {table_name}, Index: {index_name}, Embedding column: {embedding_col}, Source field: {field_name}"
+            if desc:
+                entry += f" // {desc}"
+            entries.append(entry)
+
+    if not entries:
+        return ""
+
+    lines = ["### Vector-Indexed Fields (for semantic similarity search)", ""]
+    lines.extend(entries)
+    return "\n".join(lines)
+
+
+def generate_vector_index_description(graphs: str | list[str]) -> str:
+    """Generate a standalone description of vector-indexed fields.
+
+    Used by text-to-Cypher prompts to inform the LLM about available
+    vector indexes for hybrid RAG queries.
+
+    Args:
+        graphs: Single graph name or list of names. Empty list means all.
+
+    Returns:
+        Markdown description of vector indexes, or empty string if none.
+    """
+    import warnings
+
+    baml_docs = _parse_baml_descriptions()
+
+    if isinstance(graphs, str):
+        schema = _load_schema(graphs)
+    else:
+        registry = GraphRegistry.get_instance()
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=UserWarning, message="Graph schema validation.")
+            schema = registry.build_combined_schema(graphs)
+
+    return _format_vector_index_section(schema, baml_docs)
 
 
 def _humanize_type_compact(annotation: Any, is_optional: bool = False) -> str:

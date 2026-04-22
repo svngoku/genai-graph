@@ -10,7 +10,7 @@ from rich.console import Console
 
 from genai_graph.kg.backend import create_backend_from_config
 from genai_graph.kg.manager import get_kg_manager
-from genai_graph.kg.query.text2cypher import SYSTEM_PROMPT
+from genai_graph.kg.query.text2cypher import SYSTEM_PROMPT, _embed_query_vector
 
 
 def build_ekg_agent_system_prompt(single_tool_mode: bool = False) -> str:
@@ -28,6 +28,12 @@ def build_ekg_agent_system_prompt(single_tool_mode: bool = False) -> str:
             f"Schema file not found at {manager.schema_path}. Run 'cli kg create' to generate the schema."
         )
     schema_markdown = manager.schema_path.read_text(encoding="utf-8")
+
+    # Extract vector index section from the schema if present
+    _vi_marker = "### Vector-Indexed Fields"
+    _vi_idx = schema_markdown.find(_vi_marker)
+    vector_indexes_section = schema_markdown[_vi_idx:] if _vi_idx >= 0 else ""
+
     # SYSTEM_PROMPT contains detailed guidance originally written for a
     # standalone text-to-Cypher translator. Here it serves as the canonical
     # reference for how the agent should construct Cypher queries that it
@@ -91,6 +97,10 @@ def build_ekg_agent_system_prompt(single_tool_mode: bool = False) -> str:
         {schema_markdown}
         </SCHEMA>
 
+        <VECTOR_INDEXES>
+        {vector_indexes_section}
+        </VECTOR_INDEXES>
+
         The following section contains detailed guidelines for authoring Cypher
         queries. They are meant ONLY for the Cypher string that you pass to the
         `ekg_cypher_query` tool:
@@ -137,19 +147,28 @@ def create_ekg_cypher_tool(
     """
 
     @tool("ekg_cypher_query")
-    def ekg_cypher_query(cypher_query: str) -> str:
+    def ekg_cypher_query(cypher_query: str, question: str = "") -> str:
         """Execute a read-only Cypher query against the Enterprise Knowledge Graph.
 
         The input must be a complete Cypher statement starting with MATCH
-        (or OPTIONAL MATCH) and ending with RETURN.
+        (or OPTIONAL MATCH) or CALL QUERY_VECTOR_INDEX, and ending with RETURN.
+
+        If the query contains $query_vector, provide the original user question
+        in the `question` parameter so the system can compute the embedding.
         """
 
         backend = create_backend_from_config(backend_config, kg_config_name)
         if not backend:
             return "EKG database not found. Load data first with 'cli kg add-doc --key <data_key>'."
 
+        # Detect $query_vector and compute embedding if needed
+        params = _embed_query_vector(cypher_query, question) if question else None
+
         try:
-            result = backend.execute(cypher_query)
+            if params:
+                result = backend.execute(cypher_query, parameters=params)
+            else:
+                result = backend.execute(cypher_query)
             df = result.get_as_df()
         except Exception as exc:  # noqa: BLE001
             return f"Error executing Cypher query: {exc}"

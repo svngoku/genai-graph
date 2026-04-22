@@ -521,17 +521,28 @@ class EkgCommands(CliTopCommand):
                 str | None,
                 typer.Option(help="Name or tag of the LLM to use by BAML"),
             ] = None,
+            kg: Annotated[
+                str | None,
+                typer.Option("--kg", help="KG config name to query (e.g. learned_stratnav_subset_rainbow_crm)"),
+            ] = None,
         ) -> None:
             """Execute queries in natural language (Text-2-Cypher) on the EKG database.
 
             ex:  List the names of all competitors for opportunities created after January 1, 2012."""
 
+            from rich.panel import Panel
+
+            from genai_graph.kg.manager import get_kg_manager
             from genai_graph.kg.query import query_kg
+
+            manager = get_kg_manager()
+            active_kg = kg if kg is not None else manager.profile
+            console.print(Panel(f"[bold cyan]Querying EKG Database[/bold cyan]\n[dim]Config: {active_kg}[/dim]"))
 
             try:
                 from rich.table import Table
 
-                df = query_kg(query, llm_id=llm)
+                df = query_kg(query, llm_id=llm, kg_config_name=kg)
 
                 if df.empty:
                     console.print("[yellow]Query returned no results[/yellow]")

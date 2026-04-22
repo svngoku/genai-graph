@@ -1,3 +1,20 @@
+We want to extend the text-to-Cypher part of the KG to do hybrid RAG, ie combining similarity search  with classical Cypher query (usinc Ladybug Vector Search : https://docs.ladybugdb.com/extensions/vector/#query-the-vector-index ).
+
+The stratnav_subset_rainbow_crm KG has a field that has been indexed with embeddings : L3.descriptionEmbedding . Same for TechnicalApproach.architecture.   Similarity between these fields are already computed to build learned_stratnav_subset_rainbow_crm - You can have a look. 
+
+We want now to query the with query like : "An RFQ require services securing a web site. What offerings could we propose ? " 
+And the agent should  generate a Cypher query startting with CALL QUERY_VECTOR_INDEX on the L3 description embeddings.
+
+To implement that feature, you can improve the text-to-cypher system prompt (genai_graph/kg/query/text2cypher.py).
+Keep it generic  by passing the list of fields with embeddings (and their description),  examples of Ladybug querys using vector search, and when to use that feature.  
+
+You can use command cli kg query  to see if the generted Cyper query is correct  (or easy to correct when it will be called in an agent)
+
+cli kg query "list the offerings around Web services securing " --kg learned_stratnav_subset_rainbow_crm
+
+
+
+
 # Completed Tasks
 
 ---

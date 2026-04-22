@@ -38,10 +38,11 @@ from genai_graph.webapp.ui_components.trace_middleware import StreamingTraceRend
 
 # Example queries
 EXAMPLE_QUERIES = [
-    "quels sont les opportunitéc où on a eu CAP comme compétiteur ?",
+    "What opportunites in space sector had an identified financial risk ?",
+    "quels sont les opportunités où on a eu CAP comme compétiteur ?",
+    "An RFQ requires services securing a web site. What offerings could we propose ? ",
     "list the win or loss status and reasons for each opportunity, the tcv, and the source document",
     "what are the opportunities with risks of exposing sensitive data",
-    "show me all nodes of type Person",
     "what are the main entities in the graph?",
     "list all relationships between opportunities and competitors",
 ]
