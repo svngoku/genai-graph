@@ -377,12 +377,11 @@ async def setup_agent_if_needed() -> Any:
             # Get LLM with selected LLM ID
             llm = get_llm(llm=sss.llm_selected)
 
-            # Get current KG manager
-            manager = get_kg_manager()
-            kg_config_name = manager.profile
+            # Use the KG config selected in the UI (not the manager's default profile)
+            kg_config_name = sss.kg_config_selected
 
             # Build system prompt
-            system_prompt = build_ekg_agent_system_prompt(single_tool_mode=False)
+            system_prompt = build_ekg_agent_system_prompt(single_tool_mode=False, kg_config_name=kg_config_name)
 
             # Create EKG Cypher tool
             ekg_tool = create_ekg_cypher_tool(
