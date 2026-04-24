@@ -12,7 +12,6 @@ from __future__ import annotations
 from typing import Any
 
 from genai_graph.kg.schema._helpers import (
-    _format_vector_index_section,
     _parse_baml_descriptions,
 )
 from genai_graph.kg.schema.core import GraphSchema
@@ -112,14 +111,14 @@ def generate_vector_index_description(graphs: str | list[str]) -> str:
     """
     import warnings
 
-    baml_docs = _parse_baml_descriptions()
+    from genai_graph.kg.schema.resolved import ResolvedSchema
 
     if isinstance(graphs, str):
         schema = _load_schema(graphs)
-    else:
-        registry = GraphRegistry.get_instance()
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=UserWarning, message="Graph schema validation.")
-            schema = registry.build_combined_schema(graphs)
+        return ResolvedSchema.from_graph_schema(schema).to_vector_section_markdown()
 
-    return _format_vector_index_section(schema, baml_docs)
+    registry = GraphRegistry.get_instance()
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=UserWarning, message="Graph schema validation.")
+        schema = registry.build_combined_schema(graphs)
+    return ResolvedSchema.from_graph_schema(schema).to_vector_section_markdown()

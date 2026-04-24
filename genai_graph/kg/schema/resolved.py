@@ -20,11 +20,11 @@ import warnings
 from datetime import datetime, timezone
 from typing import Any
 
+from genai_tk.utils.pydantic_utils.common import get_class_description as _get_class_description
 from pydantic import BaseModel, Field
 
 from genai_graph.kg.schema._helpers import (
     _collect_used_enums,
-    _get_class_description,
     _get_field_description,
     _get_kuzu_type_for_field,
     _get_node_description,
@@ -434,13 +434,20 @@ class ResolvedSchema(BaseModel):
                     lines.append(vline)
                 lines.append("")
 
-        if self.vector_indexes:
+        vector_section = self.to_vector_section_markdown()
+        if vector_section:
             lines.append("")
-            lines.append("### Vector-Indexed Fields (for semantic similarity search)")
-            lines.append("")
-            for vi in self.vector_indexes:
-                lines.append(f"- {vi.table}.{vi.embedding_column} // embeddings of {vi.table}.{vi.source_field}")
+            lines.append(vector_section)
 
+        return "\n".join(lines)
+
+    def to_vector_section_markdown(self) -> str:
+        """Return the ``### Vector-Indexed Fields`` Markdown section, or empty string."""
+        if not self.vector_indexes:
+            return ""
+        lines = ["### Vector-Indexed Fields (for semantic similarity search)", ""]
+        for vi in self.vector_indexes:
+            lines.append(f"- {vi.table}.{vi.embedding_column} // embeddings of {vi.table}.{vi.source_field}")
         return "\n".join(lines)
 
     # ------------------------------------------------------------------

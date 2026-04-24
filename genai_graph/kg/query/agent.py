@@ -37,12 +37,7 @@ def build_ekg_agent_system_prompt(single_tool_mode: bool = False, kg_config_name
 
         resolved = ResolvedSchema.from_json_file(str(json_path))
         schema_markdown = resolved.to_markdown()
-        vector_indexes_section = ""
-        if resolved.vector_indexes:
-            lines = ["### Vector-Indexed Fields (for semantic similarity search)", ""]
-            for vi in resolved.vector_indexes:
-                lines.append(f"- {vi.table}.{vi.embedding_column} // embeddings of {vi.table}.{vi.source_field}")
-            vector_indexes_section = "\n".join(lines)
+        vector_indexes_section = resolved.to_vector_section_markdown()
     elif txt_path.exists():
         schema_markdown = txt_path.read_text(encoding="utf-8")
         _vi_marker = "### Vector-Indexed Fields"
