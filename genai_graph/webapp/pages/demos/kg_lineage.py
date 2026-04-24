@@ -23,6 +23,10 @@ from streamlit import session_state as sss
 from upath import UPath
 
 from genai_graph.kg.manager import get_kg_manager
+from genai_graph.webapp.ui_components.kg_config_selector import (
+    init_kg_config_session_state,
+    render_kg_config_selector,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - type checking only
     from genai_graph.kg.ingest.lineage import JsonArtifact, MarkdownLineage
@@ -73,27 +77,9 @@ def _make_relative_path(full_path: UPath | str, data_roots: list[UPath]) -> str:
     return str(full_path)
 
 
-def _get_available_kg_configs() -> list[str]:
-    """Return list of available KG configurations from ekg.yaml."""
-
-    try:
-        manager = get_kg_manager()
-        return sorted(manager.ekg_config.kg_configs.keys())
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.warning("Could not load KG configurations: {}", exc)
-        return ["default"]
-
-
 def _initialize_session_state() -> None:
     """Initialize session state variables for this page."""
-
-    if "kg_config_selected" not in sss:
-        try:
-            manager = get_kg_manager()
-            sss.kg_config_selected = manager.ekg_config.kg_config
-        except Exception:
-            sss.kg_config_selected = "default"
-
+    init_kg_config_session_state()
     if "lineage_selected_dir" not in sss:
         sss.lineage_selected_dir = None
     if "lineage_selected_markdown" not in sss:
@@ -104,28 +90,8 @@ def _initialize_session_state() -> None:
 
 def _select_configuration() -> None:
     """Render KG configuration selector in the sidebar and apply changes."""
-
-    available_configs = _get_available_kg_configs()
-
     with st.sidebar:
-        selected_config = st.selectbox(
-            "⚙️ KG Configuration",
-            options=available_configs,
-            index=available_configs.index(sss.kg_config_selected) if sss.kg_config_selected in available_configs else 0,
-            help="Select the Knowledge Graph configuration whose lineage you want to inspect.",
-        )
-
-        if selected_config != sss.kg_config_selected:
-            sss.kg_config_selected = selected_config
-
-            # Update global config so KgManager and subgraphs use this profile
-            cfg = global_config()
-            cfg.set("kg_config", selected_config)
-
-            # Invalidate KgManager singleton to pick up new configuration
-            get_kg_manager.invalidate()  # pyright: ignore[reportFunctionMemberAccess]
-
-            st.rerun()
+        render_kg_config_selector(help="Select the Knowledge Graph configuration whose lineage you want to inspect.")
 
 
 def _group_lineage_by_directory(

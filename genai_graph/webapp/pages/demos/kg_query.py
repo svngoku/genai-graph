@@ -25,6 +25,10 @@ from streamlit_monaco import st_monaco
 from genai_graph.kg.backend import create_backend_from_config
 from genai_graph.kg.query import text2cypher_chain
 from genai_graph.kg.schema import GraphRegistry
+from genai_graph.webapp.ui_components.kg_config_selector import (
+    init_kg_config_session_state,
+    render_kg_config_selector,
+)
 
 if TYPE_CHECKING:
     from genai_graph.kg.backend import KgBackend
@@ -55,34 +59,9 @@ def load_cypher_examples() -> list[dict]:
         return config.get("queries", [])
 
 
-def get_available_kg_configs() -> list[str]:
-    """Get list of available KG configurations from ekg.yaml.
-
-    Returns:
-        List of KG configuration names
-    """
-    try:
-        from genai_graph.kg.manager import get_kg_manager
-
-        manager = get_kg_manager()
-        return sorted(manager.ekg_config.kg_configs.keys())
-    except Exception as e:
-        logger.warning(f"Could not load KG configurations: {e}")
-        return ["default"]
-
-
 def initialize_session_state() -> None:
     """Initialize session state variables."""
-    if "kg_config_selected" not in sss:
-        # Get default config
-        try:
-            from genai_graph.kg.manager import get_kg_manager
-
-            manager = get_kg_manager()
-            sss.kg_config_selected = manager.ekg_config.kg_config
-        except Exception:
-            sss.kg_config_selected = "default"
-
+    init_kg_config_session_state()
     if "cypher_query" not in sss:
         sss.cypher_query = "MATCH (n)-[r]->(m) RETURN * LIMIT 200"
     if "query_result" not in sss:
@@ -124,19 +103,7 @@ def main() -> None:
 
     # Sidebar - KG Configuration Selector
     with st.sidebar:
-        available_configs = get_available_kg_configs()
-        selected_config = st.selectbox(
-            "⚙️ KG Configuration",
-            options=available_configs,
-            index=available_configs.index(sss.kg_config_selected) if sss.kg_config_selected in available_configs else 0,
-            help="Select the Knowledge Graph configuration to query",
-        )
-
-        # Update session state if config changed
-        if selected_config != sss.kg_config_selected:
-            sss.kg_config_selected = selected_config
-            # Reinitialize backend with new config
-            st.rerun()
+        render_kg_config_selector(help="Select the Knowledge Graph configuration to query")
 
         st.markdown("---")
         st.markdown("### 🔗 Resources")

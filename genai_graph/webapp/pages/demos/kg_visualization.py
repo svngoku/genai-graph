@@ -23,25 +23,15 @@ from streamlit import session_state as sss
 from genai_graph.kg.backend import create_backend_from_config
 from genai_graph.kg.export import generate_html
 from genai_graph.kg.manager import get_kg_manager
+from genai_graph.webapp.ui_components.kg_config_selector import (
+    init_kg_config_session_state,
+    render_kg_config_selector,
+)
 
 if TYPE_CHECKING:
     from genai_graph.kg.backend import KgBackend
 
 DEFAULT_VIZ_LIMIT = 2000
-
-
-def get_available_kg_configs() -> list[str]:
-    """Get list of available KG configurations from ekg.yaml.
-
-    Returns:
-        List of KG configuration names
-    """
-    try:
-        manager = get_kg_manager()
-        return sorted(manager.ekg_config.kg_configs.keys())
-    except Exception as e:
-        logger.warning(f"Could not load KG configurations: {e}")
-        return ["default"]
 
 
 def get_node_types(backend: "KgBackend") -> list[str]:
@@ -214,14 +204,7 @@ def build_filtered_cypher_query(
 
 def initialize_session_state() -> None:
     """Initialize session state variables."""
-    if "kg_config_selected" not in sss:
-        # Get default config
-        try:
-            manager = get_kg_manager()
-            sss.kg_config_selected = manager.ekg_config.kg_config
-        except Exception:
-            sss.kg_config_selected = "default"
-
+    init_kg_config_session_state()
     if "graph_html" not in sss:
         sss.graph_html = None
     if "viz_limit" not in sss:
@@ -277,26 +260,11 @@ def main() -> None:
 
     # Sidebar - Configuration and Filters
     with st.sidebar:
-        available_configs = get_available_kg_configs()
-        selected_config = st.selectbox(
-            "### ⚙️ KG Configuration",
-            options=available_configs,
-            index=available_configs.index(sss.kg_config_selected) if sss.kg_config_selected in available_configs else 0,
+        render_kg_config_selector(
             help="Select the Knowledge Graph configuration to visualize",
+            on_change=lambda: setattr(sss, "graph_html", None),
         )
-
-        # Update session state if config changed
-        if selected_config != sss.kg_config_selected:
-            sss.kg_config_selected = selected_config
-            sss.graph_html = None  # Clear cached visualization
-
-            # Invalidate KgManager singleton to pick up new config
-            config = global_config()
-            config.set("kg_config", selected_config)
-
-            get_kg_manager.invalidate()  # pyright: ignore[reportFunctionMemberAccess]
-
-            st.rerun()
+        selected_config = sss.kg_config_selected
 
         # Get database connection for filters
         try:

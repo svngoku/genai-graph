@@ -34,6 +34,11 @@ from streamlit import session_state as sss
 
 from genai_graph.kg.manager import get_kg_manager
 from genai_graph.kg.query import build_ekg_agent_system_prompt, create_ekg_cypher_tool
+from genai_graph.webapp.ui_components.kg_config_selector import (
+    init_kg_config_session_state,
+    render_kg_config_selector,
+    render_schema_status,
+)
 from genai_graph.webapp.ui_components.trace_middleware import StreamingTraceRenderer, TraceMiddleware
 
 # Example queries
@@ -79,19 +84,6 @@ def get_default_llm() -> str:
         return ""
 
 
-def get_available_kg_configs() -> list[str]:
-    """Get list of available KG configurations from the KG manager.
-
-    Returns:
-        List of KG configuration names
-    """
-    try:
-        manager = get_kg_manager()
-        return sorted(manager.ekg_config.kg_configs.keys())
-    except Exception as e:
-        logger.warning(f"Could not load KG configurations: {e}")
-        return ["default"]
-
 
 def initialize_session_state() -> None:
     """Initialize session state variables."""
@@ -103,13 +95,7 @@ def initialize_session_state() -> None:
         sss.agent = None
     if "agent_config" not in sss:
         sss.agent_config = None
-    if "kg_config_selected" not in sss:
-        # Get default config from KG manager
-        try:
-            manager = get_kg_manager()
-            sss.kg_config_selected = manager.profile
-        except Exception:
-            sss.kg_config_selected = "default"
+    init_kg_config_session_state()
     if "llm_selected" not in sss:
         # Get default LLM from configuration
         default_llm = get_default_llm()
@@ -124,15 +110,9 @@ def clear_chat_history() -> None:
 
 
 def handle_kg_config_change() -> None:
-    """Handle KG configuration change by invalidating the agent and KG manager."""
-    # Invalidate the cached KG manager to pick up new configuration
-    get_kg_manager.invalidate()  # pyright: ignore[reportFunctionMemberAccess]
-
-    # Reset agent to force recreation with new config
+    """Reset agent state when the KG configuration changes."""
     sss.agent = None
     sss.agent_config = None
-
-    # Clear chat history
     clear_chat_history()
 
 
@@ -326,33 +306,11 @@ def display_sidebar() -> None:
 
         # KG configuration selector
         st.subheader("Knowledge Graph")
-        available_configs = get_available_kg_configs()
-
-        # Find current selection index
-        current_index = 0
-        if sss.kg_config_selected in available_configs:
-            current_index = available_configs.index(sss.kg_config_selected)
-
-        selected_kg = st.selectbox(
-            "Select KG Configuration.",
-            options=available_configs,
-            index=current_index,
-            key="kg_selector",
+        render_kg_config_selector(
+            help="Select the Knowledge Graph configuration to query.",
             on_change=handle_kg_config_change,
         )
-        sss.kg_config_selected = selected_kg
-
-        # Display current KG info
-        try:
-            manager = get_kg_manager()
-            schema_path = manager.get_schema_path_for(sss.kg_config_selected)
-            if schema_path.exists():
-                st.success("✅ Schema loaded")
-                st.caption(f"Path: {schema_path}")
-            else:
-                st.warning("⚠️ Schema not found. Run 'cli kg schema --regen' first.")
-        except Exception as e:
-            st.error(f"❌ Error loading KG: {e}")
+        render_schema_status()
 
         st.divider()
 
