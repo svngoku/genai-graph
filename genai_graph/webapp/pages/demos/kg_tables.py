@@ -22,10 +22,6 @@ from upath import UPath
 
 from genai_graph.kg.factories import TableBackedFactory
 from genai_graph.kg.manager import get_kg_manager
-from genai_graph.webapp.ui_components.kg_config_selector import (
-    init_kg_config_session_state,
-    render_kg_config_selector,
-)
 
 
 class TableInfo(BaseModel):

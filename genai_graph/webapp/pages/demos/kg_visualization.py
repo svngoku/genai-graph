@@ -16,13 +16,11 @@ from typing import TYPE_CHECKING
 
 import streamlit as st
 import streamlit.components.v1 as components
-from genai_tk.utils.config_mngr import global_config
 from loguru import logger
 from streamlit import session_state as sss
 
 from genai_graph.kg.backend import create_backend_from_config
 from genai_graph.kg.export import generate_html
-from genai_graph.kg.manager import get_kg_manager
 from genai_graph.webapp.ui_components.kg_config_selector import (
     init_kg_config_session_state,
     render_kg_config_selector,
