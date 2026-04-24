@@ -10,7 +10,7 @@ from rich.console import Console
 
 from genai_graph.kg.backend import create_backend_from_config
 from genai_graph.kg.manager import get_kg_manager
-from genai_graph.kg.query.text2cypher import SYSTEM_PROMPT, _embed_query_vector
+from genai_graph.kg.query.text2cypher import SYSTEM_PROMPT, _embed_query_vector, _ensure_vector_indexes
 
 
 def build_ekg_agent_system_prompt(single_tool_mode: bool = False, kg_config_name: str | None = None) -> str:
@@ -175,6 +175,10 @@ def create_ekg_cypher_tool(
         backend = create_backend_from_config(backend_config, kg_config_name)
         if not backend:
             return "EKG database not found. Load data first with 'cli kg add-doc --key <data_key>'."
+
+        if hasattr(backend, "ensure_vector_extension"):
+            backend.ensure_vector_extension()
+        _ensure_vector_indexes(kg_config_name, backend)
 
         # Detect $query_vector and compute embedding if needed
         params = _embed_query_vector(cypher_query, question) if question else None

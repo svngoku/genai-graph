@@ -448,8 +448,7 @@ class ResolvedSchema(BaseModel):
         lines = ["### Vector-Indexed Fields (for semantic similarity search)", ""]
         for vi in self.vector_indexes:
             lines.append(
-                f"- QUERY_VECTOR_INDEX('{vi.table}', '{vi.index_name}', ...)  "
-                f"→ searches {vi.table}.{vi.source_field}"
+                f"- QUERY_VECTOR_INDEX('{vi.table}', '{vi.index_name}', ...)  → searches {vi.table}.{vi.source_field}"
             )
         return "\n".join(lines)
 
