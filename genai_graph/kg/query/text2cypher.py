@@ -54,8 +54,8 @@ When the user's question is about **semantic similarity** — asking for items
 (e.g. "offerings around web security", "approaches similar to cloud migration") —
 use the Ladybug vector search function instead of string CONTAINS filters.
 
-Available vector indexes are listed in the <VECTOR_INDEXES> section of the user
-prompt. Pick the index whose source field best matches the user intent.
+Available vector indexes are listed in the '### Vector-Indexed Fields' section of the schema.
+Pick the index whose source field best matches the user intent.
 
 Syntax:
   CALL QUERY_VECTOR_INDEX('<Table>', '<index_name>', $query_vector, <k>)
@@ -75,10 +75,10 @@ Rules:
 - Always `ORDER BY distance` and add a `LIMIT`.
 - You can combine vector search with graph traversal to find related entities,
   e.g. find similar L3 offerings then follow relationships to their opportunities.
-- If the <VECTOR_INDEXES> section is empty or absent, fall back to standard
+- If the '### Vector-Indexed Fields' section is absent or empty, fall back to standard
   MATCH + CONTAINS queries.
 
-Example — find L3 offerings semantically similar to the user's question:
+Example — find offerings semantically similar to the user's question:
   CALL QUERY_VECTOR_INDEX('L3', 'description_index', $query_vector, 10)
   WITH node AS l3, distance
   RETURN DISTINCT l3.name, l3.description, distance
@@ -107,12 +107,8 @@ Example — vector search followed by graph traversal:
 USER_PROMPT = """
 
     <SCHEMA>
-    {schema}
+{schema}
     </SCHEMA>
-
-    <VECTOR_INDEXES>
-    {vector_indexes}
-    </VECTOR_INDEXES>
 
     <QUESTION>
     {question}
@@ -123,35 +119,52 @@ USER_PROMPT = """
 """
 
 
-def _get_schema_from_file() -> str:
+def _get_schema_from_file(kg_config_name: str | None = None) -> str:
     """Read the schema description from the stored schema file.
 
     The schema file is automatically created during graph creation.
     """
     manager = get_kg_manager()
-    if not manager.schema_path.exists():
+    profile = kg_config_name if kg_config_name is not None else manager.profile
+    schema_path = manager.get_schema_path_for(profile)
+    if not schema_path.exists():
         raise FileNotFoundError(
-            f"Schema file not found at {manager.schema_path}. Run 'cli kg create' to generate the schema."
+            f"Schema file not found at {schema_path}. Run 'cli kg create' or 'cli kg schema --regen --kg {profile}' to generate the schema."
         )
-    return manager.schema_path.read_text(encoding="utf-8")
-
-
-def _get_vector_indexes_description() -> str:
-    """Extract the vector-indexed fields section from the stored schema file.
-
-    The schema file may contain a '### Vector-Indexed Fields' section
-    appended by the doc generator. If present, return it; otherwise
-    return a note that no vector indexes are available.
-    """
-    schema_text = _get_schema_from_file()
-    marker = "### Vector-Indexed Fields"
-    idx = schema_text.find(marker)
-    if idx >= 0:
-        return schema_text[idx:]
-    return "No vector indexes available for this knowledge graph."
+    return schema_path.read_text(encoding="utf-8")
 
 
 _QUERY_VECTOR_PARAM = "$query_vector"
+
+
+def _ensure_vector_indexes(kg_config_name: str | None, backend: object) -> None:
+    """Create all vector indexes declared in the schema JSON for this KG profile.
+
+    Loads ``VectorIndexInfo`` entries from the saved canonical schema JSON so that
+    import-only profiles (e.g. ``stratnav_subset_rainbow_crm``) that never ran
+    ``create_vector_indexes_task`` get their indexes created on first query.
+
+    Falls back silently if the JSON file is absent or the backend doesn't support
+    vector indexing.
+    """
+    if not hasattr(backend, "create_vector_index"):
+        return
+    manager = get_kg_manager()
+    profile = kg_config_name if kg_config_name is not None else manager.profile
+    json_path = manager.get_schema_json_path_for(profile)
+    if not json_path.exists():
+        return
+    try:
+        from genai_graph.kg.schema.resolved import ResolvedSchema
+
+        resolved = ResolvedSchema.from_json_file(str(json_path))
+        for vi in resolved.vector_indexes:
+            try:
+                backend.create_vector_index(vi.table, vi.embedding_column, vi.index_name, metric="cosine")
+            except Exception as exc:
+                logger.debug("Vector index {}.{}: {}", vi.table, vi.index_name, exc)
+    except Exception as exc:
+        logger.debug("Could not load vector indexes from schema JSON: {}", exc)
 
 
 def _embed_query_vector(cypher_query: str, question: str) -> dict[str, list[float]] | None:
@@ -174,8 +187,7 @@ def _embed_query_vector(cypher_query: str, question: str) -> dict[str, list[floa
 
     if not embeddings_id:
         raise RuntimeError(
-            "Cannot compute query embedding: no default embeddings model configured "
-            "in kg_build.embeddings.default"
+            "Cannot compute query embedding: no default embeddings model configured in kg_build.embeddings.default"
         )
 
     handler = EmbeddingsHandler(embeddings_id=embeddings_id)
@@ -184,27 +196,31 @@ def _embed_query_vector(cypher_query: str, question: str) -> dict[str, list[floa
     return {"query_vector": vector}
 
 
-def text2cypher_chain(question: str, llm_id: str | None = None) -> Runnable:
+def text2cypher_chain(question: str, llm: str | None = None, kg_config_name: str | None = None) -> Runnable:
     """Generate system and user prompts for text to Cypher conversion.
 
     Args:
         question: The user's question in natural language.
-        llm_id: Optional LLM identifier to use for generation.
+        llm: Optional LLM identifier to use for generation.
+        kg_config_name: Optional KG config name to load schema from.
     """
     prompt = {
         "question": RunnableLambda(lambda _: question),
-        "schema": RunnableLambda(lambda _: _get_schema_from_file()),
-        "vector_indexes": RunnableLambda(lambda _: _get_vector_indexes_description()),
+        "schema": RunnableLambda(lambda _: _get_schema_from_file(kg_config_name)),
     } | def_prompt(system=SYSTEM_PROMPT, user=USER_PROMPT)
-    return prompt | get_llm(llm_id=llm_id) | StrOutputParser()
+    # Only pass llm to get_llm() if explicitly provided; otherwise use default
+    if llm is not None:
+        return prompt | get_llm(llm=llm) | StrOutputParser()
+    else:
+        return prompt | get_llm() | StrOutputParser()
 
 
-def query_kg(query: str, llm_id: str | None = None, kg_config_name: str | None = None) -> pd.DataFrame:
+def query_kg(query: str, llm: str | None = None, kg_config_name: str | None = None) -> pd.DataFrame:
     """Generate a Cypher query from a natural language query and execute it against the knowledge graph.
 
     Args:
         query: The user's question in natural language.
-        llm_id: Optional LLM identifier to use for generation.
+        llm: Optional LLM identifier to use for generation.
         kg_config_name: Optional KG config name to query. Defaults to the active manager profile.
     """
     manager = get_kg_manager()
@@ -212,8 +228,16 @@ def query_kg(query: str, llm_id: str | None = None, kg_config_name: str | None =
     backend = create_backend_from_config("default", profile)
     if not backend:
         raise Exception("EKG database not found")
-    cypher_query = text2cypher_chain(query, llm_id=llm_id).invoke({})
+
+    # Ensure vector extension is loaded (needed if LLM generates vector search queries)
+    if hasattr(backend, "ensure_vector_extension"):
+        backend.ensure_vector_extension()
+
+    cypher_query = text2cypher_chain(query, llm=llm, kg_config_name=kg_config_name).invoke({})
     logger.info("Generated Cypher query: {}", cypher_query)
+
+    # Create any vector indexes declared in the schema JSON (structured, not regex-based)
+    _ensure_vector_indexes(kg_config_name, backend)
 
     # Detect $query_vector and compute embedding if needed
     params = _embed_query_vector(cypher_query, query)
@@ -232,5 +256,5 @@ def query_kg(query: str, llm_id: str | None = None, kg_config_name: str | None =
 if __name__ == "__main__":
     # Quick test
     query = "List the names of all competitors for opportunities created after January 1, 2012."
-    df = query_kg(query, llm_id=None)
+    df = query_kg(query, llm=None)
     print(df)

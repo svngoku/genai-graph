@@ -45,10 +45,10 @@ not automatically invalidate `graph_A`'s cache. Both must be cleared.
 cli kg create --kg my_kg --clear-all-caches
 
 # Force rebuild of imported dependencies even if fingerprints match
-cli kg create --kg my_kg --force-rebuild
+cli kg create --kg my_kg --force
 
 # Target KG + all its imports, fully fresh
-cli kg create --kg my_kg --clear-all-caches --force-rebuild
+cli kg create --kg my_kg --clear-all-caches --force
 ```
 
 `--clear-all-caches` recursively deletes all `parquet/` subdirectories under `~/kg_outputs/`
@@ -60,7 +60,7 @@ and then rebuilds from scratch.
 |---|---|
 | BAML struct fields reordered | `--clear-all-caches` |
 | New fields added to BAML class | `--clear-all-caches` |
-| Source data files updated | `--force-rebuild` |
+| Source data files updated | `--force` |
 | Schema validation errors during import | `--clear-all-caches` |
 | Schema-mismatch error (`Cannot find property`) | `--clear-all-caches` |
 
@@ -68,7 +68,7 @@ and then rebuilds from scratch.
 
 - **No automatic invalidation across imports**: If `rainbow_add_crm` is rebuilt but
   `stratnav_subset_rainbow_crm` still has a stale cache pointing to the old data, you
-  must explicitly run `--clear-all-caches` or `--force-rebuild` on the dependent KG.
+  must explicitly run `--clear-all-caches` or `--force` on the dependent KG.
 - **Struct field ordering**: PyArrow does not guarantee preservation of Pydantic field
   order when writing struct columns. This is a PyArrow limitation; the `_pandas_to_arrow_with_structs`
   helper in `artifacts.py` works around it by building an explicit Arrow schema from

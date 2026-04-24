@@ -13,26 +13,46 @@ from genai_graph.kg.manager import get_kg_manager
 from genai_graph.kg.query.text2cypher import SYSTEM_PROMPT, _embed_query_vector
 
 
-def build_ekg_agent_system_prompt(single_tool_mode: bool = False) -> str:
+def build_ekg_agent_system_prompt(single_tool_mode: bool = False, kg_config_name: str | None = None) -> str:
     """Build the system prompt for the EKG LangChain agent.
 
     The prompt explains the agent's role, how to use the Cypher tool, and
     embeds the graph schema and Cypher authoring guidelines.
 
     Args:
-        single_tool_mode: If True, adjusts prompt for single tool call behavior
+        single_tool_mode: If True, adjusts prompt for single tool call behavior.
+        kg_config_name: KG config profile to load schema from. Defaults to the
+            active manager profile.
     """
     manager = get_kg_manager()
-    if not manager.schema_path.exists():
-        raise FileNotFoundError(
-            f"Schema file not found at {manager.schema_path}. Run 'cli kg create' to generate the schema."
-        )
-    schema_markdown = manager.schema_path.read_text(encoding="utf-8")
+    profile = kg_config_name if kg_config_name is not None else manager.profile
 
-    # Extract vector index section from the schema if present
-    _vi_marker = "### Vector-Indexed Fields"
-    _vi_idx = schema_markdown.find(_vi_marker)
-    vector_indexes_section = schema_markdown[_vi_idx:] if _vi_idx >= 0 else ""
+    # Prefer loading from the canonical JSON (has structured vector_indexes).
+    # Fall back to the markdown text file if JSON is absent.
+    json_path = manager.get_schema_json_path_for(profile)
+    txt_path = manager.get_schema_path_for(profile)
+
+    if json_path.exists():
+        from genai_graph.kg.schema.resolved import ResolvedSchema
+
+        resolved = ResolvedSchema.from_json_file(str(json_path))
+        schema_markdown = resolved.to_markdown()
+        vector_indexes_section = ""
+        if resolved.vector_indexes:
+            lines = ["### Vector-Indexed Fields (for semantic similarity search)", ""]
+            for vi in resolved.vector_indexes:
+                lines.append(f"- {vi.table}.{vi.embedding_column} // embeddings of {vi.table}.{vi.source_field}")
+            vector_indexes_section = "\n".join(lines)
+    elif txt_path.exists():
+        schema_markdown = txt_path.read_text(encoding="utf-8")
+        _vi_marker = "### Vector-Indexed Fields"
+        _vi_idx = schema_markdown.find(_vi_marker)
+        vector_indexes_section = schema_markdown[_vi_idx:] if _vi_idx >= 0 else ""
+    else:
+        raise FileNotFoundError(
+            f"No schema file found for profile '{profile}'. "
+            f"Run 'cli kg create' or 'cli kg schema --regen --kg {profile}'."
+        )
 
     # SYSTEM_PROMPT contains detailed guidance originally written for a
     # standalone text-to-Cypher translator. Here it serves as the canonical

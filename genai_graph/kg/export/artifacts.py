@@ -143,6 +143,60 @@ def export_html(
     return HtmlExportResult(config_name=config_name, output_path=destination)
 
 
+def _ensure_factories_registered_for(config_name: str) -> None:
+    """Load and register all factory instances for a config, resolving imports recursively.
+
+    This replicates what ``create_schema_task`` does during a full build, so that
+    standalone commands (e.g. ``cli kg schema --regen``) can populate the registry
+    without running a complete ingestion flow.  Factories are instantiated with their
+    full YAML kwargs; ``build_schema()`` does not require real data files so this is
+    safe even when source files are absent.
+    """
+    from genai_tk.utils.config_mngr import import_from_qualified
+
+    from genai_graph.kg.factories.base import KgFactory
+    from genai_graph.kg.schema.registry import GraphRegistry
+
+    manager = get_kg_manager()
+    ekg_config = manager.ekg_config
+    registry = GraphRegistry.get_instance()
+
+    visited: set[str] = set()
+
+    def _load_config(name: str) -> None:
+        if name in visited:
+            return
+        visited.add(name)
+        if name not in ekg_config.kg_configs:
+            logger.warning("KG config '{}' not found, skipping import", name)
+            return
+        profile = ekg_config.kg_configs[name]
+        # Recurse into imports first (depth-first)
+        for imp in profile.imports:
+            _load_config(imp)
+        # Then register this profile's own factories
+        for graph_cfg in profile.graphs:
+            factory_path = graph_cfg.factory
+            try:
+                imported = import_from_qualified(factory_path)
+                constructor_kwargs = {
+                    k: v
+                    for k, v in graph_cfg.model_dump(exclude_none=True).items()
+                    if k not in {"factory", "initial_load"}
+                }
+                if isinstance(imported, KgFactory):
+                    graph_impl = imported
+                elif isinstance(imported, type) and issubclass(imported, KgFactory):
+                    graph_impl = imported(**constructor_kwargs)
+                else:
+                    continue
+                graph_impl.register(registry)
+            except Exception as exc:
+                logger.warning("Failed to load factory {} for schema regen: {}", factory_path, exc)
+
+    _load_config(config_name)
+
+
 def export_schema(config_name: str) -> UPath:
     """Export the KG schema as a text file.
 
@@ -152,34 +206,21 @@ def export_schema(config_name: str) -> UPath:
     Returns:
         Path to the exported schema file
     """
-    from genai_graph.kg.schema import GraphRegistry, generate_schema_description
-
     manager = get_kg_manager()
     manager.ensure_directories_for(config_name)
+    _ensure_factories_registered_for(config_name)
 
-    # Get all registered graphs and generate schema description
-    registry = GraphRegistry.get_instance()
-    selected_graphs = registry.list_graphs()
+    from genai_graph.kg.schema.resolved import ResolvedSchema
 
-    schema_content = generate_schema_description(selected_graphs, print_enums=True)
-
-    # Write schema to file using the specified config
+    resolved = ResolvedSchema.from_registry()
     destination = manager.get_schema_path_for(config_name)
-    destination.write_text(schema_content, encoding="utf-8")
-
+    destination.write_text(resolved.to_markdown(), encoding="utf-8")
     logger.debug("Exported KG schema to '{}'", destination)
-
     return destination
 
 
 def export_schema_json(config_name: str) -> UPath:
-    """Export the KG schema as a D3-friendly JSON file.
-
-    The exported JSON is intended to be consumed directly by D3.js:
-    - ``nodes`` is a list with stable string IDs
-    - ``links`` references nodes by those IDs
-
-    The JSON includes descriptions and per-field descriptions whenever available.
+    """Export the KG schema as a canonical JSON file (nodes, links, vector_indexes).
 
     Args:
         config_name: Name of the KG configuration.
@@ -188,28 +229,16 @@ def export_schema_json(config_name: str) -> UPath:
         Path to the exported schema JSON file.
     """
 
-    import warnings
-
-    from genai_graph.kg.schema import GraphRegistry
-    from genai_graph.kg.schema.schema_d3 import build_schema_d3_data
-
     manager = get_kg_manager()
     manager.ensure_directories_for(config_name)
+    _ensure_factories_registered_for(config_name)
 
-    registry = GraphRegistry.get_instance()
-    selected_graphs = registry.list_graphs()
+    from genai_graph.kg.schema.resolved import ResolvedSchema
 
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", category=UserWarning, message="Graph schema validation.")
-        schema = registry.build_combined_schema(selected_graphs)
-
-    schema_data = build_schema_d3_data(schema, graph_names=selected_graphs)
-
+    resolved = ResolvedSchema.from_registry()
     destination = manager.get_schema_json_path_for(config_name)
-    destination.write_text(json.dumps(schema_data, indent=2), encoding="utf-8")
-
+    destination.write_text(resolved.to_json_str(), encoding="utf-8")
     logger.debug("Exported KG schema JSON to '{}'", destination)
-
     return destination
 
 
@@ -222,23 +251,26 @@ def export_schema_html(config_name: str) -> UPath:
     Returns:
         Path to the exported schema HTML file.
     """
-
-    from genai_graph.kg.schema.schema_html import generate_schema_html
-
     manager = get_kg_manager()
     manager.ensure_directories_for(config_name)
 
+    # Reuse the JSON if it already exists; otherwise generate from registry.
     schema_json_path = manager.get_schema_json_path_for(config_name)
     if schema_json_path.exists():
-        schema_data = json.loads(schema_json_path.read_text(encoding="utf-8"))
+        from genai_graph.kg.schema.resolved import ResolvedSchema
+
+        resolved = ResolvedSchema.from_json_file(str(schema_json_path))
+        schema_data = resolved.to_d3_json()
     else:
-        schema_data = json.loads(export_schema_json(config_name).read_text(encoding="utf-8"))
+        import json as _json
+
+        schema_data = _json.loads(export_schema_json(config_name).read_text(encoding="utf-8"))
 
     destination = manager.get_schema_html_path_for(config_name)
+    from genai_graph.kg.schema.schema_html import generate_schema_html
+
     generate_schema_html(schema_data, destination_file_path=str(destination))
-
     logger.debug("Exported KG schema HTML visualization to '{}'", destination)
-
     return destination
 
 

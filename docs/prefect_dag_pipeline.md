@@ -176,7 +176,7 @@ cli kg create --kg one_rainbow_with_db --delete-first
 cli kg create --all-graphs
 
 # Force rebuild of all imported dependencies (ignore cache)
-cli kg create --kg one_rainbow_with_db --force-rebuild
+cli kg create --kg one_rainbow_with_db --force
 
 # Clear all parquet caches first
 cli kg create --kg one_rainbow_with_db --clear-all-caches
@@ -189,7 +189,7 @@ cli kg create --kg one_rainbow_with_db --clear-all-caches
 | `--kg NAME` | Specify KG configuration(s) to build (repeatable) |
 | `--all-graphs` | Build all KGs defined in `ekg.yaml` |
 | `--delete-first` | Delete existing Kuzu DB before creation |
-| `--force-rebuild` | Rebuild imported KG dependencies even if cache fingerprints match |
+| `--force` | Rebuild imported KG dependencies even if cache fingerprints match |
 | `--clear-all-caches` | Clear all parquet output directories before creation |
 | `--no-html` | Skip HTML visualization export |
 

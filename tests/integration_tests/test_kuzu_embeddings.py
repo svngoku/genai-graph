@@ -415,7 +415,7 @@ class TestDocGenerationWithEmbeddings:
 
     def test_float_array_in_json_schema(self):
         """Test that FLOAT[] is correctly represented in JSON schema."""
-        from genai_graph.kg.schema.doc_generator import _get_kuzu_type_for_field
+        from genai_graph.kg.schema._helpers import _get_kuzu_type_for_field
 
         kuzu_type = _get_kuzu_type_for_field(list[float])
         assert kuzu_type == "FLOAT[]"

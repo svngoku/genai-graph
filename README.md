@@ -71,7 +71,7 @@ cli kg view
 cli kg create                        # Uses kg_config from config
 cli kg create --kg <name>            # Specific KG
 cli kg create --all-graphs           # All KGs in ekg.yaml
-cli kg create --kg <name> --force-rebuild        # Ignore fingerprint cache
+cli kg create --kg <name> --force        # Ignore fingerprint cache
 cli kg create --kg <name> --clear-all-caches     # Clear parquet caches first
 
 # Inspect

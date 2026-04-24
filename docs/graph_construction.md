@@ -333,8 +333,8 @@ cli kg create --kg rainbow_add_crm --kg stratnav_subset_rainbow_crm
 # Create all KGs defined in ekg.yaml
 cli kg create --all-graphs
 
-# Force-rebuild: re-ingest even if parquet fingerprints match
-cli kg create --kg my_kg --force-rebuild
+# force: re-ingest even if parquet fingerprints match
+cli kg create --kg my_kg --force
 
 # Clear all parquet caches (fixes struct field-order mismatches)
 cli kg create --kg my_kg --clear-all-caches

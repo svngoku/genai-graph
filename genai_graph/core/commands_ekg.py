@@ -70,7 +70,7 @@ class EkgCommands(CliTopCommand):
             force_rebuild: Annotated[
                 bool,
                 typer.Option(
-                    "--force-rebuild",
+                    "--force",
                     help="Force rebuild of imported KG dependencies even if cache fingerprints match",
                 ),
             ] = False,
@@ -272,30 +272,57 @@ class EkgCommands(CliTopCommand):
                 raise typer.Exit(1) from exc
 
         @cli_app.command("schema")
-        def schema() -> None:
+        def schema(
+            regen: bool = typer.Option(False, "--regen", help="Regenerate schema file from current graph definitions"),
+            kg: Annotated[
+                str | None,
+                typer.Option("--kg", help="KG config name (e.g. stratnav_subset_rainbow_crm)"),
+            ] = None,
+        ) -> None:
             """Display knowledge graph schema.
 
             Reads and displays the schema that was automatically generated during
             graph creation. The schema includes node types, relationships, properties,
             and indexed fields.
+
+            Use --regen to regenerate the schema file from the current Python graph
+            definitions without rebuilding the full graph.
             """
 
+            from genai_graph.kg.export.artifacts import export_schema
             from genai_graph.kg.manager import get_kg_manager
 
             # Get the current KG manager (auto-activates)
             manager = get_kg_manager()
+            active_kg = kg if kg is not None else manager.profile
+
+            if regen:
+                try:
+                    from genai_graph.kg.export.artifacts import export_schema_json
+
+                    dest_txt = export_schema(active_kg)
+                    dest_json = export_schema_json(active_kg)
+                    console.print(f"[green]✅ Schema regenerated → {dest_txt}[/green]")
+                    console.print(f"[green]✅ Schema JSON regenerated → {dest_json}[/green]")
+                except Exception as exc:
+                    import traceback as tb
+
+                    console.print(f"[red]❌ Failed to regenerate schema: {exc}[/red]")
+                    console.print("[red]" + tb.format_exc() + "[/red]")
+                    raise typer.Exit(1) from exc
 
             # Check if schema file exists
-            if not manager.schema_path.exists():
+            schema_path = manager.get_schema_path_for(active_kg)
+            if not schema_path.exists():
                 console.print(
                     "[red]❌ No schema file found.[/red]\n"
-                    "[yellow]💡 Run [bold]cli kg create[/bold] to generate the schema[/yellow]"
+                    "[yellow]💡 Run [bold]cli kg create[/bold] or [bold]cli kg schema --regen[/bold] to generate the schema[/yellow]"
                 )
                 raise typer.Exit(1)
 
             # Read and display the schema
             try:
-                schema_content = manager.schema_path.read_text(encoding="utf-8")
+                schema_content = schema_path.read_text(encoding="utf-8")
                 console.print(
                     Panel(
                         "[bold cyan]Knowledge Graph Schema[/bold cyan]",
@@ -542,7 +569,7 @@ class EkgCommands(CliTopCommand):
             try:
                 from rich.table import Table
 
-                df = query_kg(query, llm_id=llm, kg_config_name=kg)
+                df = query_kg(query, llm=llm, kg_config_name=kg)
 
                 if df.empty:
                     console.print("[yellow]Query returned no results[/yellow]")

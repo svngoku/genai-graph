@@ -364,7 +364,7 @@ def import_kg_task(import_name: str, backend: KgBackend, force_rebuild: bool = F
         logger.info(msg)
         logger_pf.info(msg)
     else:
-        msg = f"Force-rebuild requested for '{import_name}'"
+        msg = f"force requested for '{import_name}'"
         logger.info(msg)
         logger_pf.info(msg)
 
