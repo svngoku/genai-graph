@@ -345,11 +345,12 @@ def display_sidebar() -> None:
         # Display current KG info
         try:
             manager = get_kg_manager()
-            if manager.schema_path.exists():
+            schema_path = manager.get_schema_path_for(sss.kg_config_selected)
+            if schema_path.exists():
                 st.success("✅ Schema loaded")
-                st.caption(f"Path: {manager.schema_path}")
+                st.caption(f"Path: {schema_path}")
             else:
-                st.warning("⚠️ Schema not found. Run 'cli kg create' first.")
+                st.warning("⚠️ Schema not found. Run 'cli kg schema --regen' first.")
         except Exception as e:
             st.error(f"❌ Error loading KG: {e}")
 
