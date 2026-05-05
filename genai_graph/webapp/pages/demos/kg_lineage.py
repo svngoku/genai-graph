@@ -15,7 +15,7 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 
 import streamlit as st
-from genai_tk.extra.rag.markdown_chunking import chunk_markdown_file
+from genai_tk.extra.rag.chunker_factory import ChunkerFactory
 from genai_tk.utils.config_mngr import global_config
 from genai_tk.utils.file_patterns import resolve_config_path
 from loguru import logger
@@ -86,12 +86,32 @@ def _initialize_session_state() -> None:
         sss.lineage_selected_markdown = None
     if "lineage_selected_json_index" not in sss:
         sss.lineage_selected_json_index = 0
+    if "lineage_chunker" not in sss:
+        sss.lineage_chunker = "auto"
 
 
 def _select_configuration() -> None:
     """Render KG configuration selector in the sidebar and apply changes."""
     with st.sidebar:
         render_kg_config_selector(help="Select the Knowledge Graph configuration whose lineage you want to inspect.")
+
+        st.divider()
+        st.subheader("Chunker Settings")
+
+        # Get available chunkers from config
+        try:
+            cfg = global_config()
+            chunker_names = list(cfg.get_dict("chunkers", {}).keys())
+            chunker_options = ["auto"] + chunker_names
+        except Exception:
+            chunker_options = ["auto", "markdown", "recursive"]
+
+        sss.lineage_chunker = st.selectbox(
+            "Chunker for Markdown Rendering",
+            options=chunker_options,
+            index=0 if sss.lineage_chunker == "auto" else max(0, chunker_options.index(sss.lineage_chunker)),
+            help='Choose "auto" to auto-detect based on file extension, or select a specific chunker.',
+        )
 
 
 def _group_lineage_by_directory(
@@ -355,27 +375,33 @@ def _render_chunks_tab(entry: "MarkdownLineage", data_roots: list[UPath]) -> Non
     st.caption(f"Chunks for: {relative_path}")
 
     try:
-        chunks = chunk_markdown_file(entry.markdown_path)
-    except FileNotFoundError:
-        st.error(f"Markdown file not found: {relative_path}")
-        return
+        path = UPath(entry.markdown_path)
+        if not path.exists():
+            st.error(f"Markdown file not found: {relative_path}")
+            return
+
+        # Auto-detect chunker based on file extension
+        splitter = ChunkerFactory.create_for_file(path, "auto")
+        content = path.read_text(encoding="utf-8")
+        docs = splitter.create_documents([content], metadatas=[{"source": str(relative_path)}])
     except Exception as exc:
         st.error(f"Failed to chunk markdown file: {exc}")
         return
 
-    if not chunks:
+    if not docs:
         st.info("No chunks generated from this file.")
         return
 
     # Summary statistics
-    total_tokens = sum(c.token_count for c in chunks)
+    total_tokens = sum(doc.metadata.get("token_count", 0) for doc in docs)
     type_counts: dict[str, int] = {}
-    for c in chunks:
-        type_counts[c.chunk_type] = type_counts.get(c.chunk_type, 0) + 1
+    for doc in docs:
+        chunk_type = doc.metadata.get("chunk_type", "text")
+        type_counts[chunk_type] = type_counts.get(chunk_type, 0) + 1
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("Total Chunks", len(chunks))
+        st.metric("Total Chunks", len(docs))
     with col2:
         st.metric("Total Tokens", f"{total_tokens:,}")
     with col3:
@@ -385,18 +411,16 @@ def _render_chunks_tab(entry: "MarkdownLineage", data_roots: list[UPath]) -> Non
     st.markdown("---")
 
     # Display chunks as a table with full content in markdown
-    for chunk in chunks:
+    for idx, doc in enumerate(docs):
         with st.container(border=True):
             col_meta, col_content = st.columns([1, 6])
+            chunk_type = doc.metadata.get("chunk_type", "text")
+            token_count = doc.metadata.get("token_count", 0)
+            start_index = doc.metadata.get("start_index", 0)
             with col_meta:
-                st.markdown(
-                    f"**#{chunk.index + 1}**  \n"
-                    f"`{chunk.chunk_type}`  \n"
-                    f"{chunk.token_count} tokens  \n"
-                    f"pos: {chunk.start_pos}–{chunk.end_pos}"
-                )
+                st.markdown(f"**#{idx + 1}**  \n`{chunk_type}`  \n{token_count} tokens  \npos: {start_index}+")
             with col_content:
-                display_content = _increase_markdown_header_levels(chunk.content)
+                display_content = _increase_markdown_header_levels(doc.page_content)
                 st.markdown(display_content)
 
 
