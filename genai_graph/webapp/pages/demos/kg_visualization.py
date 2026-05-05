@@ -15,7 +15,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import streamlit as st
-import streamlit.components.v1 as components
 from loguru import logger
 from streamlit import session_state as sss
 
@@ -431,15 +430,14 @@ def main() -> None:
         filter_info.append(f"Limit: {sss.viz_limit}")
 
         col1, col2 = st.columns([1, 2])
-        with col1:
+        with st.sidebar:
             st.caption("Filters: " + " | ".join(filter_info))
-        with col2:
             if sss.current_query:
                 st.caption(f"Query: `{sss.current_query}`")
 
         # Display the graph
         with st.container():
-            components.html(sss.graph_html, height=600, scrolling=True)
+            st.iframe(sss.graph_html, height=700)
     else:
         st.info("👈 Click 'Generate Visualization' in the sidebar to display the graph with your selected filters.")
 

@@ -152,7 +152,7 @@ def main() -> None:
         st.error(f"Failed to read schema HTML: {exc}")
         return
 
-    components.html(html_content, height=700, scrolling=True)
+    st.iframe(sss.graph_html, height=700)
 
 
 if __name__ == "__main__":
