@@ -155,7 +155,12 @@ class ReviewedOpportunityGraph(JsonFileBackedFactory, BaseModel):
                 description="Known competitors",
             ),
         ]
-        return GraphSchema(root_model_class=ReviewedOpportunity, nodes=nodes, relations=relations)
+        doc_nodes, doc_relations = self.get_document_schema_elements(ReviewedOpportunityNode)
+        return GraphSchema(
+            root_model_class=ReviewedOpportunity,
+            nodes=nodes + doc_nodes,
+            relations=relations + doc_relations,
+        )
 
     def get_sample_queries(self) -> list[str]:
         """Get list of sample Cypher queries for opportunity data."""

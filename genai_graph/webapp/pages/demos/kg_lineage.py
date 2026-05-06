@@ -15,7 +15,7 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 
 import streamlit as st
-from genai_tk.extra.rag.chunker_factory import ChunkerFactory
+from genai_tk.core.factories.chunker_factory import ChunkerFactory
 from genai_tk.utils.config_mngr import global_config
 from genai_tk.utils.file_patterns import resolve_config_path
 from loguru import logger

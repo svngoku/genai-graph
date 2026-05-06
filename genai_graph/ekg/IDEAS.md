@@ -1,11 +1,9 @@
-in genai-graph, introduce shared graph nodes of type 'Document', with standards attributes (path, file name, ) and  access control fields. These nodes are created during document injection (cli kg create ), typically by extending JsonFileBackedFactory (that could inherit from a DocumentBackedFactory). Create also relationship between the document processes (such as Rainbox Reviex) and that node, named 'IN_DOCUMENT'.  Remove FileMetadata class embedded in these nodes, and related logic - it is replaced by the new Document nodes.
+in genai-graph, introduce shared graph nodes of type 'Document', with standards attributes (path, file name, ) and  access control fields. These nodes are created during document injection (cli kg create ), typically by extending JsonFileBackedFactory (that could inherit from a DocumentBackedFactory). Create also relationship between the document processes (such as Rainbox Review) and that node, named 'IN_DOCUMENT'.  Remove FileMetadata class embedded in these nodes, and related logic - it is replaced by the new Document nodes.
 Update CLI commands, tests and doc. 
-The 'Document'node should be created in a separate Prefect task, as we want (later) to add more file processing capabilities (embedding, summerization, ...). 
-We want notably  
+The 'Document'node should be created in a separate Prefect task, as we want (later) to add more time consumming file processing capabilities (chunk / embeddings nodes, summerization, ...). That might impact other aspect of the design.
+
 Test using command 'cli kg create --kg one_rainbow --force-rebuild --clear-all-caches' 
 
-
-w2mbdqdzbmqnn42nqc9zf2
 
 
 

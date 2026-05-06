@@ -24,7 +24,7 @@ import uuid
 from typing import Any
 
 import streamlit as st
-from genai_tk.core.llm_factory import LlmFactory, get_llm
+from genai_tk.core.factories.llm_factory import LlmFactory, get_llm
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig

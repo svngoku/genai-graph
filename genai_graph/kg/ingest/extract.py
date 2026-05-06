@@ -8,7 +8,7 @@ import json
 from datetime import datetime
 from typing import Any, Dict, NamedTuple, Union
 
-from genai_tk.core.embeddings_factory import EmbeddingsFactory
+from genai_tk.core.factories.embeddings_factory import EmbeddingsFactory
 from genai_tk.utils.config_mngr import global_config
 from loguru import logger
 from pydantic import BaseModel
@@ -573,6 +573,12 @@ def extract_graph_data(
 
         # Process ALL field paths for this node type, not just the first one
         field_paths_to_process = node_info.field_paths or [None]
+
+        # Skip nodes that have no paths in the root model and are not the root
+        # model itself.  Such nodes (e.g. Document) are created by dedicated
+        # Prefect tasks and must not be extracted from the root model data.
+        if not node_info.field_paths and node_info.node_class is not type(model):
+            continue
 
         for field_path in field_paths_to_process:
             field_data = get_field_by_path(model, field_path) if field_path else model

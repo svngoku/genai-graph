@@ -101,8 +101,12 @@ class ArchitectureDocumentGraph(JsonFileBackedFactory, BaseModel):
                 description="Customer contact persons",
             ),
         ]
-
-        return GraphSchema(root_model_class=self.TOP_CLASS, nodes=nodes, relations=relations)
+        doc_nodes, doc_relations = self.get_document_schema_elements(SWArchitectureDocumentNode)
+        return GraphSchema(
+            root_model_class=self.TOP_CLASS,
+            nodes=nodes + doc_nodes,
+            relations=relations + doc_relations,
+        )
 
     def get_sample_queries(self) -> list[str]:
         """Get list of sample Cypher queries for architecture data."""

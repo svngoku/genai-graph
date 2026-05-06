@@ -24,6 +24,7 @@ from genai_graph.orchestration.dag import resolve_import_dag
 from genai_graph.orchestration.models import BundleResult, ImportResult, KgRunResult, WarningsCollector
 from genai_graph.orchestration.tasks import (
     compute_similarities_task,
+    create_document_nodes_task,
     create_schema_task,
     create_vector_indexes_task,
     delete_backend_task,
@@ -166,7 +167,12 @@ def create_kg_flow(
         set_parquet_collector(None)
 
     # ------------------------------------------------------------------
-    # 6b. Create vector indexes for embedding fields
+    # 6b. Create Document nodes and CONTAINS relationships
+    # ------------------------------------------------------------------
+    create_document_nodes_task.submit(bundles, backend).result()
+
+    # ------------------------------------------------------------------
+    # 6c. Create vector indexes for embedding fields
     # ------------------------------------------------------------------
     create_vector_indexes_task.submit(bundles, backend).result()
 

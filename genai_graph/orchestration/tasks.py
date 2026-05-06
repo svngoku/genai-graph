@@ -497,6 +497,152 @@ def delete_backend_task(config_key: str = "default", kg_config_name: str | None 
         logger_pf.info("No backend storage found at '%s' for config '%s'", path, config_key)
 
 
+# ---------------------------------------------------------------------------
+# Document nodes task — separate task to allow future extensions
+# (chunking, summarization, embedding nodes, …)
+# ---------------------------------------------------------------------------
+
+
+@task(cache_policy=NO_CACHE)
+def create_document_nodes_task(bundles: list[GraphBundle], backend: KgBackend) -> DocumentStats:
+    """Create Document nodes and CONTAINS relationships for file-backed factories.
+
+    Must run *after* ``ingest_bundle_task`` so that root entities already exist
+    in the graph before CONTAINS edges are created.  Being a separate Prefect task
+    makes it straightforward to add follow-up file-processing steps (chunking,
+    summarization, embedding sub-nodes, …) as additional tasks later.
+
+    Args:
+        bundles: All GraphBundles from the current flow; non-DocumentMixin bundles
+            are silently skipped.
+        backend: Active KgBackend.
+
+    Returns:
+        Aggregate :class:`DocumentStats` across all processed bundles.
+    """
+    from upath import UPath
+
+    from genai_graph.kg.factories import DocumentMixin
+    from genai_graph.kg.ingest.merge import _format_value_for_cypher  # type: ignore[attr-defined]
+
+    log = _get_prefect_logger_or_default()
+    total = DocumentStats()
+
+    for bundle in bundles:
+        factory = bundle.factory
+        schema = bundle.schema_obj
+
+        if not isinstance(factory, DocumentMixin) or schema is None:
+            continue
+
+        root_class = schema.root_model_class
+        if root_class is None:
+            continue
+
+        # Find the GraphNode for the root model class
+        root_graph_node = next((n for n in schema.nodes if n.node_class is root_class), None)
+        if root_graph_node is None:
+            log.warning("No GraphNode found for root class %s; skipping Document nodes", root_class.__name__)
+            continue
+
+        root_type_name = root_class.__name__
+        key_from = root_graph_node.key_from
+        pk_field = "id" if (key_from == "AUTO_ID" or callable(key_from)) else key_from
+
+        try:
+            file_paths = factory.get_all_file_paths()
+        except Exception as exc:
+            log.warning("Could not retrieve file paths from %s: %s", getattr(factory, "name", "?"), exc)
+            continue
+
+        log.info("Creating Document nodes for %d file(s) from %s", len(file_paths), getattr(factory, "name", "?"))
+
+        for raw_path in file_paths:
+            fp = UPath(raw_path) if not isinstance(raw_path, UPath) else raw_path
+            file_key = str(fp)
+
+            # ── 1. Build Document node ─────────────────────────────────────
+            try:
+                doc = factory.create_document_node(fp)
+            except Exception as exc:
+                log.warning("Failed to build Document node for %s: %s", fp, exc)
+                total.total_failed += 1
+                continue
+
+            # ── 2. Compute root-entity primary key ─────────────────────────
+            try:
+                raw_data = factory.get_struct_data_by_key(file_key)
+                if raw_data is None:
+                    log.debug("No data for key %s; skipping Document", file_key)
+                    total.total_failed += 1
+                    continue
+                data_dict = raw_data.model_dump()
+                root_entity_pk = root_graph_node.get_key_value(data_dict, root_type_name)
+            except Exception as exc:
+                log.warning("Could not derive root-entity PK for %s: %s", fp, exc)
+                total.total_failed += 1
+                continue
+
+            # ── 3. MERGE Document node into the graph ──────────────────────
+            try:
+                from datetime import datetime, timezone
+
+                now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+                def _v(val: object) -> str:
+                    return _format_value_for_cypher(val)
+
+                merge_doc_cypher = (
+                    f"MERGE (d:Document {{path: {_v(doc.path)}}})\n"
+                    f"ON CREATE SET\n"
+                    f"  d.name = {_v(doc.filename)},\n"
+                    f"  d._original_name = {_v(doc.filename)},\n"
+                    f"  d.filename = {_v(doc.filename)},\n"
+                    f"  d.file_size = {_v(doc.file_size)},\n"
+                    f"  d.mime_type = {_v(doc.mime_type)},\n"
+                    f"  d.modified_at = {_v(doc.modified_at)},\n"
+                    f"  d.content_hash = {_v(doc.content_hash)},\n"
+                    f"  d.access_level = {_v(doc.access_level)},\n"
+                    f"  d.allowed_roles = {_v(doc.allowed_roles)},\n"
+                    f"  d.allowed_users = {_v(doc.allowed_users)},\n"
+                    f"  d._created_at = {_v(now)},\n"
+                    f"  d._updated_at = {_v(now)}\n"
+                    f"ON MATCH SET\n"
+                    f"  d.content_hash = {_v(doc.content_hash)},\n"
+                    f"  d._updated_at = {_v(now)}"
+                )
+                backend.execute(merge_doc_cypher)
+            except Exception as exc:
+                log.warning("Failed to MERGE Document node for %s: %s", fp, exc)
+                total.total_failed += 1
+                continue
+
+            # ── 4. Create CONTAINS relationship ────────────────────────────
+            try:
+                contains_cypher = (
+                    f"MATCH (d:Document {{path: {_v(doc.path)}}}),\n"
+                    f"      (r:{root_type_name} {{{pk_field}: {_v(root_entity_pk)}}})\n"
+                    f"MERGE (d)-[:CONTAINS]->(r)"
+                )
+                backend.execute(contains_cypher)
+            except Exception as exc:
+                log.warning("CONTAINS edge failed for %s → %s pk=%s: %s", fp, root_type_name, root_entity_pk, exc)
+                total.total_failed += 1
+                continue
+
+            total.nodes_created += 1
+            total.relationships_created += 1
+            total.total_processed += 1
+
+    log.info(
+        "Document task complete: created=%d rels=%d failed=%d",
+        total.nodes_created,
+        total.relationships_created,
+        total.total_failed,
+    )
+    return total
+
+
 @task(cache_policy=NO_CACHE)
 def compute_similarities_task(bundles: list[GraphBundle], backend: KgBackend) -> list:
     """Create similarity-based relationships for all SimilarityFactory bundles.

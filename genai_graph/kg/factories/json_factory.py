@@ -13,10 +13,11 @@ from pydantic import BaseModel
 from upath import UPath
 
 from genai_graph.kg.factories.base import KgFactory
+from genai_graph.kg.factories.document_mixin import DocumentMixin
 from genai_graph.kg.schema.core import GraphSchema
 
 
-class JsonFileBackedFactory(KgFactory):
+class JsonFileBackedFactory(DocumentMixin, KgFactory):
     """KG factory that reads structured data from JSON files.
 
     This factory works with the output of 'baml extract' command, which stores

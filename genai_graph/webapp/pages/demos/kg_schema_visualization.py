@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 
 import streamlit as st
-import streamlit.components.v1 as components
 from genai_tk.utils.config_mngr import global_config
 from loguru import logger
 from streamlit import session_state as sss

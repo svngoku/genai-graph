@@ -6,7 +6,7 @@ with built-in caching support for efficiency during KG builds.
 
 from typing import Any
 
-from genai_tk.core.embeddings_factory import EmbeddingsFactory, get_embeddings
+from genai_tk.core.factories.embeddings_factory import EmbeddingsFactory, get_embeddings
 from loguru import logger
 
 

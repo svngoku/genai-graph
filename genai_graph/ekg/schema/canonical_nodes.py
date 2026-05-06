@@ -28,7 +28,7 @@ avoiding dimension mismatches when combining sub-graphs.
 """
 
 from genai_graph.ekg.baml_client.types import Person
-from genai_graph.ekg.schema.common_nodes import L3, Customer, Geo, Opportunity, Partner
+from genai_graph.ekg.schema.common_nodes import L3, Customer, Document, Geo, Opportunity, Partner
 from genai_graph.kg.schema import GraphNode
 
 # L3: Level 3 service offering from the service catalog.
@@ -79,4 +79,12 @@ GeoNode: GraphNode = GraphNode(
     name_from="name",
     key_from="name",
     description="Geographic region or country",
+)
+
+DocumentNode: GraphNode = GraphNode(
+    node_class=Document,
+    name_from="filename",
+    key_from="path",
+    description="Source document from which graph data was extracted",
+    explicitly_defined=True,
 )

@@ -7,10 +7,23 @@ from genai_graph.ekg.baml_client.types import Partner as BamlPartner
 from genai_graph.ekg.baml_client.types import Person
 
 
-class FileMetadata(BaseModel):
-    """Simple file provenance information."""
+class Document(BaseModel):
+    """Source document node — tracks the file from which graph data was extracted.
 
-    source: str = Field(..., description="Source of the file from which the data was extracted")
+    Serves as provenance anchor for all entities extracted from a file.
+    Access control fields are intentionally simple for now and will be extended later.
+    """
+
+    path: str = Field(..., description="Absolute path to the source file (primary key)")
+    filename: str = Field(..., description="Base filename without directory")
+    file_size: int | None = Field(default=None, description="File size in bytes")
+    mime_type: str | None = Field(default=None, description="MIME type inferred from extension")
+    modified_at: str | None = Field(default=None, description="Last-modified timestamp (ISO 8601)")
+    content_hash: str | None = Field(default=None, description="xxHash XXH3-64 digest for deduplication")
+    # Access control — basic; will be enhanced later
+    access_level: str = Field(default="public", description="Access level: public | restricted | confidential")
+    allowed_roles: list[str] = Field(default_factory=list, description="Roles permitted to access this document")
+    allowed_users: list[str] = Field(default_factory=list, description="Users permitted to access this document")
 
 
 class WinLoss(BaseModel):
@@ -86,9 +99,6 @@ class Customer(BamlCustomer):
     location: Geo | None = None
     services: list[L3] = Field(default_factory=list)
 
-    # Provenance tracking
-    metadata: dict[str, str] | None = None
-
 
 class Opportunity(BamlOpportunity):
     """Opportunity with extended fields for win/loss tracking and provenance.
@@ -104,4 +114,3 @@ class Opportunity(BamlOpportunity):
     customer: "Customer" = Field(description="Client or customer information")  # type: ignore[assignment]
     lead: Person | None = None
     win_loss: WinLoss | None = None
-    metadata: dict[str, str] | None = None
