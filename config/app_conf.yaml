@@ -80,8 +80,8 @@ auth:
 ####
 cli:
   commands:  # List modules:functions to register CLI commands
-    - genai_tk.core.commands_core.CoreCommands
-    - genai_tk.core.commands_info.InfoCommands
+    - genai_tk.cli.commands_core.CoreCommands
+    - genai_tk.cli.commands_info.InfoCommands
     - genai_tk.extra.commands_extra.ExtraCommands
     - genai_tk.extra.rag.commands_rag.RagCommands
     - genai_tk.agents.commands_agents.AgentCommands
