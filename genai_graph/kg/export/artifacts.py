@@ -152,7 +152,7 @@ def _ensure_factories_registered_for(config_name: str) -> None:
     full YAML kwargs; ``build_schema()`` does not require real data files so this is
     safe even when source files are absent.
     """
-    from genai_tk.utils.config_mngr import import_from_qualified
+    from genai_tk.utils.import_utils import ImportResolver
 
     from genai_graph.kg.factories.base import KgFactory
     from genai_graph.kg.schema.registry import GraphRegistry
@@ -178,7 +178,7 @@ def _ensure_factories_registered_for(config_name: str) -> None:
         for graph_cfg in profile.graphs:
             factory_path = graph_cfg.factory
             try:
-                imported = import_from_qualified(factory_path)
+                imported = ImportResolver.import_from_qualified(factory_path)
                 constructor_kwargs = {
                     k: v
                     for k, v in graph_cfg.model_dump(exclude_none=True).items()
@@ -798,8 +798,8 @@ def compute_fingerprints_for_config(config_name: str) -> CacheFingerprints:
     Returns:
         ``CacheFingerprints`` with all computable fields populated.
     """
-    from genai_tk.utils.config_mngr import import_from_qualified
     from genai_tk.utils.hashing import buffer_digest, file_digest
+    from genai_tk.utils.import_utils import ImportResolver
 
     manager = get_kg_manager()
 
@@ -823,7 +823,7 @@ def compute_fingerprints_for_config(config_name: str) -> CacheFingerprints:
         try:
             from genai_graph.kg.factories import KgFactory
 
-            imported = import_from_qualified(factory_path)
+            imported = ImportResolver.import_from_qualified(factory_path)
             if isinstance(imported, type) and issubclass(imported, KgFactory):
                 constructor_kwargs = {
                     k: v for k, v in graph_cfg.items() if k not in {"factory", "initial_load", "trigger"}

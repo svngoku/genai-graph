@@ -12,8 +12,9 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-from genai_tk.utils.config_mngr import global_config, import_from_qualified
+from genai_tk.utils.config_mngr import global_config
 from genai_tk.utils.file_patterns import resolve_config_path
+from genai_tk.utils.import_utils import ImportResolver
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import create_engine, text
@@ -128,7 +129,7 @@ def _discover_table_subgraphs() -> list[TableInfo]:
 
             # Try to import and check if it's a TableBackedFactory
             try:
-                imported = import_from_qualified(factory_path)
+                imported = ImportResolver.import_from_qualified(factory_path)
                 if not isinstance(imported, type) or not issubclass(imported, TableBackedFactory):
                     continue
 
@@ -443,7 +444,7 @@ def _discover_table_subgraphs() -> list[TableInfo]:
 
             # Try to import and check if it's a TableBackedFactory
             try:
-                imported = import_from_qualified(factory_path)
+                imported = ImportResolver.import_from_qualified(factory_path)
                 if not isinstance(imported, type) or not issubclass(imported, TableBackedFactory):
                     continue
 

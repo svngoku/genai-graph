@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from genai_tk.utils.config_mngr import import_from_qualified
+from genai_tk.utils.import_utils import ImportResolver
 from loguru import logger
 from prefect import get_run_logger, task
 from prefect.cache_policies import NO_CACHE
@@ -120,7 +120,7 @@ def load_factories_task(kg_cfg: dict[str, Any]) -> list[GraphBundle]:
             continue
 
         try:
-            imported = import_from_qualified(factory_path)
+            imported = ImportResolver.import_from_qualified(factory_path)
             if isinstance(imported, KgFactory):
                 graph_impl = imported
             elif isinstance(imported, type) and issubclass(imported, KgFactory):

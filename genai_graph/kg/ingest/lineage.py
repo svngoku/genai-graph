@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from genai_tk.utils.config_mngr import import_from_qualified
+from genai_tk.utils.import_utils import ImportResolver
 from loguru import logger
 from pydantic import BaseModel, Field
 from upath import UPath
@@ -114,7 +114,7 @@ def build_lineage_for_manager(manager: KgManager) -> tuple[list[MarkdownLineage]
             continue
 
         try:
-            imported = import_from_qualified(factory_path)
+            imported = ImportResolver.import_from_qualified(factory_path)
         except Exception as exc:  # pragma: no cover - defensive
             hint = _detect_baml_version_mismatch(exc)
             if hint:

@@ -10,7 +10,7 @@ from __future__ import annotations
 import typing
 from typing import Any
 
-from genai_tk.utils.config_mngr import import_from_qualified
+from genai_tk.utils.import_utils import ImportResolver
 from genai_tk.utils.singleton import once
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -70,7 +70,7 @@ class GraphRegistry(BaseModel):
             factory = graph_cfg["factory"]
             try:
                 logger.debug(f"import {factory}")
-                imported = import_from_qualified(factory)
+                imported = ImportResolver.import_from_qualified(factory)
 
                 graph_impl: KgFactory | None = None
 
