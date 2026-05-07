@@ -1,0 +1,172 @@
+# ---------------------------------------------------------------------------
+# Workflow and Workflow Profile definitions for genai-graph
+# ---------------------------------------------------------------------------
+# These workflows chain pre-processing steps (ppt2pdf, markdownize) with
+# KG creation, enabling full end-to-end pipelines via:
+#
+#   cli workflow run full_rainbow_pipeline --dry-run
+#   cli workflow run kg_one_rainbow
+#   cli tools markdownize --config markdownize_rainbow
+# ---------------------------------------------------------------------------
+
+workflows:
+  # --- Pre-processing workflows (reuse genai-tk steps) ---
+  ppt2pdf_documents:
+    description: "Convert PowerPoint files to PDF"
+    steps:
+      - id: convert
+        uses: genai_tk.extra.ppt2pdf_prefect_flow.ppt2pdf_flow
+        inputs:
+          root_dir: "${profile.root_dir}"
+          output_dir: "${profile.output_dir}"
+        params:
+          include_patterns: "${profile.include_patterns}"
+          exclude_patterns: "${profile.exclude_patterns}"
+          recursive: "${profile.recursive}"
+          batch_size: "${profile.batch_size}"
+        concurrency: serial
+
+  markdownize_documents:
+    description: "Convert documents to Markdown format"
+    steps:
+      - id: convert
+        uses: genai_tk.extra.markdownize_prefect_flow.markdownize_flow
+        inputs:
+          root_dir: "${profile.root_dir}"
+          output_dir: "${profile.output_dir}"
+        params:
+          include_patterns: "${profile.include_patterns}"
+          exclude_patterns: "${profile.exclude_patterns}"
+          recursive: "${profile.recursive}"
+          batch_size: "${profile.batch_size}"
+          converter: "${profile.converter}"
+        concurrency: serial
+
+  # --- KG creation workflow ---
+  kg_create:
+    description: "Create a Knowledge Graph from configured profile"
+    steps:
+      - id: create_kg
+        uses: genai_graph.orchestration.workflow_steps.kg_create_step
+        inputs:
+          config_name: "${profile.config_name}"
+        params:
+          delete_first: "${profile.delete_first}"
+          export_html: "${profile.export_html}"
+          force_rebuild: "${profile.force_rebuild}"
+        concurrency: serial
+
+  # --- Full pipeline: ppt2pdf → markdownize → kg create ---
+  full_kg_pipeline:
+    description: "End-to-end pipeline: PPT→PDF, then Markdownize, then KG creation"
+    steps:
+      - id: ppt_to_pdf
+        uses: genai_tk.extra.ppt2pdf_prefect_flow.ppt2pdf_flow
+        inputs:
+          root_dir: "${profile.ppt_root_dir}"
+          output_dir: "${profile.pdf_output_dir}"
+        params:
+          recursive: "${profile.recursive}"
+          batch_size: "${profile.batch_size}"
+        concurrency: serial
+
+      - id: markdownize
+        uses: genai_tk.extra.markdownize_prefect_flow.markdownize_flow
+        needs: [ppt_to_pdf]
+        inputs:
+          root_dir: "${profile.pdf_output_dir}"
+          output_dir: "${profile.md_output_dir}"
+        params:
+          recursive: "${profile.recursive}"
+          batch_size: "${profile.batch_size}"
+          converter: "${profile.converter}"
+        concurrency: serial
+
+      - id: create_kg
+        uses: genai_graph.orchestration.workflow_steps.kg_create_step
+        needs: [markdownize]
+        inputs:
+          config_name: "${profile.config_name}"
+        params:
+          delete_first: "${profile.delete_first}"
+          export_html: "${profile.export_html}"
+          force_rebuild: "${profile.force_rebuild}"
+        concurrency: serial
+
+
+workflow_profiles:
+  # --- PPT to PDF profiles ---
+  ppt2pdf_rainbow:
+    workflow: ppt2pdf_documents
+    values:
+      root_dir: "${paths.rainbow_ppt}"
+      output_dir: "${paths.rainbow_pdf}"
+      include_patterns: null
+      exclude_patterns: null
+      recursive: true
+      batch_size: 5
+
+  # --- Markdownize profiles ---
+  markdownize_rainbow:
+    workflow: markdownize_documents
+    values:
+      root_dir: "${paths.rainbow_pdf}"
+      output_dir: "${paths.rainbow_md}"
+      include_patterns:
+        - "*.pdf"
+      exclude_patterns: null
+      recursive: true
+      batch_size: 5
+      converter: markitdown
+
+  markdownize_rfq:
+    workflow: markdownize_documents
+    values:
+      root_dir: "${paths.rfq_pdf}"
+      output_dir: "${paths.rfq_md}"
+      include_patterns:
+        - "*.pdf"
+      exclude_patterns: null
+      recursive: true
+      batch_size: 5
+      converter: markitdown
+
+  # --- KG creation profiles ---
+  kg_one_rainbow:
+    workflow: kg_create
+    values:
+      config_name: one_rainbow
+      delete_first: false
+      export_html: true
+      force_rebuild: false
+
+  kg_rainbow_add_crm:
+    workflow: kg_create
+    values:
+      config_name: rainbow_add_crm
+      delete_first: false
+      export_html: true
+      force_rebuild: false
+
+  kg_stratnav_subset_rainbow_crm:
+    workflow: kg_create
+    values:
+      config_name: stratnav_subset_rainbow_crm
+      delete_first: false
+      export_html: true
+      force_rebuild: false
+
+  # --- Full pipeline profiles ---
+  full_rainbow_pipeline:
+    workflow: full_kg_pipeline
+    values:
+      ppt_root_dir: "${paths.rainbow_ppt}"
+      pdf_output_dir: "${paths.rainbow_pdf}"
+      md_output_dir: "${paths.rainbow_md}"
+      config_name: rainbow_add_crm
+      recursive: true
+      batch_size: 5
+      converter: markitdown
+      delete_first: false
+      export_html: true
+      force_rebuild: false

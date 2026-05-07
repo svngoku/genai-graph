@@ -191,3 +191,69 @@ This project uses **Ladybug** as the graph database backend. Ladybug is a mainta
 - **Ladybug Documentation**: Available in the GitHub repository
 - **Cypher Query Support**: Full Cypher dialect support (compatible with Kuzu syntax)
 - **Neo4j Import**: Use the `cli neo4j import` command to convert Neo4j exports to Ladybug format
+
+## Workflow Integration
+
+This project integrates with the **genai-tk Workflow Engine** for composable, YAML-driven orchestration of multi-step KG pipelines.
+
+### Key Concepts
+
+- **Workflows** — Define multi-step pipelines (ppt2pdf → markdownize → kg_create) in YAML
+- **Profiles** — Bind workflows to specific data sources and configurations
+- **Steps** — Each step references a Prefect flow or function using a dotted Python path
+- **Dependencies** — Steps declare `needs:` to define execution order
+
+### Quick Example
+
+```yaml
+workflows:
+  full_rainbow_pipeline:
+    description: "PPT → PDF → Markdown → Knowledge Graph"
+    steps:
+      - id: ppt_to_pdf
+        uses: genai_tk.extra.ppt2pdf_prefect_flow.ppt2pdf_flow
+        inputs:
+          root_dir: "${profile.ppt_dir}"
+          output_dir: "${profile.pdf_dir}"
+
+      - id: to_markdown
+        uses: genai_tk.extra.markdownize_prefect_flow.markdownize_flow
+        needs: [ppt_to_pdf]
+        inputs:
+          root_dir: "${profile.pdf_dir}"
+          output_dir: "${profile.md_dir}"
+
+      - id: create_kg
+        uses: genai_graph.orchestration.workflow_steps.kg_create_step
+        needs: [to_markdown]
+        inputs:
+          config_name: "${profile.config_name}"
+
+workflow_profiles:
+  full_rainbow_pipeline:
+    workflow: full_rainbow_pipeline
+    values:
+      ppt_dir: "${paths.data_root}/rainbow/ppts"
+      pdf_dir: "${paths.data_root}/rainbow/pdfs"
+      md_dir: "${paths.data_root}/rainbow/markdown"
+      config_name: rainbow
+```
+
+Usage:
+
+```bash
+# Dry-run to see the execution plan
+uv run cli workflow run full_rainbow_pipeline --dry-run
+
+# Execute the full 3-step pipeline
+uv run cli workflow run full_rainbow_pipeline
+```
+
+### Documentation
+
+For comprehensive workflow documentation, see:
+
+- **[docs/workflows.md](docs/workflows.md)** — genai-graph workflow examples and KG integration
+- **[../genai-tk/docs/workflows.md](../genai-tk/docs/workflows.md)** — Core workflow engine documentation
+- **[../genai-tk/docs/prefect.md](../genai-tk/docs/prefect.md)** — Prefect integration and flow writing guide
+

@@ -31,7 +31,8 @@ paths:
   - ${paths.config}/providers/embeddings.yaml
   - ${paths.config}/overrides.yaml
   - ${paths.config}/mcp_servers.yaml
-  - ${paths.config}/ekg.yaml 
+  - ${paths.config}/ekg.yaml
+  - ${paths.config}/workflows.yaml
 
 
 #### 
@@ -82,6 +83,7 @@ cli:
   commands:  # List modules:functions to register CLI commands
     - genai_tk.cli.commands_core.CoreCommands
     - genai_tk.cli.commands_info.InfoCommands
+    - genai_tk.workflow.commands.WorkflowCommands
     - genai_tk.extra.commands_extra.ExtraCommands
     - genai_tk.extra.rag.commands_rag.RagCommands
     - genai_tk.agents.commands_agents.AgentCommands
