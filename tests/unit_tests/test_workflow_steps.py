@@ -10,7 +10,7 @@ from genai_graph.orchestration.workflow_steps import kg_create_step
 
 class TestKgCreateStep:
     @patch("genai_graph.orchestration.flows.create_kg_flow")
-    @patch("genai_tk.extra.prefect.runtime.ephemeral_prefect_settings")
+    @patch("genai_graph.orchestration.workflow_steps.ephemeral_prefect_settings")
     def test_basic_invocation(self, mock_ephemeral: Any, mock_flow: Any) -> None:
         mock_ephemeral.return_value.__enter__ = MagicMock(return_value=None)
         mock_ephemeral.return_value.__exit__ = MagicMock(return_value=False)
@@ -36,7 +36,7 @@ class TestKgCreateStep:
         )
 
     @patch("genai_graph.orchestration.flows.create_kg_flow")
-    @patch("genai_tk.extra.prefect.runtime.ephemeral_prefect_settings")
+    @patch("genai_graph.orchestration.workflow_steps.ephemeral_prefect_settings")
     def test_with_force_and_delete(self, mock_ephemeral: Any, mock_flow: Any) -> None:
         mock_ephemeral.return_value.__enter__ = MagicMock(return_value=None)
         mock_ephemeral.return_value.__exit__ = MagicMock(return_value=False)
@@ -64,7 +64,7 @@ class TestKgCreateStep:
         )
 
     @patch("genai_graph.orchestration.flows.create_kg_flow")
-    @patch("genai_tk.extra.prefect.runtime.ephemeral_prefect_settings")
+    @patch("genai_graph.orchestration.workflow_steps.ephemeral_prefect_settings")
     def test_clears_factory_caches(self, mock_ephemeral: Any, mock_flow: Any) -> None:
         mock_ephemeral.return_value.__enter__ = MagicMock(return_value=None)
         mock_ephemeral.return_value.__exit__ = MagicMock(return_value=False)

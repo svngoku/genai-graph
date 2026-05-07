@@ -74,42 +74,31 @@ class JsonFileBackedFactory(DocumentMixin, KgFactory):
             self._files_cache = []
             return
 
-        # Build include patterns to find files in model subdirectory
+        # Build pathspecs to find files in model subdirectory
         # Pattern format: {model_name}/{user_pattern} or **/{model_name}/{user_pattern}
         user_patterns = self.include or ["*.json"]
-        include_patterns = []
+        pathspecs = []
         for pattern in user_patterns:
             if self.recursive:
-                # Search recursively: **/ReviewedOpportunity/*.json
-                include_patterns.append(f"**/{model_name}/{pattern}")
+                pathspecs.append(f"**/{model_name}/{pattern}")
             else:
-                # Direct subdirectory only: ReviewedOpportunity/*.json
-                include_patterns.append(f"{model_name}/{pattern}")
+                pathspecs.append(f"{model_name}/{pattern}")
 
-        # Always exclude manifest.json files (metadata files from baml extract)
-        exclude_patterns: list[str] = self.exclude or []  # type: ignore[assignment]
-        if not isinstance(exclude_patterns, list):
-            exclude_patterns = [exclude_patterns]
-        else:
-            exclude_patterns = list(exclude_patterns)  # Copy to avoid modifying the original
+        # Exclude manifest.json files (metadata files from baml extract)
+        for manifest_pattern in ["manifest.json", "**/manifest.json"]:
+            pathspecs.append(f"!{manifest_pattern}")
 
-        # Add manifest.json exclusions if not already present
-        manifest_patterns = ["manifest.json", "**/manifest.json"]
-        for manifest_pattern in manifest_patterns:
-            if manifest_pattern not in exclude_patterns:
-                exclude_patterns.append(manifest_pattern)
+        # Add user-specified exclusions
+        for excl in self.exclude or []:
+            pathspecs.append(f"!{excl}")
 
         # Use resolve_files to find all matching files
-        # The exclude patterns will automatically filter out unwanted paths
         files = resolve_files(
             str(root_path),
-            include_patterns=include_patterns,
-            exclude_patterns=exclude_patterns,
-            recursive=self.recursive,
-            case_sensitive=self.case_sensitive,
+            pathspecs=pathspecs,
         )
 
-        self._files_cache = [UPath(f) for f in files]
+        self._files_cache = list(files)
         logger.debug(f"Discovered {len(self._files_cache)} files for model {model_name} in {root_path}")
 
         # Mark this root + model as initialized

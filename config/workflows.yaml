@@ -1,12 +1,9 @@
 # ---------------------------------------------------------------------------
 # Workflow and Workflow Profile definitions for genai-graph
 # ---------------------------------------------------------------------------
-# These workflows chain pre-processing steps (ppt2pdf, markdownize) with
-# KG creation, enabling full end-to-end pipelines via:
-#
+# Usage:
 #   cli workflow run full_rainbow_pipeline --dry-run
 #   cli workflow run kg_one_rainbow
-#   cli tools markdownize --config markdownize_rainbow
 # ---------------------------------------------------------------------------
 
 workflows:
@@ -15,14 +12,12 @@ workflows:
     description: "Convert PowerPoint files to PDF"
     steps:
       - id: convert
-        uses: genai_tk.extra.ppt2pdf_prefect_flow.ppt2pdf_flow
+        uses: genai_tk.extra.flows.ppt2pdf_flow.ppt2pdf_flow
         inputs:
-          root_dir: "${profile.root_dir}"
+          base_dir: "${profile.base_dir}"
           output_dir: "${profile.output_dir}"
         params:
-          include_patterns: "${profile.include_patterns}"
-          exclude_patterns: "${profile.exclude_patterns}"
-          recursive: "${profile.recursive}"
+          pathspecs: "${profile.pathspecs}"
           batch_size: "${profile.batch_size}"
         concurrency: serial
 
@@ -30,14 +25,12 @@ workflows:
     description: "Convert documents to Markdown format"
     steps:
       - id: convert
-        uses: genai_tk.extra.markdownize_prefect_flow.markdownize_flow
+        uses: genai_tk.extra.flows.markdownize_flow.markdownize_flow
         inputs:
-          root_dir: "${profile.root_dir}"
+          base_dir: "${profile.base_dir}"
           output_dir: "${profile.output_dir}"
         params:
-          include_patterns: "${profile.include_patterns}"
-          exclude_patterns: "${profile.exclude_patterns}"
-          recursive: "${profile.recursive}"
+          pathspecs: "${profile.pathspecs}"
           batch_size: "${profile.batch_size}"
           converter: "${profile.converter}"
         concurrency: serial
@@ -56,28 +49,32 @@ workflows:
           force_rebuild: "${profile.force_rebuild}"
         concurrency: serial
 
-  # --- Full pipeline: ppt2pdf → markdownize → kg create ---
+  # --- Full pipeline: ppt2pdf -> markdownize -> kg create ---
   full_kg_pipeline:
-    description: "End-to-end pipeline: PPT→PDF, then Markdownize, then KG creation"
+    description: "End-to-end pipeline: PPT->PDF, then Markdownize, then KG creation"
     steps:
       - id: ppt_to_pdf
-        uses: genai_tk.extra.ppt2pdf_prefect_flow.ppt2pdf_flow
+        uses: genai_tk.extra.flows.ppt2pdf_flow.ppt2pdf_flow
         inputs:
-          root_dir: "${profile.ppt_root_dir}"
+          base_dir: "${profile.ppt_base_dir}"
           output_dir: "${profile.pdf_output_dir}"
         params:
-          recursive: "${profile.recursive}"
+          pathspecs:
+            - "**/*.pptx"
+            - "**/*.ppt"
+            - "**/*.odp"
           batch_size: "${profile.batch_size}"
         concurrency: serial
 
       - id: markdownize
-        uses: genai_tk.extra.markdownize_prefect_flow.markdownize_flow
+        uses: genai_tk.extra.flows.markdownize_flow.markdownize_flow
         needs: [ppt_to_pdf]
         inputs:
-          root_dir: "${profile.pdf_output_dir}"
+          base_dir: "${profile.pdf_output_dir}"
           output_dir: "${profile.md_output_dir}"
         params:
-          recursive: "${profile.recursive}"
+          pathspecs:
+            - "**/*.pdf"
           batch_size: "${profile.batch_size}"
           converter: "${profile.converter}"
         concurrency: serial
@@ -99,35 +96,32 @@ workflow_profiles:
   ppt2pdf_rainbow:
     workflow: ppt2pdf_documents
     values:
-      root_dir: "${paths.rainbow_ppt}"
+      base_dir: "${paths.rainbow_ppt}"
       output_dir: "${paths.rainbow_pdf}"
-      include_patterns: null
-      exclude_patterns: null
-      recursive: true
+      pathspecs:
+        - "**/*.pptx"
+        - "**/*.ppt"
+        - "**/*.odp"
       batch_size: 5
 
   # --- Markdownize profiles ---
   markdownize_rainbow:
     workflow: markdownize_documents
     values:
-      root_dir: "${paths.rainbow_pdf}"
+      base_dir: "${paths.rainbow_pdf}"
       output_dir: "${paths.rainbow_md}"
-      include_patterns:
-        - "*.pdf"
-      exclude_patterns: null
-      recursive: true
+      pathspecs:
+        - "**/*.pdf"
       batch_size: 5
       converter: markitdown
 
   markdownize_rfq:
     workflow: markdownize_documents
     values:
-      root_dir: "${paths.rfq_pdf}"
+      base_dir: "${paths.rfq_pdf}"
       output_dir: "${paths.rfq_md}"
-      include_patterns:
-        - "*.pdf"
-      exclude_patterns: null
-      recursive: true
+      pathspecs:
+        - "**/*.pdf"
       batch_size: 5
       converter: markitdown
 
@@ -160,11 +154,10 @@ workflow_profiles:
   full_rainbow_pipeline:
     workflow: full_kg_pipeline
     values:
-      ppt_root_dir: "${paths.rainbow_ppt}"
+      ppt_base_dir: "${paths.rainbow_ppt}"
       pdf_output_dir: "${paths.rainbow_pdf}"
       md_output_dir: "${paths.rainbow_md}"
       config_name: rainbow_add_crm
-      recursive: true
       batch_size: 5
       converter: markitdown
       delete_first: false
