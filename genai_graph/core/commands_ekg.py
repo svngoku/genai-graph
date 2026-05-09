@@ -89,8 +89,8 @@ class EkgCommands(CliTopCommand):
             """
 
             # Get the configured KG config name.
-            from genai_tk.extra.prefect.runtime import ephemeral_prefect_settings
             from genai_tk.utils.config_mngr import global_config
+            from genai_tk.workflow.prefect.run import ephemeral_prefect_settings
 
             from genai_graph.kg.manager import get_kg_manager
             from genai_graph.orchestration.flows import create_kg_flow
@@ -686,7 +686,7 @@ class EkgCommands(CliTopCommand):
                 uv run cli kg fake-rainbow-from-crm --out-dir ./my_output --num 10
                 ```
             """
-            from genai_tk.extra.prefect.runtime import run_flow_ephemeral
+            from genai_tk.workflow.prefect.run import run_flow_ephemeral
 
             from genai_graph.orchestration.crm_fake_rainbow_flow import crm_fake_rainbow_flow
 

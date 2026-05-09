@@ -12,7 +12,7 @@ workflows:
     description: "Convert PowerPoint files to PDF"
     steps:
       - id: convert
-        uses: genai_tk.extra.flows.ppt2pdf_flow.ppt2pdf_flow
+        uses: genai_tk.workflow.prefect.flows.ppt2pdf_flow.ppt2pdf_flow
         inputs:
           base_dir: "${profile.base_dir}"
           output_dir: "${profile.output_dir}"
@@ -25,7 +25,7 @@ workflows:
     description: "Convert documents to Markdown format"
     steps:
       - id: convert
-        uses: genai_tk.extra.flows.markdownize_flow.markdownize_flow
+        uses: genai_tk.workflow.prefect.flows.markdownize_flow.markdownize_flow
         inputs:
           base_dir: "${profile.base_dir}"
           output_dir: "${profile.output_dir}"
@@ -54,7 +54,7 @@ workflows:
     description: "End-to-end pipeline: PPT->PDF, then Markdownize, then KG creation"
     steps:
       - id: ppt_to_pdf
-        uses: genai_tk.extra.flows.ppt2pdf_flow.ppt2pdf_flow
+        uses: genai_tk.workflow.prefect.flows.ppt2pdf_flow.ppt2pdf_flow
         inputs:
           base_dir: "${profile.ppt_base_dir}"
           output_dir: "${profile.pdf_output_dir}"
@@ -67,7 +67,7 @@ workflows:
         concurrency: serial
 
       - id: markdownize
-        uses: genai_tk.extra.flows.markdownize_flow.markdownize_flow
+        uses: genai_tk.workflow.prefect.flows.markdownize_flow.markdownize_flow
         needs: [ppt_to_pdf]
         inputs:
           base_dir: "${profile.pdf_output_dir}"

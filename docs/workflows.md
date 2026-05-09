@@ -58,7 +58,7 @@ workflows:
     description: "Convert PowerPoint files to PDF"
     steps:
       - id: ppt_to_pdf
-        uses: genai_tk.extra.ppt2pdf_prefect_flow.ppt2pdf_flow
+        uses: genai_tk.workflow.prefect.flows.ppt2pdf_flow.ppt2pdf_flow
         inputs:
           root_dir: "${profile.ppt_dir}"
           output_dir: "${profile.pdf_dir}"
@@ -74,7 +74,7 @@ workflows:
     description: "Convert documents to Markdown"
     steps:
       - id: to_markdown
-        uses: genai_tk.extra.markdownize_prefect_flow.markdownize_flow
+        uses: genai_tk.workflow.prefect.flows.markdownize_flow.markdownize_flow
         inputs:
           root_dir: "${profile.root_dir}"
           output_dir: "${profile.output_dir}"
@@ -118,7 +118,7 @@ workflows:
     description: "PPT → PDF → Markdown → Knowledge Graph"
     steps:
       - id: ppt_to_pdf
-        uses: genai_tk.extra.ppt2pdf_prefect_flow.ppt2pdf_flow
+        uses: genai_tk.workflow.prefect.flows.ppt2pdf_flow.ppt2pdf_flow
         inputs:
           root_dir: "${profile.ppt_dir}"
           output_dir: "${profile.pdf_dir}"
@@ -126,7 +126,7 @@ workflows:
           batch_size: "${profile.batch_size}"
 
       - id: to_markdown
-        uses: genai_tk.extra.markdownize_prefect_flow.markdownize_flow
+        uses: genai_tk.workflow.prefect.flows.markdownize_flow.markdownize_flow
         needs: [ppt_to_pdf]
         inputs:
           root_dir: "${profile.pdf_dir}"

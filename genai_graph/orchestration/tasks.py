@@ -369,7 +369,7 @@ def import_kg_task(import_name: str, backend: KgBackend, force_rebuild: bool = F
         logger_pf.info(msg)
 
     if need_rebuild:
-        from genai_tk.extra.prefect.runtime import ephemeral_prefect_settings
+        from genai_tk.workflow.prefect.run import ephemeral_prefect_settings
 
         from genai_graph.orchestration.flows import create_kg_flow
 

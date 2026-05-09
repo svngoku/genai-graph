@@ -7,7 +7,7 @@ in ``config/workflows.yaml``.
 
 from __future__ import annotations
 
-from genai_tk.utils.prefect_run import ephemeral_prefect_settings
+from genai_tk.workflow.prefect.run import ephemeral_prefect_settings
 from loguru import logger
 
 
