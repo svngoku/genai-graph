@@ -1,60 +1,61 @@
 # ---------------------------------------------------------------------------
 # Workflow and Workflow Profile definitions for genai-graph
 # ---------------------------------------------------------------------------
+# Pre-processing workflows and profiles.
+# KG build workflows are in ekg_workflows.yaml.
+#
 # Usage:
+#   cli workflow run ppt2pdf_rainbow --dry-run
 #   cli workflow run full_rainbow_pipeline --dry-run
-#   cli workflow run kg_one_rainbow
 # ---------------------------------------------------------------------------
 
+step_templates:
+  ppt2pdf_step:
+    uses: genai_tk.workflow.prefect.flows.ppt2pdf_flow.ppt2pdf_flow
+    inputs:
+      base_dir: "${profile.base_dir}"
+      output_dir: "${profile.output_dir}"
+    params:
+      pathspecs: "${profile.pathspecs}"
+      batch_size: "${profile.batch_size}"
+    concurrency: serial
+
+  markdownize_step:
+    uses: genai_tk.workflow.prefect.flows.markdownize_flow.markdownize_flow
+    inputs:
+      base_dir: "${profile.base_dir}"
+      output_dir: "${profile.output_dir}"
+    params:
+      pathspecs: "${profile.pathspecs}"
+      batch_size: "${profile.batch_size}"
+      converter: "${profile.converter}"
+    concurrency: serial
+
+
 workflows:
-  # --- Pre-processing workflows (reuse genai-tk steps) ---
   ppt2pdf_documents:
     description: "Convert PowerPoint files to PDF"
     steps:
       - id: convert
-        uses: genai_tk.workflow.prefect.flows.ppt2pdf_flow.ppt2pdf_flow
-        inputs:
-          base_dir: "${profile.base_dir}"
-          output_dir: "${profile.output_dir}"
-        params:
-          pathspecs: "${profile.pathspecs}"
-          batch_size: "${profile.batch_size}"
-        concurrency: serial
+        ref: ppt2pdf_step
 
   markdownize_documents:
     description: "Convert documents to Markdown format"
     steps:
       - id: convert
-        uses: genai_tk.workflow.prefect.flows.markdownize_flow.markdownize_flow
-        inputs:
-          base_dir: "${profile.base_dir}"
-          output_dir: "${profile.output_dir}"
-        params:
-          pathspecs: "${profile.pathspecs}"
-          batch_size: "${profile.batch_size}"
-          converter: "${profile.converter}"
-        concurrency: serial
+        ref: markdownize_step
 
-  # --- KG creation workflow ---
-  kg_create:
-    description: "Create a Knowledge Graph from configured profile"
-    steps:
-      - id: create_kg
-        uses: genai_graph.orchestration.workflow_steps.kg_create_step
-        inputs:
-          config_name: "${profile.config_name}"
-        params:
-          delete_first: "${profile.delete_first}"
-          export_html: "${profile.export_html}"
-          force_rebuild: "${profile.force_rebuild}"
-        concurrency: serial
-
-  # --- Full pipeline: ppt2pdf -> markdownize -> kg create ---
+  # --- Full pipeline: ppt2pdf → markdownize → KG build ---
   full_kg_pipeline:
-    description: "End-to-end pipeline: PPT->PDF, then Markdownize, then KG creation"
+    description: "End-to-end pipeline: PPT→PDF→Markdown→KG creation"
+    defaults:
+      batch_size: 5
+      delete_first: false
+      export_html: true
+      force_rebuild: false
     steps:
       - id: ppt_to_pdf
-        uses: genai_tk.workflow.prefect.flows.ppt2pdf_flow.ppt2pdf_flow
+        ref: ppt2pdf_step
         inputs:
           base_dir: "${profile.ppt_base_dir}"
           output_dir: "${profile.pdf_output_dir}"
@@ -63,11 +64,9 @@ workflows:
             - "**/*.pptx"
             - "**/*.ppt"
             - "**/*.odp"
-          batch_size: "${profile.batch_size}"
-        concurrency: serial
 
       - id: markdownize
-        uses: genai_tk.workflow.prefect.flows.markdownize_flow.markdownize_flow
+        ref: markdownize_step
         needs: [ppt_to_pdf]
         inputs:
           base_dir: "${profile.pdf_output_dir}"
@@ -75,20 +74,10 @@ workflows:
         params:
           pathspecs:
             - "**/*.pdf"
-          batch_size: "${profile.batch_size}"
-          converter: "${profile.converter}"
-        concurrency: serial
 
       - id: create_kg
-        uses: genai_graph.orchestration.workflow_steps.kg_create_step
+        uses_workflow: rainbow_add_crm
         needs: [markdownize]
-        inputs:
-          config_name: "${profile.config_name}"
-        params:
-          delete_first: "${profile.delete_first}"
-          export_html: "${profile.export_html}"
-          force_rebuild: "${profile.force_rebuild}"
-        concurrency: serial
 
 
 workflow_profiles:
@@ -125,31 +114,6 @@ workflow_profiles:
       batch_size: 5
       converter: markitdown
 
-  # --- KG creation profiles ---
-  kg_one_rainbow:
-    workflow: kg_create
-    values:
-      config_name: one_rainbow
-      delete_first: false
-      export_html: true
-      force_rebuild: false
-
-  kg_rainbow_add_crm:
-    workflow: kg_create
-    values:
-      config_name: rainbow_add_crm
-      delete_first: false
-      export_html: true
-      force_rebuild: false
-
-  kg_stratnav_subset_rainbow_crm:
-    workflow: kg_create
-    values:
-      config_name: stratnav_subset_rainbow_crm
-      delete_first: false
-      export_html: true
-      force_rebuild: false
-
   # --- Full pipeline profiles ---
   full_rainbow_pipeline:
     workflow: full_kg_pipeline
@@ -157,7 +121,7 @@ workflow_profiles:
       ppt_base_dir: "${paths.rainbow_ppt}"
       pdf_output_dir: "${paths.rainbow_pdf}"
       md_output_dir: "${paths.rainbow_md}"
-      config_name: rainbow_add_crm
+      kg_name: rainbow_add_crm
       batch_size: 5
       converter: markitdown
       delete_first: false

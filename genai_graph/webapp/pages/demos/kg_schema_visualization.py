@@ -151,7 +151,7 @@ def main() -> None:
         st.error(f"Failed to read schema HTML: {exc}")
         return
 
-    st.iframe(sss.graph_html, height=700)
+    st.iframe(html_content, height=700)
 
 
 if __name__ == "__main__":

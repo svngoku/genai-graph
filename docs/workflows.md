@@ -1,11 +1,16 @@
 # Workflows in genai-graph: Knowledge Graph Orchestration
 
-The **Workflow Engine** (from genai-tk) is used in genai-graph to orchestrate knowledge graph creation pipelines. This document explains how to:
+The **Workflow Engine** (from genai-tk) is used in genai-graph to orchestrate knowledge graph
+creation pipelines. KG build definitions live in `config/ekg_workflows.yaml` using the standard
+workflow DSL — the same DSL used for RAG ingestion, anonymization, and pre-processing pipelines.
 
-- Define multi-step KG pipelines using YAML
-- Create reusable profiles for different data sources
-- Chain together document preparation (ppt2pdf → markdownize) with KG creation
-- Run full pipelines from the CLI with `--dry-run` support
+**Key benefits over the old `ekg.yaml` + `kg_configs` approach:**
+- Single CLI entry point: `cli workflow run` for all pipelines
+- `--dry-run` to see the full step plan before executing
+- `--set KEY=VAL` to override any parameter inline
+- Sub-workflow composition via `uses_workflow:` (replaces `import:` in ekg.yaml)
+- Step templates eliminate repetition across similar KG configs
+- KG configs readable by anyone familiar with the workflow DSL
 
 ---
 
@@ -15,444 +20,352 @@ The **Workflow Engine** (from genai-tk) is used in genai-graph to orchestrate kn
 
 ```bash
 uv run cli workflow list
-
-# Output shows:
-#   Workflows:
-#     - ppt2pdf_documents
-#     - markdownize_documents
-#     - kg_create
-#     - full_kg_pipeline
+# Output:
+#   Workflows: one_rainbow, rainbow_add_crm, stratnav_subset,
+#              stratnav_subset_rainbow_crm, learned_stratnav_subset_rainbow_crm,
+#              crm_export, one_rainbow_with_db, several_rainbow,
+#              ppt2pdf_documents, markdownize_documents, full_kg_pipeline
 #
-#   Profiles:
-#     - ppt2pdf_rainbow
-#     - markdownize_rainbow
-#     - kg_one_rainbow
-#     - kg_rainbow_add_crm
-#     - full_rainbow_pipeline
+#   Profiles: kg_one_rainbow, kg_rainbow_add_crm, kg_stratnav_subset,
+#             kg_stratnav_subset_rainbow_crm, kg_learned,
+#             ppt2pdf_rainbow, markdownize_rainbow, full_rainbow_pipeline
 ```
 
 ### Run a KG Creation Workflow
 
 ```bash
-# Dry-run: resolve the workflow, show the plan, don't execute
-uv run cli workflow run full_rainbow_pipeline --dry-run
+# Dry-run: resolve the workflow, show the plan
+uv run cli workflow run kg_one_rainbow --dry-run
 
 # Execute: create the knowledge graph
-uv run cli workflow run full_rainbow_pipeline
+uv run cli workflow run kg_one_rainbow
 
-# Override values at the CLI
-uv run cli workflow run kg_one_rainbow --set force_rebuild=true --set export_html=true
+# Composite: rainbow + CRM + StratNav (3 sub-steps)
+uv run cli workflow run kg_stratnav_subset_rainbow_crm --dry-run
+
+# Override values inline
+uv run cli workflow run kg_one_rainbow --set delete_first=true
+uv run cli workflow run kg_one_rainbow --set force_rebuild=true --set export_html=false
+
+# Full pre-processing + KG pipeline
+uv run cli workflow run full_rainbow_pipeline --dry-run
 ```
+
+---
+
+## Architecture
+
+### Two Config Files
+
+| File | Purpose |
+|------|---------|
+| `config/ekg_workflows.yaml` | KG build workflows — step templates, workflows, profiles |
+| `config/workflows.yaml` | Pre-processing workflows — ppt2pdf, markdownize, full pipeline |
+
+Both are merged into the global config via `:merge:` in `app_conf.yaml`, so all workflows
+are available from a single `cli workflow` command.
+
+### The `kg_build_step` Function
+
+All KG workflows call `genai_graph.orchestration.workflow_steps.kg_build_step`, which:
+
+1. Accepts `graphs` (inline list of factory configs) + `kg_name` (database identity)
+2. Registers the inline graph config in the KgManager singleton
+3. Clears factory caches (prevents cross-contamination)
+4. Runs the full `create_kg_flow()` Prefect pipeline
+5. Returns `{kg_name, total_processed, total_failed, warnings_count, db_path}`
+
+This replaces the old `kg_create_step` (which required a `config_name` reference to `kg_configs`
+in `ekg.yaml`). Graph factory configurations are now defined inline in the workflow YAML.
 
 ---
 
 ## Workflow Definitions
 
-### Single-Step Workflows
-
-**PPT-to-PDF Conversion** (`ppt2pdf_documents`):
+### Simple KG Workflows (single factory)
 
 ```yaml
+step_templates:
+  kg_build:
+    uses: genai_graph.orchestration.workflow_steps.kg_build_step
+    concurrency: serial
+    params:
+      kg_name: "${profile.kg_name}"
+      delete_first: "${profile.delete_first}"
+      export_html: "${profile.export_html}"
+      force_rebuild: "${profile.force_rebuild}"
+
 workflows:
-  ppt2pdf_documents:
-    description: "Convert PowerPoint files to PDF"
+  one_rainbow:
+    description: "Single CNES TMA VENUS rainbow review"
+    defaults:
+      delete_first: false
+      export_html: true
+      force_rebuild: false
     steps:
-      - id: ppt_to_pdf
-        uses: genai_tk.workflow.prefect.flows.ppt2pdf_flow.ppt2pdf_flow
+      - id: build
+        ref: kg_build
         inputs:
-          root_dir: "${profile.ppt_dir}"
-          output_dir: "${profile.pdf_dir}"
-        params:
-          batch_size: "${profile.batch_size}"
+          graphs:
+            - factory: genai_graph.ekg.schema.rainbow_review.ReviewedOpportunityGraph
+              data_root: '${paths.rainbow_json}'
+              include: ['*CNES*TMA*VENUS*']
+              exclude: [fake/*]
+              recursive: true
 ```
 
-**Markdown Conversion** (`markdownize_documents`):
+### Multi-Factory Workflows (multiple data sources in one graph)
 
 ```yaml
 workflows:
-  markdownize_documents:
-    description: "Convert documents to Markdown"
+  rainbow_add_crm:
+    description: "Rainbow reviews + architecture docs + CRM export"
     steps:
-      - id: to_markdown
-        uses: genai_tk.workflow.prefect.flows.markdownize_flow.markdownize_flow
+      - id: build
+        ref: kg_build
         inputs:
-          root_dir: "${profile.root_dir}"
-          output_dir: "${profile.output_dir}"
-        params:
-          converter: "${profile.converter}"
-          batch_size: "${profile.batch_size}"
+          graphs:
+            - factory: genai_graph.ekg.schema.rainbow_review.ReviewedOpportunityGraph
+              data_root: '${paths.rainbow_json}'
+              include: ['*CNES*']
+              recursive: true
+            - factory: genai_graph.ekg.schema.architecture_doc.ArchitectureDocumentGraph
+              data_root: '${paths.add_json}'
+              include: ['*CNES*']
+              recursive: true
+            - factory: genai_graph.ekg.schema.crm_export.CrmExtractGraph
+              files: ['${paths.ekg_data}/crm_export/report.xlsx']
+              filter_by_existing:              # Only import rows that match existing nodes
+                node_label: Opportunity
+                property: opportunity_id
 ```
 
-**Knowledge Graph Creation** (`kg_create`):
+### Composite Workflows using `uses_workflow`
+
+The `uses_workflow:` step type replaces the old `import:` mechanism in `ekg.yaml`.
+Each referenced workflow is expanded in place — its steps are prefixed with `{step_id}.`:
 
 ```yaml
 workflows:
-  kg_create:
-    description: "Create knowledge graph from documents"
+  # Old ekg.yaml: stratnav_subset_rainbow_crm: { import: [rainbow_add_crm, stratnav_subset] }
+  # New workflow DSL:
+  stratnav_subset_rainbow_crm:
+    description: "Rainbow + CRM + StratNav combined graph"
     steps:
-      - id: create_kg
-        uses: genai_graph.orchestration.workflow_steps.kg_create_step
-        inputs:
-          config_name: "${profile.config_name}"
-        params:
-          delete_first: "${profile.delete_first}"
-          export_html: "${profile.export_html}"
-          force_rebuild: "${profile.force_rebuild}"
+      - id: rainbow_crm
+        uses_workflow: rainbow_add_crm       # Expands to: rainbow_crm.build
+
+      - id: stratnav
+        uses_workflow: stratnav_subset       # Expands to: stratnav.build
+        needs: [rainbow_crm]                 # Automatically resolves to terminal step: rainbow_crm.build
 ```
 
-The `kg_create_step` wrapper:
-- Clears internal caches (JsonFileBackedFactory, TableBackedFactory, Neo4jFactory)
-- Sets up ephemeral Prefect context
-- Calls the existing `create_kg_flow()`
-- Returns metadata: {config_name, total_processed, total_failed, warnings_count, db_path}
+**Dry-run shows the expanded steps:**
 
-### Multi-Step Pipelines
+```
+cli workflow run kg_stratnav_subset_rainbow_crm --dry-run
 
-**Full KG Pipeline** (`full_kg_pipeline`):
+   Id                  │ Uses                           │ Needs
+───────────────────────┼────────────────────────────────┼──────────────────
+   rainbow_crm.build   │ ...kg_build_step               │ -
+   stratnav.build      │ ...kg_build_step               │ rainbow_crm.build
+```
 
-Chains PPT conversion → Markdown conversion → KG creation:
+Both steps write to the **same database** (`kg_name` from profile) — sequential, additive ingestion.
+
+### Deep Composition (transitive `uses_workflow`)
 
 ```yaml
 workflows:
-  full_kg_pipeline:
-    description: "PPT → PDF → Markdown → Knowledge Graph"
+  learned_stratnav_subset_rainbow_crm:
+    description: "StratNav + Rainbow + CRM with learned similarity relationships"
     steps:
-      - id: ppt_to_pdf
-        uses: genai_tk.workflow.prefect.flows.ppt2pdf_flow.ppt2pdf_flow
-        inputs:
-          root_dir: "${profile.ppt_dir}"
-          output_dir: "${profile.pdf_dir}"
-        params:
-          batch_size: "${profile.batch_size}"
+      - id: base
+        uses_workflow: stratnav_subset_rainbow_crm  # Expands transitively:
+                                                     # base.rainbow_crm.build → base.stratnav.build
 
-      - id: to_markdown
-        uses: genai_tk.workflow.prefect.flows.markdownize_flow.markdownize_flow
-        needs: [ppt_to_pdf]
+      - id: similarities
+        ref: kg_build
+        needs: [base]                               # Resolved to: base.stratnav.build (terminal)
         inputs:
-          root_dir: "${profile.pdf_dir}"
-          output_dir: "${profile.md_dir}"
-        params:
-          converter: "${profile.converter}"
+          graphs:
+            - factory: genai_graph.ekg.schema.learned_graph.L3TechApproachMatcher
+              similarities:
+                - relationship: POSSIBLE_OFFERING
+                  from: TechnicalApproach.architecture
+                  to: L3.description
+                  threshold: 0.8
+                  top_k: 5
+```
 
-      - id: create_kg
-        uses: genai_graph.orchestration.workflow_steps.kg_create_step
-        needs: [to_markdown]
-        inputs:
-          config_name: "${profile.config_name}"
-        params:
-          delete_first: "${profile.delete_first}"
-          export_html: true
+**Dry-run output:**
+
+```
+   Id                      │ Needs
+───────────────────────────┼────────────────────
+   base.rainbow_crm.build  │ -
+   base.stratnav.build     │ base.rainbow_crm.build
+   similarities            │ base.stratnav.build
 ```
 
 ---
 
 ## Profiles
 
-Profiles bind workflows to specific data sources and configurations.
-
-### Rainbow Dataset Examples
-
-**PPT-to-PDF Profile** (`ppt2pdf_rainbow`):
-
-```yaml
-workflow_profiles:
-  ppt2pdf_rainbow:
-    workflow: ppt2pdf_documents
-    values:
-      ppt_dir: "${paths.data_root}/rainbow/ppts"
-      pdf_dir: "${paths.data_root}/rainbow/pdfs"
-      batch_size: 5
-```
-
-**Markdownize Profile** (`markdownize_rainbow`):
-
-```yaml
-workflow_profiles:
-  markdownize_rainbow:
-    workflow: markdownize_documents
-    values:
-      root_dir: "${paths.data_root}/rainbow/pdfs"
-      output_dir: "${paths.data_root}/rainbow/markdown"
-      converter: markitdown
-      batch_size: 10
-```
-
-**Single KG Creation** (`kg_one_rainbow`):
+Profiles bind workflows to concrete `kg_name` and parameter overrides:
 
 ```yaml
 workflow_profiles:
   kg_one_rainbow:
-    workflow: kg_create
+    workflow: one_rainbow
     values:
-      config_name: rainbow          # References genai_graph.config.agents.rainbow
-      delete_first: false
-      export_html: true
-      force_rebuild: false
-```
-
-**KG with Additional CRM Data** (`kg_rainbow_add_crm`):
-
-```yaml
-workflow_profiles:
-  kg_rainbow_add_crm:
-    workflow: kg_create
-    values:
-      config_name: rainbow_crm      # Multi-source config
-      delete_first: false
-      export_html: true
-      force_rebuild: false
-```
-
-**Full 3-Step Pipeline** (`full_rainbow_pipeline`):
-
-```yaml
-workflow_profiles:
-  full_rainbow_pipeline:
-    workflow: full_kg_pipeline
-    values:
-      ppt_dir: "${paths.data_root}/rainbow/ppts"
-      pdf_dir: "${paths.data_root}/rainbow/pdfs"
-      md_dir: "${paths.data_root}/rainbow/markdown"
-      batch_size: 5
-      converter: markitdown
-      config_name: rainbow
-      delete_first: false
-      export_html: true
-```
-
-### Using Multiple Data Sources
-
-To ingest a different dataset, create a new profile:
-
-```yaml
-workflow_profiles:
-  markdownize_strateg_nav:
-    workflow: markdownize_documents
-    values:
-      root_dir: "${paths.data_root}/strategic_nav/pdfs"
-      output_dir: "${paths.data_root}/strategic_nav/markdown"
-      converter: mistral          # Use Mistral OCR for better quality
-      batch_size: 3
-
-  kg_strateg_nav:
-    workflow: kg_create
-    values:
-      config_name: strategic_nav  # References strateg_nav config
-      delete_first: true
-      export_html: true
-      force_rebuild: true
+      kg_name: one_rainbow            # Database name in kg_outputs/
 
   kg_stratnav_subset_rainbow_crm:
-    workflow: full_kg_pipeline
+    workflow: stratnav_subset_rainbow_crm
     values:
-      ppt_dir: "${paths.data_root}/strategic_nav/ppts"
-      pdf_dir: "${paths.data_root}/strategic_nav/pdfs"
-      md_dir: "${paths.data_root}/strategic_nav/markdown"
-      batch_size: 3
-      converter: mistral
-      config_name: strateg_nav_rainbow_crm
-      delete_first: false
-      export_html: true
+      kg_name: stratnav_subset_rainbow_crm
+
+  kg_learned:
+    workflow: learned_stratnav_subset_rainbow_crm
+    values:
+      kg_name: learned_stratnav_subset_rainbow_crm
 ```
+
+The `kg_name` determines the output directory: `${paths.kg_outputs}/{kg_name}/{kg_name}-{tag}.db`.
 
 ---
 
-## CLI Usage
+## CLI Reference
 
-### List All Available Workflows & Profiles
-
-```bash
-uv run cli workflow list
-```
-
-### Dry-Run a Pipeline
-
-See the execution plan without running:
+### Dry-run any workflow
 
 ```bash
-# Single-step workflow
 uv run cli workflow run kg_one_rainbow --dry-run
-
-# Full 3-step pipeline
+uv run cli workflow run kg_learned --dry-run
 uv run cli workflow run full_rainbow_pipeline --dry-run
 ```
 
-Output example:
-
-```
-  Workflow Resolution  
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-│ Requested: full_rainbow_pipeline
-│ Workflow: full_kg_pipeline
-│ Profile: full_rainbow_pipeline
-│ Steps: 3
-└────────────────────────────────┘
-
-         Effective Values         
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-│ ppt_dir: /data/rainbow/ppts    │
-│ pdf_dir: /data/rainbow/pdfs    │
-│ md_dir: /data/rainbow/markdown │
-│ batch_size: 5                  │
-│ converter: markitdown          │
-│ config_name: rainbow           │
-│ export_html: true              │
-└────────────────────────────────┘
-
-   Workflow Steps (Topologically Sorted)  
-┏━━━━━━━━━━━┬━━━━━━━━━━┬━━━━━━━━━━━┐
-│ id         │ uses     │ needs     │
-├────────────┼──────────┼───────────┤
-│ ppt_to_pdf │ ppt2pdf… │ []        │
-│ to_markdown│ markdown…│ [ppt_t…]  │
-│ create_kg  │ kg_creat…│ [to_mar…] │
-└────────────┴──────────┴───────────┘
-```
-
-### Execute a Workflow
+### Execute
 
 ```bash
-# Single KG creation
 uv run cli workflow run kg_one_rainbow
+uv run cli workflow run kg_rainbow_add_crm
+uv run cli workflow run kg_stratnav_subset_rainbow_crm
+uv run cli workflow run kg_learned
+```
 
-# Full 3-step pipeline
-uv run cli workflow run full_rainbow_pipeline
+### Override parameters
 
-# Override parameters
+```bash
+# Force-rebuild parquet caches
 uv run cli workflow run kg_one_rainbow --set force_rebuild=true
 
-# Force re-execution with a fresh database
-uv run cli workflow run kg_one_rainbow --set delete_first=true --force
+# Fresh database + rebuild
+uv run cli workflow run kg_one_rainbow --set delete_first=true --set force_rebuild=true
+
+# Disable HTML export (faster)
+uv run cli workflow run kg_one_rainbow --set export_html=false
 ```
 
 ---
 
-## Integration with KG Configuration
+## Full Pre-Processing + KG Pipeline
 
-Workflows reference KG configs via the `config_name` parameter:
+The `full_kg_pipeline` workflow chains document preparation with KG creation:
 
-```yaml
-# In config/agents/langchain.yaml (example kg_one_rainbow profile):
-kg_one_rainbow:
-  workflow: kg_create
-  values:
-    config_name: rainbow     # ← Must match a key in genai_graph.config
 ```
-
-The workflow engine passes `config_name` to `kg_create_step()`, which:
-
-1. Loads the KG config from `genai_graph.config.agents.<config_name>`
-2. Clears internal factories to ensure fresh state
-3. Runs the KG creation flow
-4. Returns metadata about the created graph
-
----
-
-## Advanced Usage
-
-### Conditional KG Deletion
-
-When re-processing a dataset, you can delete the old KG first:
-
-```yaml
-workflow_profiles:
-  kg_rainbow_fresh:
-    workflow: kg_create
-    values:
-      config_name: rainbow
-      delete_first: true     # ← Delete existing graph
-      export_html: true
-      force_rebuild: true    # ← Force full rebuild
+PPT files → ppt_to_pdf → markdownize → create_kg (rainbow_add_crm workflow)
 ```
-
-Usage:
 
 ```bash
-uv run cli workflow run kg_rainbow_fresh --dry-run
-uv run cli workflow run kg_rainbow_fresh
+# See the complete 3-step plan
+uv run cli workflow run full_rainbow_pipeline --dry-run
+
+# Execute all steps
+uv run cli workflow run full_rainbow_pipeline
 ```
 
-### HTML Export for Exploration
+The `create_kg` step uses `uses_workflow: rainbow_add_crm` — it expands and runs all
+the rainbow + CRM graph factories in the same database.
 
-The workflow can automatically export an interactive HTML explorer:
+---
+
+## Adding a New KG Config
+
+To add a new KG configuration, add a workflow and optionally a profile to `config/ekg_workflows.yaml`:
 
 ```yaml
+workflows:
+  my_new_kg:
+    description: "My new knowledge graph"
+    defaults:
+      delete_first: false
+      export_html: true
+      force_rebuild: false
+    steps:
+      - id: build
+        ref: kg_build
+        inputs:
+          graphs:
+            - factory: genai_graph.ekg.schema.my_schema.MyGraph
+              data_root: '${paths.ekg_data}/my_data/'
+              include: ['*.json']
+              recursive: true
+
 workflow_profiles:
-  kg_with_explorer:
-    workflow: kg_create
+  kg_my_new:
+    workflow: my_new_kg
     values:
-      config_name: rainbow
-      export_html: true      # ← Enable HTML export
+      kg_name: my_new_kg
 ```
 
-The HTML file is saved to the database output directory.
+Then run:
 
-### Parallel Processing
-
-Multi-file steps (ppt2pdf, markdownize) use `ThreadPoolTaskRunner` for parallel batch processing:
-
-```yaml
-workflow_profiles:
-  fast_pipeline:
-    workflow: full_kg_pipeline
-    values:
-      # Large batch sizes = more parallelism
-      batch_size: 20         # ← More concurrent conversions
-      converter: mistral     # ← Mistral OCR is parallelizable
-      # ...
+```bash
+uv run cli workflow run kg_my_new --dry-run
+uv run cli workflow run kg_my_new
 ```
-
-KG creation itself runs serially (Ladybug is single-writer), but document preparation is parallelized.
 
 ---
 
 ## Troubleshooting
 
-### "Cannot import kg_create_step"
+### Data directory not found
 
-Ensure `genai_graph` is installed:
-
-```bash
-uv add genai_graph
-# or from local development:
-uv add --editable /path/to/genai-graph
+```
+WARNING | json_factory.py - Data root directory not found: /path/to/data
 ```
 
-### "Config name not found"
+The path in the graph config (`data_root`) doesn't exist. Check that `paths.ekg_data` in
+your config points to the correct location and the data subdirectory exists.
 
-Verify the `config_name` matches a key in your KG config:
-
-```python
-# Check available configs
-from genai_graph.config import agents_config
-print(agents_config.keys())
-
-# Add or update a config in config/agents/langchain.yaml
-```
-
-### "Workflow steps appear to hang"
-
-Check logs for details:
-
-```bash
-uv run cli workflow run my_profile --logging DEBUG
-```
-
-This enables debug-level logging to see task progress.
-
-### "Database already exists"
-
-Use `--set delete_first=true` to clear it first:
+### Database already exists
 
 ```bash
 uv run cli workflow run kg_one_rainbow --set delete_first=true
 ```
 
+### Force rebuild of parquet cache
+
+```bash
+uv run cli workflow run kg_one_rainbow --set force_rebuild=true
+```
+
+### Check workflow expansion
+
+Use `--dry-run` to see how sub-workflows are expanded before executing:
+
+```bash
+uv run cli workflow run kg_learned --dry-run
+```
+
+### See Also
+
+- [genai-tk docs/workflows.md](../../genai-tk/docs/workflows.md) — Core workflow engine documentation
+- [config/ekg_workflows.yaml](../config/ekg_workflows.yaml) — All KG workflow definitions
+- [config/workflows.yaml](../config/workflows.yaml) — Pre-processing workflow definitions
+- [genai_graph/orchestration/workflow_steps.py](../genai_graph/orchestration/workflow_steps.py) — `kg_build_step` implementation
+
+
 ---
-
-## See Also
-
-- [Workflow Engine Guide](../genai-tk/docs/workflows.md) — Core system documentation
-- [KG Construction](graph_construction.md) — Detailed knowledge graph creation
-- [Prefect Integration](../genai-tk/docs/prefect.md) — Prefect flows and runtime
-- [genai-tk CLI](../genai-tk/docs/cli.md) — Full CLI command reference

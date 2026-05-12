@@ -31,7 +31,7 @@ paths:
   - ${paths.config}/providers/embeddings.yaml
   - ${paths.config}/overrides.yaml
   - ${paths.config}/mcp_servers.yaml
-  - ${paths.config}/ekg.yaml
+  - ${paths.config}/ekg_workflows.yaml
   - ${paths.config}/workflows.yaml
 
 
