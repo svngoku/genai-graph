@@ -6,6 +6,18 @@ Combines heterogeneous data sources (Neo4j exports, database/Excel files, LLM-ex
 documents via BAML) into a unified [Ladybug](https://github.com/LadybugDB/ladybug) graph
 database with Streamlit and CLI interfaces.
 
+## Where GenAI Graph Fits
+
+GenAI Graph extends genai-tk's **three domains**:
+
+| Domain | GenAI Graph Usage |
+|--------|-------------------|
+| **🧠 Core GenAI** | LLM-powered document extraction via BAML + genai-tk's factories |
+| **🤖 Agents** | EKG-aware agents that query the graph via Cypher tool integration |
+| **⚙️ Workflows** | Workflow DSL for orchestrating multi-stage KG pipelines (ppt2pdf → markdownize → graph build) |
+
+For the toolkit overview and setup, see [genai-tk README](../genai-tk/README.md).
+
 ---
 
 ## Documentation
