@@ -21,6 +21,72 @@ GRAPH_DB_CONFIG = "default"
 console = Console()
 
 
+# ---------------------------------------------------------------------------
+# Module-level helpers
+# ---------------------------------------------------------------------------
+
+
+def _extract_root_cause(exc: BaseException) -> str:
+    """Walk the exception chain and return the deepest root cause as a string."""
+    cause: BaseException = exc
+    while cause.__cause__ is not None:
+        cause = cause.__cause__
+    return f"{type(cause).__name__}: {cause}"
+
+
+def _render_kg_plan(invocation: Any) -> None:
+    """Print a summary table of the resolved workflow plan."""
+    import json as _json
+
+    from genai_tk.workflow.models import ResolvedWorkflowInvocation
+
+    if not isinstance(invocation, ResolvedWorkflowInvocation):
+        return
+
+    summary = Table(title="Workflow Plan", show_header=True, header_style="bold cyan")
+    summary.add_column("Property", style="cyan", no_wrap=True)
+    summary.add_column("Value", style="white")
+    summary.add_row("Workflow", invocation.workflow_name)
+    summary.add_row("Profile", invocation.profile_name or "<none>")
+    summary.add_row("Force", str(invocation.force))
+    summary.add_row("Steps", str(len(invocation.workflow.steps)))
+    console.print(summary)
+
+    if invocation.values:
+        console.print(Panel(_json.dumps(invocation.values, indent=2, default=str), title="Effective Values"))
+
+    steps = Table(title="Steps", show_header=True, header_style="bold green")
+    steps.add_column("Id", style="cyan", no_wrap=True)
+    steps.add_column("Uses", style="white")
+    steps.add_column("Needs", style="magenta")
+    for step in invocation.workflow.steps:
+        steps.add_row(step.id, step.uses, ", ".join(step.needs) or "-")
+    console.print(steps)
+
+
+def _display_kg_results(profile_name: str, results: dict[str, Any]) -> None:
+    """Display KG creation results extracted from workflow step outputs."""
+    kg_results = {sid: r for sid, r in results.items() if hasattr(r, "stats")}
+    if not kg_results:
+        console.print(f"[green]✓ {profile_name}: workflow completed ({len(results)} step(s))[/green]")
+        return
+
+    for step_id, result in kg_results.items():
+        stats = result.stats
+        warnings = getattr(result, "warnings", [])
+        has_failures = stats.total_failed > 0
+        color = "yellow" if has_failures else "green"
+        icon = "⚠" if has_failures else "✓"
+        console.print(f"[{color}]{icon} {step_id}:[/{color}] {stats.total_processed} ok, {stats.total_failed} failed")
+        if getattr(result, "db_path", None):
+            console.print(f"  [dim]Path:[/dim] {result.db_path}")
+        for w in warnings:
+            console.print(f"  [yellow]⚠[/yellow] {w}")
+        if getattr(result, "html_export", None):
+            export_path = result.html_export.output_path
+            console.print(f"  [green]📊 HTML:[/green] file://{export_path}")
+
+
 class EkgCommands(CliTopCommand):
     """Commands for interacting with a Knowledge Graph."""
 
@@ -32,205 +98,145 @@ class EkgCommands(CliTopCommand):
 
         @cli_app.command("create")
         def create(
-            kg: Annotated[
-                list[str] | None,
-                typer.Option(
-                    "--kg",
-                    help="KG configuration name(s) to create. Can be specified multiple times.",
-                ),
+            name: Annotated[
+                str | None,
+                typer.Argument(help="KG name (e.g. 'one_rainbow' → profile 'kg_one_rainbow') or full profile name."),
             ] = None,
             all_graphs: Annotated[
                 bool,
-                typer.Option(
-                    "--all-graphs",
-                    help="Create all KG configurations defined in ekg.yaml",
-                ),
+                typer.Option("--all", "--all-graphs", help="Run all kg_* workflow profiles."),
+            ] = False,
+            dry_run: Annotated[
+                bool,
+                typer.Option("--dry-run", help="Resolve the workflow plan without executing."),
+            ] = False,
+            force: Annotated[
+                bool,
+                typer.Option("--force", help="Force rebuild of imported KG dependencies."),
             ] = False,
             delete_first: Annotated[
                 bool,
-                typer.Option(
-                    "--delete-first/--no-delete-first",
-                    help="Delete existing KG database before creation",
-                ),
+                typer.Option("--delete-first/--no-delete-first", help="Delete existing KG before creation."),
             ] = True,
             export_html: Annotated[
                 bool,
-                typer.Option(
-                    "--export-html/--no-export-html",
-                    help="Export HTML visualization after creation",
-                ),
+                typer.Option("--export-html/--no-export-html", help="Export HTML visualization after creation."),
             ] = True,
             clear_all_caches: Annotated[
                 bool,
-                typer.Option(
-                    "--clear-all-caches",
-                    help="Clear all parquet caches before creation (fixes schema mismatch issues)",
-                ),
+                typer.Option("--clear-all-caches", help="Clear parquet caches before creation."),
             ] = False,
-            force_rebuild: Annotated[
-                bool,
-                typer.Option(
-                    "--force",
-                    help="Force rebuild of imported KG dependencies even if cache fingerprints match",
-                ),
-            ] = False,
+            set_values: Annotated[
+                list[str] | None,
+                typer.Option("--set", help="Override profile values as KEY=VALUE.", metavar="KEY=VALUE"),
+            ] = None,
         ) -> None:
-            """Create the KG database and ingest documents using a Prefect flow.
+            """Create KG databases via the workflow engine.
 
-            The flow is executed with an in-process runner and ephemeral client
-            so that no long-lived Prefect server or agent is required.
+            NAME maps to workflow profile 'kg_NAME' (e.g., 'one_rainbow' → 'kg_one_rainbow').
+            Use 'cli workflow list profiles' to see all available profiles.
 
             Examples:
-                cli kg create                        # Use kg_config from config
-                cli kg create --kg simple            # Create specific KG
-                cli kg create --kg simple --kg test1_with_db  # Create multiple KGs
-                cli kg create --all-graphs           # Create all defined KGs
-                cli kg create --clear-all-caches     # Clear all caches first
+                cli kg create one_rainbow
+                cli kg create one_rainbow --force --no-delete-first
+                cli kg create --all
+                cli kg create one_rainbow --dry-run
+                cli kg create one_rainbow --set export_html=false
             """
+            from genai_tk.workflow.executor import execute_workflow
+            from genai_tk.workflow.resolver import (
+                WorkflowResolutionError,
+                list_workflow_profile_names,
+                parse_cli_overrides,
+                resolve_workflow_invocation,
+            )
 
-            # Get the configured KG config name.
-            from genai_tk.utils.config_mngr import global_config
-            from genai_tk.workflow.prefect.run import ephemeral_prefect_settings
-
-            from genai_graph.kg.manager import get_kg_manager
-            from genai_graph.orchestration.flows import create_kg_flow
-
-            # Clear all caches if requested
+            # Clear parquet caches if requested
             if clear_all_caches:
                 from genai_graph.kg.export.artifacts import clear_all_parquet_caches
 
-                cleared_count = clear_all_parquet_caches()
-                console.print(f"[bold green]✓[/bold green] Cleared {cleared_count} parquet cache(s)")
+                cleared = clear_all_parquet_caches()
+                console.print(f"[bold green]✓[/bold green] Cleared {cleared} parquet cache(s)")
 
-            # Determine which KG configs to process
-            kg_configs_to_process: list[str] = []
+            # Build CLI overrides from convenience flags + raw --set values
+            cli_overrides: dict[str, Any] = parse_cli_overrides(set_values) if set_values else {}
+            if force:
+                cli_overrides.setdefault("force_rebuild", True)
+            if not delete_first:
+                cli_overrides.setdefault("delete_first", False)
+            if not export_html:
+                cli_overrides.setdefault("export_html", False)
 
+            # Determine which profiles to run
+            all_profile_names = list_workflow_profile_names()
             if all_graphs:
-                # Get all KG configs from global_config
-                try:
-                    cfg = global_config()
-                    all_kg_configs = cfg.get_dict("kg_configs")
-                    kg_configs_to_process = list(all_kg_configs.keys())
-                    console.print(
-                        f"[bold]Processing all KG configurations:[/bold] "
-                        f"[cyan]{', '.join(kg_configs_to_process)}[/cyan]"
-                    )
-                except Exception as exc:
-                    console.print(f"[red]❌ Failed to retrieve kg_configs: {exc}[/red]")
-                    raise typer.Exit(1) from exc
-            elif kg:
-                # Use specified KG config(s)
-                kg_configs_to_process = kg
-                console.print(
-                    f"[bold]Processing specified KG configuration(s):[/bold] "
-                    f"[cyan]{', '.join(kg_configs_to_process)}[/cyan]"
-                )
+                profile_names = [p for p in all_profile_names if p.startswith("kg_")]
+                if not profile_names:
+                    console.print("[yellow]No kg_* workflow profiles found.[/yellow]")
+                    raise typer.Exit(0)
+                console.print(f"[bold]Running all KG profiles:[/bold] {', '.join(profile_names)}")
+            elif name:
+                # Resolve: try kg_{name} first, then fall back to exact name
+                candidate = f"kg_{name}"
+                profile_name = candidate if candidate in all_profile_names else name
+                profile_names = [profile_name]
             else:
-                # Use default from kg_config
-                cfg_name = get_kg_manager().profile
-                kg_configs_to_process = [cfg_name]
-                console.print(f"[bold]Processing default KG configuration:[/bold] [cyan]{cfg_name}[/cyan]")
+                # No name given: use the default KG manager profile
+                from genai_graph.kg.manager import get_kg_manager
 
-            # Track results for all KG configs
-            all_results: list[tuple[str, Any]] = []
-            failed_configs: list[tuple[str, str]] = []
+                default = f"kg_{get_kg_manager().profile}"
+                profile_names = [default]
+                console.print(f"[dim]Using default profile: {default}[/dim]")
 
-            # Process each KG config
-            for cfg_name in kg_configs_to_process:
-                console.print("")
-                console.print(f"[bold cyan]{'=' * 60}[/bold cyan]")
-                console.print(f"[bold]Creating KG:[/bold] [cyan]{cfg_name}[/cyan]")
-                console.print(f"[bold cyan]{'=' * 60}[/bold cyan]")
+            # Run each profile
+            failed: list[tuple[str, str]] = []
+            for profile_name in profile_names:
+                if len(profile_names) > 1:
+                    console.rule(f"[cyan]{profile_name}[/cyan]")
 
-                # Clear subgraph factory caches before each KG config to prevent
-                # cross-contamination when processing multiple configurations
-                from genai_graph.kg.factories import (
-                    JsonFileBackedFactory,
-                    Neo4jFactory,
-                    TableBackedFactory,
-                )
-
-                JsonFileBackedFactory.clear_cache()
-                TableBackedFactory.clear_cache()
-                Neo4jFactory.clear_cache()
-                if len(kg_configs_to_process) > 1:
-                    console.print(f"[dim]Cleared factory caches for {cfg_name}[/dim]")
-
-                # Run the Prefect flow with an ephemeral, in-process server.
                 try:
-                    with ephemeral_prefect_settings():
-                        result = create_kg_flow(
-                            config_name=cfg_name,
-                            delete_first=delete_first,
-                            export_html=export_html,
-                            force_rebuild=force_rebuild,
-                        )
-
-                    all_results.append((cfg_name, result))
-
-                    stats = result.stats
-                    warnings = result.warnings
-
-                    console.print("")
-                    has_failures = stats.total_failed > 0
-                    status_color = "yellow" if has_failures else "green"
-                    status_icon = "⚠" if has_failures else "✓"
-                    console.print(
-                        f"[{status_color}]{status_icon} KG creation completed for [bold]{cfg_name}[/bold].[/{status_color}] Processed: "
-                        f"{stats.total_processed} ok, "
-                        + (f"[red bold]{stats.total_failed} failed[/red bold]" if has_failures else "0 failed")
-                        + f". Path: {result.db_path}",
-                    )
-
-                    if warnings:
-                        console.print(Panel.fit("[bold yellow]⚠️  Warnings[/bold yellow]", border_style="yellow"))
-                        for idx, warning in enumerate(warnings, 1):
-                            console.print(f"  [yellow]{idx}.[/yellow] {warning}")
-                        console.print("")
-                    elif not has_failures:
-                        console.print("[green]✓ No warnings[/green]")
-
-                    if result.html_export and export_html:
-                        file_url = f"file://{result.html_export.output_path}"
-                        console.print(
-                            f"[green]📊 HTML export:[/green] [link={file_url}]{result.html_export.output_path}[/link]"
-                        )
-
-                    # Display warnings report path
-                    from genai_graph.kg.manager import get_kg_manager
-
-                    warnings_md_path = get_kg_manager().get_warnings_md_path_for(cfg_name)
-                    if warnings_md_path.exists():
-                        file_url = f"file://{warnings_md_path}"
-                        console.print(f"[cyan]📋 Warnings report:[/cyan] [link={file_url}]{warnings_md_path}[/link]")
-
-                except Exception as exc:  # pragma: no cover - defensive
-                    import traceback as tb
-
-                    logger.error("KG creation failed for {}: {}", cfg_name, exc)
-                    logger.error(tb.format_exc())
-                    console.print(f"[red]❌ KG creation failed for {cfg_name}: {exc}[/red]")
-                    failed_configs.append((cfg_name, str(exc)))
-                    # Continue with next config instead of exiting
+                    invocation = resolve_workflow_invocation(profile_name, cli_overrides=cli_overrides)
+                except WorkflowResolutionError as exc:
+                    console.print(Panel(str(exc), title=f"Resolution Error: {profile_name}", border_style="red"))
+                    if len(profile_names) == 1:
+                        raise typer.Exit(1) from exc
+                    failed.append((profile_name, str(exc)))
                     continue
 
-            # Summary for multiple KG configs
-            if len(kg_configs_to_process) > 1:
-                console.print("")
-                console.print(f"[bold cyan]{'=' * 60}[/bold cyan]")
-                console.print(f"[bold]Summary: Processed {len(kg_configs_to_process)} KG configuration(s)[/bold]")
-                console.print(f"[bold cyan]{'=' * 60}[/bold cyan]")
+                _render_kg_plan(invocation)
 
-                if all_results:
-                    console.print(f"[green]✓ Successfully created: {len(all_results)}[/green]")
-                    for cfg_name, result in all_results:
-                        console.print(f"  • [cyan]{cfg_name}[/cyan]: {result.stats.total_processed} docs processed")
+                if dry_run:
+                    continue
 
-                if failed_configs:
-                    console.print(f"[red]✗ Failed: {len(failed_configs)}[/red]")
-                    for cfg_name, error in failed_configs:
-                        console.print(f"  • [red]{cfg_name}[/red]: {error}")
+                try:
+                    results = execute_workflow(invocation)
+                    _display_kg_results(profile_name, results)
+                except Exception as exc:
+                    root_cause = _extract_root_cause(exc)
+                    logger.debug("KG creation error for {}: {}", profile_name, exc, exc_info=True)
+                    console.print(Panel(root_cause, title=f"KG creation failed: {profile_name}", border_style="red"))
+                    if len(profile_names) == 1:
+                        raise typer.Exit(1) from exc
+                    failed.append((profile_name, root_cause))
+
+            if dry_run:
+                console.print(Panel("Dry run complete — no execution performed.", border_style="green"))
+                return
+
+            if len(profile_names) > 1:
+                if failed:
+                    console.print(
+                        Panel(
+                            f"{len(failed)}/{len(profile_names)} failed: " + ", ".join(p for p, _ in failed),
+                            title="Summary",
+                            border_style="red",
+                        )
+                    )
                     raise typer.Exit(1)
+                else:
+                    console.print(
+                        Panel(f"All {len(profile_names)} KG profile(s) completed.", border_style="green")
+                    )
 
         @cli_app.command("info")
         def info() -> None:
