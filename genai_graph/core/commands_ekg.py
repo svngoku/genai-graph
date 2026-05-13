@@ -234,9 +234,7 @@ class EkgCommands(CliTopCommand):
                     )
                     raise typer.Exit(1)
                 else:
-                    console.print(
-                        Panel(f"All {len(profile_names)} KG profile(s) completed.", border_style="green")
-                    )
+                    console.print(Panel(f"All {len(profile_names)} KG profile(s) completed.", border_style="green"))
 
         @cli_app.command("info")
         def info() -> None:
