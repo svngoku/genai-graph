@@ -57,10 +57,12 @@ def _render_kg_plan(invocation: Any) -> None:
 
     steps = Table(title="Steps", show_header=True, header_style="bold green")
     steps.add_column("Id", style="cyan", no_wrap=True)
-    steps.add_column("Uses", style="white")
-    steps.add_column("Needs", style="magenta")
+    steps.add_column("Invoke", style="white")
+    steps.add_column("Wait For", style="magenta")
     for step in invocation.workflow.steps:
-        steps.add_row(step.id, step.uses, ", ".join(step.needs) or "-")
+        target = step.invoke.target if step.invoke else "-"
+        wait_for = ", ".join(step.wait_for) if step.wait_for else "-"
+        steps.add_row(step.id, target, wait_for)
     console.print(steps)
 
 
@@ -160,12 +162,9 @@ class EkgCommands(CliTopCommand):
 
             # Build CLI overrides from convenience flags + raw --set values
             cli_overrides: dict[str, Any] = parse_cli_overrides(set_values) if set_values else {}
-            if force:
-                cli_overrides.setdefault("force_rebuild", True)
-            if not delete_first:
-                cli_overrides.setdefault("delete_first", False)
-            if not export_html:
-                cli_overrides.setdefault("export_html", False)
+            cli_overrides.setdefault("force_rebuild", force)
+            cli_overrides.setdefault("delete_first", delete_first)
+            cli_overrides.setdefault("export_html", export_html)
 
             # Determine which profiles to run
             all_profile_names = list_workflow_profile_names()

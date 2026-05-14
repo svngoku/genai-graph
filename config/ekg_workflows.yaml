@@ -2,9 +2,8 @@
 # EKG Workflow definitions — Knowledge Graph build pipelines
 # ---------------------------------------------------------------------------
 #
-# This file replaces the old ekg.yaml kg_configs with standard workflow DSL.
-# Each former kg_config is now a workflow; the `import:` mechanism is replaced
-# by `uses_workflow` step composition.
+# This file defines knowledge graph build workflows using the genai-tk
+# workflow DSL (invoke/wait_for/with instead of uses/needs/inputs).
 #
 # Usage:
 #   cli workflow run kg_one_rainbow --dry-run
@@ -38,13 +37,14 @@ kg_build:
 
 step_templates:
   kg_build:
-    uses: genai_graph.orchestration.workflow_steps.kg_build_step
-    concurrency: serial
-    params:
-      kg_name: "${profile.kg_name}"
-      delete_first: "${profile.delete_first}"
-      export_html: "${profile.export_html}"
-      force_rebuild: "${profile.force_rebuild}"
+    invoke:
+      kind: callable
+      target: genai_graph.orchestration.workflow_steps.kg_build_step
+    with:
+      kg_name: "${values.kg_name}"
+      delete_first: "${values.delete_first}"
+      export_html: "${values.export_html}"
+      force_rebuild: "${values.force_rebuild}"
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +64,7 @@ workflows:
     steps:
       - id: build
         ref: kg_build
-        inputs:
+        with:
           graphs:
             - factory: genai_graph.ekg.schema.rainbow_review.ReviewedOpportunityGraph
               data_root: '${paths.rainbow_json}'
@@ -87,7 +87,7 @@ workflows:
     steps:
       - id: build
         ref: kg_build
-        inputs:
+        with:
           graphs:
             - factory: genai_graph.ekg.schema.crm_export.CrmExtractGraph
               files:
@@ -103,7 +103,7 @@ workflows:
     steps:
       - id: build
         ref: kg_build
-        inputs:
+        with:
           graphs:
             - factory: genai_graph.ekg.schema.rainbow_review.ReviewedOpportunityGraph
               data_root: '${paths.rainbow_json}'
@@ -129,7 +129,7 @@ workflows:
     steps:
       - id: build
         ref: kg_build
-        inputs:
+        with:
           graphs:
             - factory: genai_graph.ekg.schema.rainbow_review.ReviewedOpportunityGraph
               data_root: '${paths.rainbow_json}'
@@ -162,7 +162,7 @@ workflows:
     steps:
       - id: build
         ref: kg_build
-        inputs:
+        with:
           graphs:
             - factory: genai_graph.ekg.schema.rainbow_review.ReviewedOpportunityGraph
               data_root: '${paths.rainbow_json}'
@@ -179,7 +179,7 @@ workflows:
     steps:
       - id: build
         ref: kg_build
-        inputs:
+        with:
           graphs:
             - factory: genai_graph.ekg.schema.stratnav.StratnavGraph
               neo4j_export_file: '${paths.stratnav_db}/subset/sn-subset200.jsonl'
@@ -187,16 +187,21 @@ workflows:
                 - field: L3.descriptionEmbedding
                   model: ada_002@openrouter
 
-  # --- Composite workflows (former `import:` configs) ---
+  # --- Composite workflows (sub-workflow composition) ---
 
   stratnav_subset_rainbow_crm:
     description: "Rainbow + CRM + StratNav combined graph"
     steps:
       - id: rainbow_crm
-        uses_workflow: rainbow_add_crm
+        invoke:
+          kind: workflow
+          target: rainbow_add_crm
       - id: stratnav
-        uses_workflow: stratnav_subset
-        needs: [rainbow_crm]
+        invoke:
+          kind: workflow
+          target: stratnav_subset
+        wait_for: [rainbow_crm]
+
 
   learned_stratnav_subset_rainbow_crm:
     description: "StratNav + Rainbow + CRM with learned similarity relationships"
@@ -206,11 +211,13 @@ workflows:
       force_rebuild: false
     steps:
       - id: base
-        uses_workflow: stratnav_subset_rainbow_crm
+        invoke:
+          kind: workflow
+          target: stratnav_subset_rainbow_crm
       - id: similarities
         ref: kg_build
-        needs: [base]
-        inputs:
+        wait_for: [base]
+        with:
           graphs:
             - factory: genai_graph.ekg.schema.learned_graph.L3TechApproachMatcher
               similarities:

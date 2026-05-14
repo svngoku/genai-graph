@@ -212,6 +212,9 @@ class KuzuBackend(KgBackend):
 
         self.db = ladybug.Database(connection_string)
         self.conn = ladybug.Connection(self.db)
+        # Ensure the vector extension is loaded so tables with vector indexes
+        # can accept inserts without a "extension is not loaded" binder error.
+        self.ensure_vector_extension()
 
     def execute(self, query: str, parameters: dict[str, Any] | None = None) -> Any:
         """Execute a Cypher query on Ladybug."""

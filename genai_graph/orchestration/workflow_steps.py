@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from genai_tk.workflow.prefect.run import ephemeral_prefect_settings
 from loguru import logger
 
 
@@ -52,13 +51,12 @@ def kg_create_step(
     _clear_factory_caches()
     logger.info("Running KG creation flow for config: {}", config_name)
 
-    with ephemeral_prefect_settings():
-        result = create_kg_flow(
-            config_name=config_name,
-            delete_first=delete_first,
-            export_html=export_html,
-            force_rebuild=force_rebuild,
-        )
+    result = create_kg_flow(
+        config_name=config_name,
+        delete_first=delete_first,
+        export_html=export_html,
+        force_rebuild=force_rebuild,
+    )
 
     return _result_dict(config_name, result)
 
@@ -99,12 +97,11 @@ def kg_build_step(
 
     logger.info("Running KG build flow for inline config '{}' ({} graph(s))", kg_name, len(graphs))
 
-    with ephemeral_prefect_settings():
-        result = create_kg_flow(
-            config_name=kg_name,
-            delete_first=delete_first,
-            export_html=export_html,
-            force_rebuild=force_rebuild,
-        )
+    result = create_kg_flow(
+        config_name=kg_name,
+        delete_first=delete_first,
+        export_html=export_html,
+        force_rebuild=force_rebuild,
+    )
 
     return _result_dict(kg_name, result)

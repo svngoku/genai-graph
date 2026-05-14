@@ -11,25 +11,25 @@
 
 step_templates:
   ppt2pdf_step:
-    uses: genai_tk.workflow.prefect.flows.ppt2pdf_flow.ppt2pdf_flow
-    inputs:
-      base_dir: "${profile.base_dir}"
-      output_dir: "${profile.output_dir}"
-    params:
-      pathspecs: "${profile.pathspecs}"
-      batch_size: "${profile.batch_size}"
-    concurrency: serial
+    invoke:
+      kind: flow
+      target: genai_tk.workflow.prefect.flows.ppt2pdf_flow.ppt2pdf_flow
+    with:
+      base_dir: "${values.base_dir}"
+      output_dir: "${values.output_dir}"
+      pathspecs: "${values.pathspecs}"
+      batch_size: "${values.batch_size}"
 
   markdownize_step:
-    uses: genai_tk.workflow.prefect.flows.markdownize_flow.markdownize_flow
-    inputs:
-      base_dir: "${profile.base_dir}"
-      output_dir: "${profile.output_dir}"
-    params:
-      pathspecs: "${profile.pathspecs}"
-      batch_size: "${profile.batch_size}"
-      converter: "${profile.converter}"
-    concurrency: serial
+    invoke:
+      kind: flow
+      target: genai_tk.workflow.prefect.flows.markdownize_flow.markdownize_flow
+    with:
+      base_dir: "${values.base_dir}"
+      output_dir: "${values.output_dir}"
+      pathspecs: "${values.pathspecs}"
+      batch_size: "${values.batch_size}"
+      converter: "${values.converter}"
 
 
 workflows:
@@ -56,10 +56,9 @@ workflows:
     steps:
       - id: ppt_to_pdf
         ref: ppt2pdf_step
-        inputs:
-          base_dir: "${profile.ppt_base_dir}"
-          output_dir: "${profile.pdf_output_dir}"
-        params:
+        with:
+          base_dir: "${values.ppt_base_dir}"
+          output_dir: "${values.pdf_output_dir}"
           pathspecs:
             - "**/*.pptx"
             - "**/*.ppt"
@@ -67,17 +66,18 @@ workflows:
 
       - id: markdownize
         ref: markdownize_step
-        needs: [ppt_to_pdf]
-        inputs:
-          base_dir: "${profile.pdf_output_dir}"
-          output_dir: "${profile.md_output_dir}"
-        params:
+        wait_for: [ppt_to_pdf]
+        with:
+          base_dir: "${values.pdf_output_dir}"
+          output_dir: "${values.md_output_dir}"
           pathspecs:
             - "**/*.pdf"
 
       - id: create_kg
-        uses_workflow: rainbow_add_crm
-        needs: [markdownize]
+        invoke:
+          kind: workflow
+          target: rainbow_add_crm
+        wait_for: [markdownize]
 
 
 workflow_profiles:
