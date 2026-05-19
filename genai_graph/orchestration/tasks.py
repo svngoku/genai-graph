@@ -786,6 +786,44 @@ def create_vector_indexes_task(bundles: list[GraphBundle], backend: KgBackend) -
         log.info(f"Created {index_count} vector index(es)")
 
 
+@task
+def drop_vector_indexes_task(bundles: list[GraphBundle], backend: KgBackend) -> None:
+    """Drop all HNSW vector indexes before re-ingestion.
+
+    Ladybug (Kuzu) forbids updating a vector property in-place when it is
+    covered by a HNSW index ("Cannot set property vec in table embeddings …").
+    Dropping indexes here before the MERGE pass and recreating them afterwards
+    via :func:`create_vector_indexes_task` is the recommended workaround.
+
+    Args:
+        bundles: List of GraphBundles with node configurations.
+        backend: KgBackend instance.
+    """
+    log = _get_prefect_logger_or_default()
+
+    from genai_graph.kg.backend import KuzuBackend
+
+    if not isinstance(backend, KuzuBackend):
+        log.debug("Skipping vector index drop for non-Kuzu backend")
+        return
+
+    drop_count = 0
+    for bundle in bundles:
+        if bundle.schema_obj is None:
+            continue
+        for config in bundle.schema_obj.nodes:
+            if not config.compute_embeddings or not config.index_fields:
+                continue
+            table_name = config.node_class.__name__
+            for field_name, _model in config.index_field_specs:
+                index_name = f"{field_name}_index"
+                backend.drop_vector_index(table_name, index_name)
+                drop_count += 1
+
+    if drop_count > 0:
+        log.info(f"Dropped {drop_count} vector index(es) (will be recreated after ingestion)")
+
+
 # ---------------------------------------------------------------------------
 # Backward-compatible aliases
 # ---------------------------------------------------------------------------

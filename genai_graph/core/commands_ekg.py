@@ -119,7 +119,7 @@ class EkgCommands(CliTopCommand):
             delete_first: Annotated[
                 bool,
                 typer.Option("--delete-first/--no-delete-first", help="Delete existing KG before creation."),
-            ] = True,
+            ] = False,
             export_html: Annotated[
                 bool,
                 typer.Option("--export-html/--no-export-html", help="Export HTML visualization after creation."),

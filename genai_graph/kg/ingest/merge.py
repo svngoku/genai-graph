@@ -657,9 +657,7 @@ def _get_columns_for_set_clause(
     # updating a property in-place when it is covered by a vector index.
     # Embeddings don't change unless the source text changes, so skipping them on
     # match is correct; a delete_first=true run will recreate them anyway.
-    on_match_columns = [
-        c for c in all_columns if c not in exclude_on_match and not c.endswith("_embedding")
-    ]
+    on_match_columns = [c for c in all_columns if c not in exclude_on_match and not c.endswith("_embedding")]
 
     return all_columns, on_match_columns
 

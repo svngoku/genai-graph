@@ -234,8 +234,7 @@ def show_empty_kg_message(config_name: str) -> None:
         To create the Knowledge Graph, run the following command in your terminal:
 
         ```bash
-        export KG_CONFIG={config_name}
-        cli kg create
+        cli kg create --profile={config_name}
         ```
 
         Then refresh this page to visualize the graph.

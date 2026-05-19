@@ -23,6 +23,10 @@ from upath import UPath
 
 from genai_graph.kg.factories import TableBackedFactory
 from genai_graph.kg.manager import get_kg_manager
+from genai_graph.webapp.ui_components.kg_config_selector import (
+    init_kg_config_session_state,
+    render_kg_config_selector,
+)
 
 
 class TableInfo(BaseModel):
@@ -63,7 +67,7 @@ def _make_relative_path(full_path: Path | str, data_roots: list[Path]) -> str:
 
 
 def _get_available_kg_configs() -> list[str]:
-    """Return list of available KG configurations from ekg.yaml."""
+    """Return list of available KG configurations from ekg_workflows.yaml."""
     try:
         manager = get_kg_manager()
         return sorted(manager.ekg_config.kg_configs.keys())
@@ -74,38 +78,16 @@ def _get_available_kg_configs() -> list[str]:
 
 def _initialize_session_state() -> None:
     """Initialize session state variables for this page."""
-    if "kg_config_selected" not in sss:
-        try:
-            manager = get_kg_manager()
-            sss.kg_config_selected = manager.ekg_config.kg_config
-        except Exception:
-            sss.kg_config_selected = "default"
+    init_kg_config_session_state()
 
     if "tables_selected_table" not in sss:
         sss.tables_selected_table = None
 
 
 def _select_configuration() -> None:
-    """Render KG configuration selector in the sidebar and apply changes."""
-    available_configs = _get_available_kg_configs()
-
+    """Render KG configuration selector in the sidebar."""
     with st.sidebar:
-        selected_config = st.selectbox(
-            "⚙️ KG Configuration",
-            options=available_configs,
-            index=available_configs.index(sss.kg_config_selected) if sss.kg_config_selected in available_configs else 0,
-            help="Select the Knowledge Graph configuration whose tables you want to inspect.",
-        )
-
-        if selected_config != sss.kg_config_selected:
-            sss.kg_config_selected = selected_config
-
-            cfg = global_config()
-            cfg.set("kg_config", selected_config)
-
-            get_kg_manager.invalidate()  # pyright: ignore[reportFunctionMemberAccess]
-
-            st.rerun()
+        render_kg_config_selector(help="Select the Knowledge Graph configuration whose tables you want to inspect.")
 
 
 def _discover_table_subgraphs() -> list[TableInfo]:

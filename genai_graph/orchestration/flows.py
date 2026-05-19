@@ -28,6 +28,7 @@ from genai_graph.orchestration.tasks import (
     create_schema_task,
     create_vector_indexes_task,
     delete_backend_task,
+    drop_vector_indexes_task,
     export_html_task,
     export_info_task,
     export_parquet_task,
@@ -153,6 +154,17 @@ def create_kg_flow(
         # ------------------------------------------------------------------
         bundles = load_factories_task.submit(kg_cfg).result()
         bundles = create_schema_task.submit(bundles, backend).result()
+
+        # ------------------------------------------------------------------
+        # 5b. Drop vector indexes before re-ingestion
+        # ------------------------------------------------------------------
+        # Ladybug forbids updating a vector-indexed property via MERGE+SET
+        # ("Cannot set property vec in table embeddings … Try delete and then
+        # insert").  Dropping HNSW indexes here and recreating them after
+        # ingestion (create_vector_indexes_task) is the recommended fix.
+        # When delete_first=True the backend was wiped already so there is
+        # nothing to drop, but drop_vector_indexes_task handles that silently.
+        drop_vector_indexes_task.submit(bundles, backend).result()
 
         # ------------------------------------------------------------------
         # 6. Ingestion phase — per-bundle tasks

@@ -34,7 +34,7 @@ from genai_graph.kg.manager import get_kg_manager
 
 
 def get_available_kg_configs() -> list[str]:
-    """Return the sorted list of KG configuration names defined in ekg.yaml."""
+    """Return the sorted list of KG configuration names defined in ekg_workflows.yaml."""
     try:
         manager = get_kg_manager()
         return sorted(manager.ekg_config.kg_configs.keys())
@@ -44,14 +44,18 @@ def get_available_kg_configs() -> list[str]:
 
 
 def init_kg_config_session_state() -> None:
-    """Seed ``sss.kg_config_selected`` from the active KG manager profile.
+    """Seed ``sss.kg_config_selected`` from the available KG configurations.
 
+    Picks the first available KG config so the page always starts with a
+    valid profile — even when no ``kg_config`` is set in the global config.
     Safe to call multiple times — only initialises on first call.
     """
-    if "kg_config_selected" not in sss:
+    if "kg_config_selected" not in sss or not sss.kg_config_selected:
         try:
             manager = get_kg_manager()
-            sss.kg_config_selected = manager.profile
+            available = sorted(manager.ekg_config.kg_configs.keys())
+            profile = manager.profile
+            sss.kg_config_selected = profile if profile in available else (available[0] if available else "default")
         except Exception:
             sss.kg_config_selected = "default"
 

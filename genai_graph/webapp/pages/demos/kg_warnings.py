@@ -10,32 +10,14 @@ This page lets users:
 from __future__ import annotations
 
 import streamlit as st
-from genai_tk.utils.config_mngr import global_config
-from loguru import logger
 from streamlit import session_state as sss
 
 from genai_graph.kg.export.warnings_report import WarningCategory, WarningsReport, categorize_warnings
 from genai_graph.kg.manager import get_kg_manager
-
-
-def _get_available_kg_configs() -> list[str]:
-    """Return list of available KG configurations from ekg.yaml."""
-    try:
-        manager = get_kg_manager()
-        return sorted(manager.ekg_config.kg_configs.keys())
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.warning("Could not load KG configurations: {}", exc)
-        return ["default"]
-
-
-def _initialize_session_state() -> None:
-    """Initialize session state variables for this page."""
-    if "kg_config_selected" not in sss:
-        try:
-            manager = get_kg_manager()
-            sss.kg_config_selected = manager.ekg_config.kg_config
-        except Exception:
-            sss.kg_config_selected = "default"
+from genai_graph.webapp.ui_components.kg_config_selector import (
+    init_kg_config_session_state,
+    render_kg_config_selector,
+)
 
 
 def _load_warnings_for(profile: str) -> list[str]:
@@ -136,8 +118,7 @@ def _render_missing_log(config_name: str) -> None:
         To create the KG, run:
 
         ```bash
-        export KG_CONFIG={config_name}
-        cli kg create
+        cli kg create --profile={config_name}
         ```
 
         Then refresh this page.
@@ -153,30 +134,13 @@ def main() -> None:
         layout="wide",
     )
 
-    _initialize_session_state()
+    init_kg_config_session_state()
 
     st.title("⚠️ KG Creation Warnings")
 
     # --- Sidebar: KG configuration selector ---
     with st.sidebar:
-        available_configs = _get_available_kg_configs()
-        selected_config = st.selectbox(
-            "### ⚙️ KG Configuration",
-            options=available_configs,
-            index=(
-                available_configs.index(sss.kg_config_selected) if sss.kg_config_selected in available_configs else 0
-            ),
-            help="Select the Knowledge Graph configuration whose warnings you want to inspect.",
-        )
-
-        if selected_config != sss.kg_config_selected:
-            sss.kg_config_selected = selected_config
-
-            cfg = global_config()
-            cfg.set("kg_config", selected_config)
-
-            get_kg_manager.invalidate()  # pyright: ignore[reportFunctionMemberAccess]
-            st.rerun()
+        render_kg_config_selector(help="Select the Knowledge Graph configuration whose warnings you want to inspect.")
 
     # --- Load warnings ---
     raw_warnings = _load_warnings_for(sss.kg_config_selected)

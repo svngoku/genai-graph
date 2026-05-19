@@ -20,7 +20,7 @@ def _clear_factory_caches() -> None:
     Neo4jFactory.clear_cache()
 
 
-def _result_dict(config_name: str, result: Any) -> dict:
+def _result_dict(config_name: str, result: Any) -> dict[str, Any]:
     return {
         "config_name": config_name,
         "total_processed": result.stats.total_processed,
@@ -36,7 +36,7 @@ def kg_create_step(
     delete_first: bool = False,
     export_html: bool = True,
     force_rebuild: bool = False,
-) -> dict:
+) -> dict[str, Any]:
     """Execute the KG creation flow for a given config profile.
 
     This wrapper handles:
@@ -68,7 +68,7 @@ def kg_build_step(
     delete_first: bool = False,
     export_html: bool = True,
     force_rebuild: bool = False,
-) -> dict:
+) -> dict[str, Any]:
     """Execute the KG creation flow with inline graph configurations.
 
     Instead of looking up a ``config_name`` in ``kg_configs``, this step
@@ -77,7 +77,7 @@ def kg_build_step(
 
     Args:
         graphs: List of graph factory configurations (same format as
-            ``kg_configs.<name>.graphs`` entries in ``ekg.yaml``).
+            ``workflows.<name>.steps`` entries in ``ekg_workflows.yaml``).
         kg_name: Name used for the database directory and profile identity.
         delete_first: Whether to delete existing database before building.
         export_html: Whether to export an HTML visualization.

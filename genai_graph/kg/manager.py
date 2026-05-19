@@ -67,8 +67,36 @@ class KgProfileConfig(BaseModel):
     }
 
 
+def _extract_graphs_from_workflow(
+    workflow_name: str, workflows: dict[str, Any], _visited: set[str] | None = None
+) -> list[dict[str, Any]]:
+    """Recursively collect graph configs from a workflow's build steps.
+
+    Handles composite workflows that invoke other workflows via
+    ``invoke: {kind: workflow, target: ...}``.
+    """
+    if _visited is None:
+        _visited = set()
+    if workflow_name in _visited:
+        return []
+    _visited.add(workflow_name)
+
+    workflow_def = workflows.get(workflow_name, {})
+    graphs: list[dict[str, Any]] = []
+    for step in workflow_def.get("steps", []):
+        step_with = step.get("with", {})
+        if "graphs" in step_with:
+            graphs.extend(step_with["graphs"])
+        invoke = step.get("invoke", {})
+        if invoke.get("kind") == "workflow":
+            sub = invoke.get("target")
+            if sub:
+                graphs.extend(_extract_graphs_from_workflow(sub, workflows, _visited))
+    return graphs
+
+
 class KgConfig(BaseModel):
-    """Top-level KG configuration loaded from ``config/ekg.yaml``."""
+    """Top-level KG configuration loaded from ``config/ekg_workflows.yaml``."""
 
     kg_config: str
     kg_tag: str = "dev"
@@ -109,23 +137,41 @@ class KgManager(BaseModel):
 
         cfg = global_config()
 
-        # Top-level KG config
-        profile = cfg.get("kg_config", default="db_only")
         tag_env = os.environ.get("KG_CONFIG_TAG")
         tag = cfg.get("kg_tag", default=tag_env or "dev")
 
         try:
-            kg_configs_dict = cfg.get_dict("kg_configs")
+            workflow_profiles: dict[str, Any] = cfg.get_dict("workflow_profiles")
         except Exception:
-            kg_configs_dict = {}
+            workflow_profiles = {}
+
+        try:
+            workflows: dict[str, Any] = cfg.get_dict("workflows")
+        except Exception:
+            workflows = {}
 
         schemas_root = cfg.get("schemas_root", default=None)
+
+        # Build kg_configs from workflow_profiles: each kg_name -> KgProfileConfig
+        kg_configs: dict[str, KgProfileConfig] = {}
+        for wp_def in workflow_profiles.values():
+            kg_name = (wp_def.get("values") or {}).get("kg_name")
+            workflow_name = wp_def.get("workflow")
+            if not kg_name or not workflow_name:
+                continue
+            graphs = _extract_graphs_from_workflow(workflow_name, workflows)
+            kg_configs[kg_name] = KgProfileConfig(
+                graphs=[KgGraphConfig(**g) for g in graphs],
+            )
+
+        available = sorted(kg_configs.keys())
+        profile = available[0] if available else "default"
 
         ekg_config = KgConfig(
             kg_config=profile,
             kg_tag=tag,
             schemas_root=schemas_root,
-            kg_configs={k: KgProfileConfig(**v) for k, v in kg_configs_dict.items()},
+            kg_configs=kg_configs,
         )
 
         return cls(ekg_config=ekg_config, profile=profile, tag=tag)
@@ -150,7 +196,7 @@ class KgManager(BaseModel):
         """
         if self.profile not in self.ekg_config.kg_configs:
             logger.warning(
-                f"Unknown KG_CONFIG= '{self.profile}'; available={sorted(self.ekg_config.kg_configs.keys())}"
+                f"Unknown KG profile '{self.profile}'; available={sorted(self.ekg_config.kg_configs.keys())}"
             )
         return (self.profile, self.tag)
 
@@ -162,7 +208,7 @@ class KgManager(BaseModel):
         """Return configuration for the active profile."""
         if self.profile not in self.ekg_config.kg_configs:
             raise KeyError(
-                f"KG_CONFIG='{self.profile}' is not defined in ekg.yaml; "
+                f"KG profile '{self.profile}' is not defined in ekg_workflows.yaml; "
                 f"available: {sorted(self.ekg_config.kg_configs.keys())}"
             )
         return self.ekg_config.kg_configs[self.profile]

@@ -40,6 +40,8 @@ step_templates:
     invoke:
       kind: callable
       target: genai_graph.orchestration.workflow_steps.kg_build_step
+    cache:
+      backend: manifest
     with:
       kg_name: "${values.kg_name}"
       delete_first: "${values.delete_first}"

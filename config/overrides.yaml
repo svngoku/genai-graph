@@ -9,17 +9,11 @@ ekg_local:
   :env: # Overide envivonment variable 
     BAML_LOG: "warn"
 
-  # :merge:
-  #   - ${paths.config}/ekg.yaml 
-
   paths:
     data_root : ${oc.env:ONEDRIVE, null}/prj/atos-kg/data
     ekg_data : "${oc.env:ONEDRIVE, null}/KORTEX_EKG/proto/input_data/"
     kg_outputs :  ${oc.env:HOME}/kg_outputs
 
-
-  kg_config: ${oc.env:KG_CONFIG,one_rainbow_with_db}
-  kg_tag: ${oc.env:KG_CONFIG_TAG,dev}
 
   llm:
     models:

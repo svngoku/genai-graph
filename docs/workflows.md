@@ -398,10 +398,15 @@ cli kg create one_rainbow --force
 
 ### Vector index error during merge
 
-If you see `Cannot set property vec ... because it is used in one or more indexes`,
-the database already has vector indexes from a previous run.  Use `delete_first=true`
-(or `cli kg create`) to start from a clean database:
+`Cannot set property vec ... because it is used in one or more indexes` is a
+Ladybug (Kuzu) limitation: HNSW vector-indexed properties cannot be updated in
+place via `MERGE … SET`.
+
+**This is handled automatically.** The flow now calls `drop_vector_indexes_task`
+before the ingestion phase and `create_vector_indexes_task` after.  If you still
+see the error, use `delete_first=true` (or `--delete-first`) to start from a
+completely clean database:
 
 ```bash
-cli kg create one_rainbow   # always deletes first by default
+cli kg create one_rainbow --delete-first
 ```
