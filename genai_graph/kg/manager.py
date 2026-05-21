@@ -141,12 +141,12 @@ class KgManager(BaseModel):
         tag = cfg.get("kg_tag", default=tag_env or "dev")
 
         try:
-            workflow_profiles: dict[str, Any] = cfg.get_dict("workflow_profiles")
+            workflow_profiles: dict[str, Any] = cfg.get_dict("workflows.profiles")
         except Exception:
             workflow_profiles = {}
 
         try:
-            workflows: dict[str, Any] = cfg.get_dict("workflows")
+            workflows: dict[str, Any] = cfg.get_dict("workflows.definitions")
         except Exception:
             workflows = {}
 

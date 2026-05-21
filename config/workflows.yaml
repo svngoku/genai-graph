@@ -9,121 +9,121 @@
 #   cli workflow run full_rainbow_pipeline --dry-run
 # ---------------------------------------------------------------------------
 
-step_templates:
-  ppt2pdf_step:
-    invoke:
-      kind: flow
-      target: genai_tk.workflow.prefect.flows.ppt2pdf_flow.ppt2pdf_flow
-    with:
-      base_dir: "${values.base_dir}"
-      output_dir: "${values.output_dir}"
-      pathspecs: "${values.pathspecs}"
-      batch_size: "${values.batch_size}"
-
-  markdownize_step:
-    invoke:
-      kind: flow
-      target: genai_tk.workflow.prefect.flows.markdownize_flow.markdownize_flow
-    with:
-      base_dir: "${values.base_dir}"
-      output_dir: "${values.output_dir}"
-      pathspecs: "${values.pathspecs}"
-      batch_size: "${values.batch_size}"
-      converter: "${values.converter}"
-
-
 workflows:
-  ppt2pdf_documents:
-    description: "Convert PowerPoint files to PDF"
-    steps:
-      - id: convert
-        ref: ppt2pdf_step
 
-  markdownize_documents:
-    description: "Convert documents to Markdown format"
-    steps:
-      - id: convert
-        ref: markdownize_step
+  step_templates:
+    ppt2pdf_step:
+      invoke:
+        kind: flow
+        target: genai_tk.workflow.prefect.flows.ppt2pdf_flow.ppt2pdf_flow
+      with:
+        base_dir: "${values.base_dir}"
+        output_dir: "${values.output_dir}"
+        pathspecs: "${values.pathspecs}"
+        batch_size: "${values.batch_size}"
 
-  # --- Full pipeline: ppt2pdf → markdownize → KG build ---
-  full_kg_pipeline:
-    description: "End-to-end pipeline: PPT→PDF→Markdown→KG creation"
-    defaults:
-      batch_size: 5
-      delete_first: false
-      export_html: true
-      force_rebuild: false
-    steps:
-      - id: ppt_to_pdf
-        ref: ppt2pdf_step
-        with:
-          base_dir: "${values.ppt_base_dir}"
-          output_dir: "${values.pdf_output_dir}"
-          pathspecs:
-            - "**/*.pptx"
-            - "**/*.ppt"
-            - "**/*.odp"
+    markdownize_step:
+      invoke:
+        kind: flow
+        target: genai_tk.workflow.prefect.flows.markdownize_flow.markdownize_flow
+      with:
+        base_dir: "${values.base_dir}"
+        output_dir: "${values.output_dir}"
+        pathspecs: "${values.pathspecs}"
+        batch_size: "${values.batch_size}"
+        converter: "${values.converter}"
 
-      - id: markdownize
-        ref: markdownize_step
-        wait_for: [ppt_to_pdf]
-        with:
-          base_dir: "${values.pdf_output_dir}"
-          output_dir: "${values.md_output_dir}"
-          pathspecs:
-            - "**/*.pdf"
+  definitions:
+    ppt2pdf_documents:
+      description: "Convert PowerPoint files to PDF"
+      steps:
+        - id: convert
+          ref: ppt2pdf_step
 
-      - id: create_kg
-        invoke:
-          kind: workflow
-          target: rainbow_add_crm
-        wait_for: [markdownize]
+    markdownize_documents:
+      description: "Convert documents to Markdown format"
+      steps:
+        - id: convert
+          ref: markdownize_step
 
+    # --- Full pipeline: ppt2pdf → markdownize → KG build ---
+    full_kg_pipeline:
+      description: "End-to-end pipeline: PPT→PDF→Markdown→KG creation"
+      defaults:
+        batch_size: 5
+        delete_first: false
+        export_html: true
+        force_rebuild: false
+      steps:
+        - id: ppt_to_pdf
+          ref: ppt2pdf_step
+          with:
+            base_dir: "${values.ppt_base_dir}"
+            output_dir: "${values.pdf_output_dir}"
+            pathspecs:
+              - "**/*.pptx"
+              - "**/*.ppt"
+              - "**/*.odp"
 
-workflow_profiles:
-  # --- PPT to PDF profiles ---
-  ppt2pdf_rainbow:
-    workflow: ppt2pdf_documents
-    values:
-      base_dir: "${paths.rainbow_ppt}"
-      output_dir: "${paths.rainbow_pdf}"
-      pathspecs:
-        - "**/*.pptx"
-        - "**/*.ppt"
-        - "**/*.odp"
-      batch_size: 5
+        - id: markdownize
+          ref: markdownize_step
+          wait_for: [ppt_to_pdf]
+          with:
+            base_dir: "${values.pdf_output_dir}"
+            output_dir: "${values.md_output_dir}"
+            pathspecs:
+              - "**/*.pdf"
 
-  # --- Markdownize profiles ---
-  markdownize_rainbow:
-    workflow: markdownize_documents
-    values:
-      base_dir: "${paths.rainbow_pdf}"
-      output_dir: "${paths.rainbow_md}"
-      pathspecs:
-        - "**/*.pdf"
-      batch_size: 5
-      converter: markitdown
+        - id: create_kg
+          invoke:
+            kind: workflow
+            target: rainbow_add_crm
+          wait_for: [markdownize]
 
-  markdownize_rfq:
-    workflow: markdownize_documents
-    values:
-      base_dir: "${paths.rfq_pdf}"
-      output_dir: "${paths.rfq_md}"
-      pathspecs:
-        - "**/*.pdf"
-      batch_size: 5
-      converter: markitdown
+  profiles:
+    # --- PPT to PDF profiles ---
+    ppt2pdf_rainbow:
+      workflow: ppt2pdf_documents
+      values:
+        base_dir: "${paths.rainbow_ppt}"
+        output_dir: "${paths.rainbow_pdf}"
+        pathspecs:
+          - "**/*.pptx"
+          - "**/*.ppt"
+          - "**/*.odp"
+        batch_size: 5
 
-  # --- Full pipeline profiles ---
-  full_rainbow_pipeline:
-    workflow: full_kg_pipeline
-    values:
-      ppt_base_dir: "${paths.rainbow_ppt}"
-      pdf_output_dir: "${paths.rainbow_pdf}"
-      md_output_dir: "${paths.rainbow_md}"
-      kg_name: rainbow_add_crm
-      batch_size: 5
-      converter: markitdown
-      delete_first: false
-      export_html: true
-      force_rebuild: false
+    # --- Markdownize profiles ---
+    markdownize_rainbow:
+      workflow: markdownize_documents
+      values:
+        base_dir: "${paths.rainbow_pdf}"
+        output_dir: "${paths.rainbow_md}"
+        pathspecs:
+          - "**/*.pdf"
+        batch_size: 5
+        converter: markitdown
+
+    markdownize_rfq:
+      workflow: markdownize_documents
+      values:
+        base_dir: "${paths.rfq_pdf}"
+        output_dir: "${paths.rfq_md}"
+        pathspecs:
+          - "**/*.pdf"
+        batch_size: 5
+        converter: markitdown
+
+    # --- Full pipeline profiles ---
+    full_rainbow_pipeline:
+      workflow: full_kg_pipeline
+      values:
+        ppt_base_dir: "${paths.rainbow_ppt}"
+        pdf_output_dir: "${paths.rainbow_pdf}"
+        md_output_dir: "${paths.rainbow_md}"
+        kg_name: rainbow_add_crm
+        batch_size: 5
+        converter: markitdown
+        delete_first: false
+        export_html: true
+        force_rebuild: false
