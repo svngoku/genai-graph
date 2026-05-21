@@ -23,7 +23,7 @@ dependencies = [
     # "modal>=1.0.5", # Serverless cloud platform
     "python-dotenv>=1.1.1",     # Environment variables
     "beartype>=0.21.0",         # Run time type checking
-    "baml-py==0.221.0",         # FIXED VERSION to avoid to re-generate BAML sources with each new version of baml-py. Update this version when you want to update the BAML sources.
+    "baml-py==0.222.0",         # FIXED VERSION to avoid to re-generate BAML sources with each new version of baml-py. Update this version when you want to update the BAML sources.
     "langchain-classic>=1.0.0",
     # "gpt-researcher>=0.13.3",
     "baml-cli>=0.1.0",
