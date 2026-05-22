@@ -83,3 +83,14 @@ kv_store:
   default:
     type: LocalFileStore
     path: ${paths.data_root}/kv_store
+
+graph_db:
+  kuzu_local: &kuzu_local
+    type: kuzu
+    path: ${paths.kg_outputs}/default/kuzu/ekg_database.db
+  neo4j_local:
+    type: neo4j
+    path: neo4j://localhost
+    username: tcl
+    password: ${oc.env:NEO4_PASSWORD,null}
+  default: *kuzu_local

@@ -23,10 +23,10 @@ paths:
   kg_outputs: ${oc.env:HOME}/kg_outputs
 
 # Directories scanned recursively for YAML files at startup.
-# config_dirs: [config/]
+config_dirs: [config/]
 
 # Glob patterns to exclude from auto-scan (relative to each config_dir).
-# config_exclude: []
+config_exclude: []
 
 
 #### 

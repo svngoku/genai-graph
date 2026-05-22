@@ -146,7 +146,19 @@ class KgManager(BaseModel):
             workflow_profiles = {}
 
         try:
-            workflows: dict[str, Any] = cfg.get_dict("workflows.definitions")
+            # Use resolve=False to avoid crashing on ${values.*} placeholders in step
+            # definitions (those are runtime values, not config-time values).
+            # Path interpolations like ${paths.rainbow_json} remain as strings and are
+            # resolved on demand by resolve_config_path() inside the factory.
+            from omegaconf import OmegaConf
+
+            _merged = OmegaConf.merge(cfg.root, cfg.selected or {})
+            _defs_node = OmegaConf.select(_merged, "workflows.definitions", default=None)
+            workflows: dict[str, Any] = (
+                OmegaConf.to_container(_defs_node, resolve=False, throw_on_missing=False)  # type: ignore[assignment]
+                if _defs_node is not None
+                else {}
+            )
         except Exception:
             workflows = {}
 
@@ -165,7 +177,14 @@ class KgManager(BaseModel):
             )
 
         available = sorted(kg_configs.keys())
-        profile = available[0] if available else "default"
+        # Respect the active KG config set by the UI (global_config().set("kg_config", ...))
+        kg_config_override = cfg.get("kg_config", default=None)
+        if kg_config_override and kg_config_override in kg_configs:
+            profile = kg_config_override
+        elif available:
+            profile = available[0]
+        else:
+            profile = "default"
 
         ekg_config = KgConfig(
             kg_config=profile,
