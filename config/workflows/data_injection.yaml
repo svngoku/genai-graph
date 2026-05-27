@@ -31,7 +31,7 @@ workflows:
         output_dir: "${values.output_dir}"
         pathspecs: "${values.pathspecs}"
         batch_size: "${values.batch_size}"
-        converter: "${values.converter}"
+        pdf_converter: "${values.converter}"
 
   definitions:
     ppt2pdf_documents:
