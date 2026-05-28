@@ -242,16 +242,6 @@ class RFQAnalysis {
 // -------------------------
 
 
-function RfQAnalyze(file: string) -> SWArchitectureDocument {
-  client "GptOss120" 
-  prompt #"
-    Extract from this content:
-    {{ file }}
-
-    {{ ctx.output_format }}
-  "#
-}
-
  
 function AnalyzeRFQ(input: string) -> RFQAnalysis {
   client "GptOss120" 

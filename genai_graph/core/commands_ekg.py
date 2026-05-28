@@ -148,7 +148,7 @@ class EkgCommands(CliTopCommand):
             from genai_tk.workflow.executor import execute_workflow
             from genai_tk.workflow.resolver import (
                 WorkflowResolutionError,
-                list_workflow_profile_names,
+                list_workflow_names,
                 parse_cli_overrides,
                 resolve_workflow_invocation,
             )
@@ -166,38 +166,38 @@ class EkgCommands(CliTopCommand):
             cli_overrides.setdefault("delete_first", delete_first)
             cli_overrides.setdefault("export_html", export_html)
 
-            # Determine which profiles to run
-            all_profile_names = list_workflow_profile_names()
+            # KG workflows: all workflows except data-prep ones
+            _DATA_PREP = {"ppt2pdf_documents", "markdownize_documents", "full_kg_pipeline"}
+            all_workflow_names = [n for n in list_workflow_names() if n not in _DATA_PREP]
+
+            # Determine which workflows to run
             if all_graphs:
-                profile_names = [p for p in all_profile_names if p.startswith("kg_")]
-                if not profile_names:
-                    console.print("[yellow]No kg_* workflow profiles found.[/yellow]")
+                workflow_names = [n for n in all_workflow_names if n != "kg_build"]
+                if not workflow_names:
+                    console.print("[yellow]No KG workflows found.[/yellow]")
                     raise typer.Exit(0)
-                console.print(f"[bold]Running all KG profiles:[/bold] {', '.join(profile_names)}")
+                console.print(f"[bold]Running all KG workflows:[/bold] {', '.join(workflow_names)}")
             elif name:
-                # Resolve: try kg_{name} first, then fall back to exact name
-                candidate = f"kg_{name}"
-                profile_name = candidate if candidate in all_profile_names else name
-                profile_names = [profile_name]
+                workflow_names = [name]
             else:
                 # No name given: use the default KG manager profile
                 from genai_graph.kg.manager import get_kg_manager
 
-                default = f"kg_{get_kg_manager().profile}"
-                profile_names = [default]
-                console.print(f"[dim]Using default profile: {default}[/dim]")
+                default = get_kg_manager().profile
+                workflow_names = [default]
+                console.print(f"[dim]Using default workflow: {default}[/dim]")
 
-            # Run each profile
+            # Run each workflow
             failed: list[tuple[str, str]] = []
-            for profile_name in profile_names:
-                if len(profile_names) > 1:
+            for profile_name in workflow_names:
+                if len(workflow_names) > 1:
                     console.rule(f"[cyan]{profile_name}[/cyan]")
 
                 try:
                     invocation = resolve_workflow_invocation(profile_name, cli_overrides=cli_overrides)
                 except WorkflowResolutionError as exc:
                     console.print(Panel(str(exc), title=f"Resolution Error: {profile_name}", border_style="red"))
-                    if len(profile_names) == 1:
+                    if len(workflow_names) == 1:
                         raise typer.Exit(1) from exc
                     failed.append((profile_name, str(exc)))
                     continue
@@ -214,7 +214,7 @@ class EkgCommands(CliTopCommand):
                     root_cause = _extract_root_cause(exc)
                     logger.debug("KG creation error for {}: {}", profile_name, exc, exc_info=True)
                     console.print(Panel(root_cause, title=f"KG creation failed: {profile_name}", border_style="red"))
-                    if len(profile_names) == 1:
+                    if len(workflow_names) == 1:
                         raise typer.Exit(1) from exc
                     failed.append((profile_name, root_cause))
 
@@ -222,18 +222,18 @@ class EkgCommands(CliTopCommand):
                 console.print(Panel("Dry run complete — no execution performed.", border_style="green"))
                 return
 
-            if len(profile_names) > 1:
+            if len(workflow_names) > 1:
                 if failed:
                     console.print(
                         Panel(
-                            f"{len(failed)}/{len(profile_names)} failed: " + ", ".join(p for p, _ in failed),
+                            f"{len(failed)}/{len(workflow_names)} failed: " + ", ".join(p for p, _ in failed),
                             title="Summary",
                             border_style="red",
                         )
                     )
                     raise typer.Exit(1)
                 else:
-                    console.print(Panel(f"All {len(profile_names)} KG profile(s) completed.", border_style="green"))
+                    console.print(Panel(f"All {len(workflow_names)} KG profile(s) completed.", border_style="green"))
 
         @cli_app.command("info")
         def info() -> None:

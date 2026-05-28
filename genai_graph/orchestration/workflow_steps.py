@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from genai_tk.workflow.registry import workflow
 from loguru import logger
 
 
@@ -30,6 +31,7 @@ def _result_dict(config_name: str, result: Any) -> dict[str, Any]:
     }
 
 
+@workflow(name="kg_create", description="Execute the KG creation flow for a given config profile")
 def kg_create_step(
     *,
     config_name: str,
@@ -61,6 +63,7 @@ def kg_create_step(
     return _result_dict(config_name, result)
 
 
+@workflow(name="kg_build", description="Build a KG from inline graph factory configurations")
 def kg_build_step(
     *,
     graphs: list[dict[str, Any]],
