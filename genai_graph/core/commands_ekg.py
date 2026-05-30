@@ -689,7 +689,7 @@ class EkgCommands(CliTopCommand):
                 uv run cli kg fake-rainbow-from-crm --out-dir ./my_output --num 10
                 ```
             """
-            from genai_tk.workflow.prefect.run import run_flow_ephemeral
+            from genai_tk.utils.prefect_server import prefect_server
 
             from genai_graph.orchestration.crm_fake_rainbow_flow import crm_fake_rainbow_flow
 
@@ -705,9 +705,11 @@ class EkgCommands(CliTopCommand):
                 console.print(f"[cyan]Using LLM:[/cyan] {llm}")
 
             try:
-                # Run the Prefect flow with ephemeral settings
-                result = run_flow_ephemeral(
-                    crm_fake_rainbow_flow,
+                _server = prefect_server()
+                _server.ensure_running()
+                _server.configure_api_url()
+
+                result = crm_fake_rainbow_flow(
                     crm_file_path=crm_file_path,
                     output_dir=output_dir,
                     num_files=num_files,

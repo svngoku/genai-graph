@@ -70,10 +70,10 @@ class KgProfileConfig(BaseModel):
 def _extract_graphs_from_workflow(
     workflow_name: str, workflows: dict[str, Any], _visited: set[str] | None = None
 ) -> list[dict[str, Any]]:
-    """Recursively collect graph configs from a workflow's build steps.
+    """Recursively collect graph configs from a workflow's pipeline steps.
 
-    Handles composite workflows that invoke other workflows via
-    ``invoke: {kind: workflow, target: ...}``.
+    Handles composite workflows that delegate to sub-workflows via ``run:``.
+    Supports both a single ``graph:`` and a list ``graphs:`` per step.
     """
     if _visited is None:
         _visited = set()
@@ -83,15 +83,24 @@ def _extract_graphs_from_workflow(
 
     workflow_def = workflows.get(workflow_name, {})
     graphs: list[dict[str, Any]] = []
-    for step in workflow_def.get("steps", []):
+    # v2 uses "pipeline:"; fall back to "steps:" for legacy configs
+    steps = workflow_def.get("pipeline") or workflow_def.get("steps") or []
+    for step in steps:
         step_with = step.get("with", {})
+        if "graph" in step_with:
+            graphs.append(step_with["graph"])
         if "graphs" in step_with:
             graphs.extend(step_with["graphs"])
+        # v2 sub-workflow reference via "run:"
+        sub = step.get("run")
+        if sub and isinstance(sub, str) and sub in workflows and sub != workflow_name:
+            graphs.extend(_extract_graphs_from_workflow(sub, workflows, _visited))
+        # v1 sub-workflow reference via "invoke:"
         invoke = step.get("invoke", {})
         if invoke.get("kind") == "workflow":
-            sub = invoke.get("target")
-            if sub:
-                graphs.extend(_extract_graphs_from_workflow(sub, workflows, _visited))
+            sub_v1 = invoke.get("target")
+            if sub_v1:
+                graphs.extend(_extract_graphs_from_workflow(sub_v1, workflows, _visited))
     return graphs
 
 
@@ -141,22 +150,16 @@ class KgManager(BaseModel):
         tag = cfg.get("kg_tag", default=tag_env or "dev")
 
         try:
-            workflow_profiles: dict[str, Any] = cfg.get_dict("workflows.profiles")
-        except Exception:
-            workflow_profiles = {}
-
-        try:
-            # Use resolve=False to avoid crashing on ${values.*} placeholders in step
-            # definitions (those are runtime values, not config-time values).
+            # Use resolve=False to avoid crashing on ${values.*} placeholders.
             # Path interpolations like ${paths.rainbow_json} remain as strings and are
             # resolved on demand by resolve_config_path() inside the factory.
             from omegaconf import OmegaConf
 
             _merged = OmegaConf.merge(cfg.root, cfg.selected or {})
-            _defs_node = OmegaConf.select(_merged, "workflows.definitions", default=None)
+            _wf_node = OmegaConf.select(_merged, "workflows", default=None)
             workflows: dict[str, Any] = (
-                OmegaConf.to_container(_defs_node, resolve=False, throw_on_missing=False)  # type: ignore[assignment]
-                if _defs_node is not None
+                OmegaConf.to_container(_wf_node, resolve=False, throw_on_missing=False)  # type: ignore[assignment]
+                if _wf_node is not None
                 else {}
             )
         except Exception:
@@ -164,17 +167,33 @@ class KgManager(BaseModel):
 
         schemas_root = cfg.get("schemas_root", default=None)
 
-        # Build kg_configs from workflow_profiles: each kg_name -> KgProfileConfig
+        # Build kg_configs by scanning v2 workflow pipeline steps for kg_name + graph.
+        # Each step that supplies a kg_name contributes one graph entry.
         kg_configs: dict[str, KgProfileConfig] = {}
-        for wp_def in workflow_profiles.values():
-            kg_name = (wp_def.get("values") or {}).get("kg_name")
-            workflow_name = wp_def.get("workflow")
-            if not kg_name or not workflow_name:
+        _SKIP = frozenset({"step_templates", "definitions", "profiles"})
+        for wf_name, wf_def in workflows.items():
+            if not isinstance(wf_def, dict) or wf_name in _SKIP:
                 continue
-            graphs = _extract_graphs_from_workflow(workflow_name, workflows)
-            kg_configs[kg_name] = KgProfileConfig(
-                graphs=[KgGraphConfig(**g) for g in graphs],
-            )
+            steps = wf_def.get("pipeline") or wf_def.get("steps") or []
+            for step in steps:
+                step_with = step.get("with") or {}
+                kg_name = step_with.get("kg_name")
+                if not kg_name:
+                    continue
+                graph_raw = step_with.get("graph")
+                graphs_raw = step_with.get("graphs") or []
+                all_graphs: list[dict[str, Any]] = []
+                if graph_raw:
+                    all_graphs.append(graph_raw)
+                all_graphs.extend(graphs_raw)
+                if not all_graphs:
+                    continue
+                existing = kg_configs.get(kg_name)
+                new_graphs = [KgGraphConfig(**g) for g in all_graphs]
+                if existing is None:
+                    kg_configs[kg_name] = KgProfileConfig(graphs=new_graphs)
+                else:
+                    kg_configs[kg_name] = KgProfileConfig(graphs=existing.graphs + new_graphs)
 
         available = sorted(kg_configs.keys())
         # Respect the active KG config set by the UI (global_config().set("kg_config", ...))

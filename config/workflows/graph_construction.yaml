@@ -21,8 +21,9 @@ paths:
 workflows:
 
   kg_build:
-    description: "Build a KG from inline graph factory configurations"
+    description: "Build a KG from a single graph factory configuration"
     run: genai_graph.orchestration.workflow_steps.kg_build_step
+    hidden: true
     cache: manifest
     defaults:
       kg_name: inline
@@ -30,7 +31,7 @@ workflows:
       export_html: true
       force_rebuild: false
     params:
-      graphs: {required: true}
+      graph: {required: true}
       kg_name: {}
 
   one_rainbow:
@@ -40,16 +41,16 @@ workflows:
         run: kg_build
         with:
           kg_name: one_rainbow
-          graphs:
-            - factory: genai_graph.ekg.schema.rainbow_review.ReviewedOpportunityGraph
-              data_root: '${paths.rainbow_json}'
-              include: ['*CNES*TMA*VENUS*']
-              exclude: [fake/*]
-              recursive: true
-              file_embedding:
-                metadata:
-                  - Opportunity.opportunity_id
-                  - Customer.name
+          graph:
+            factory: genai_graph.ekg.schema.rainbow_review.ReviewedOpportunityGraph
+            data_root: '${paths.rainbow_json}'
+            include: ['*CNES*TMA*VENUS*']
+            exclude: [fake/*]
+            recursive: true
+            file_embedding:
+              metadata:
+                - Opportunity.opportunity_id
+                - Customer.name
     defaults:
       delete_first: false
       export_html: true
@@ -62,11 +63,11 @@ workflows:
         run: kg_build
         with:
           kg_name: crm_export
-          graphs:
-            - factory: genai_graph.ekg.schema.crm_export.CrmExtractGraph
-              files:
-                - '${paths.ekg_data}/crm_export/report1750429630460_SHORTEN.xlsx'
-              pd_read_parameters: {}
+          graph:
+            factory: genai_graph.ekg.schema.crm_export.CrmExtractGraph
+            files:
+              - '${paths.ekg_data}/crm_export/report1750429630460_SHORTEN.xlsx'
+            pd_read_parameters: {}
     defaults:
       delete_first: false
       export_html: true
@@ -75,23 +76,30 @@ workflows:
   one_rainbow_with_db:
     description: "Rainbow review + CRM export with filter"
     pipeline:
-      - id: build
+      - id: rainbow
         run: kg_build
         with:
           kg_name: one_rainbow_with_db
-          graphs:
-            - factory: genai_graph.ekg.schema.rainbow_review.ReviewedOpportunityGraph
-              data_root: '${paths.rainbow_json}'
-              include: ['*CNES*TMA*VENUS*']
-              exclude: [fake/*]
-              recursive: true
-            - factory: genai_graph.ekg.schema.crm_export.CrmExtractGraph
-              files:
-                - '${paths.ekg_data}/crm_export/report1750429630460_SHORTEN.xlsx'
-              pd_read_parameters: {}
-              filter_by_existing:
-                node_label: Opportunity
-                property: opportunity_id
+          graph:
+            factory: genai_graph.ekg.schema.rainbow_review.ReviewedOpportunityGraph
+            data_root: '${paths.rainbow_json}'
+            include: ['*CNES*TMA*VENUS*']
+            exclude: [fake/*]
+            recursive: true
+      - id: crm
+        run: kg_build
+        after: [rainbow]
+        with:
+          kg_name: one_rainbow_with_db
+          delete_first: false
+          graph:
+            factory: genai_graph.ekg.schema.crm_export.CrmExtractGraph
+            files:
+              - '${paths.ekg_data}/crm_export/report1750429630460_SHORTEN.xlsx'
+            pd_read_parameters: {}
+            filter_by_existing:
+              node_label: Opportunity
+              property: opportunity_id
     defaults:
       delete_first: false
       export_html: true
@@ -100,28 +108,42 @@ workflows:
   rainbow_add_crm:
     description: "Rainbow reviews + architecture docs + CRM export"
     pipeline:
-      - id: build
+      - id: rainbow
         run: kg_build
         with:
           kg_name: rainbow_add_crm
-          graphs:
-            - factory: genai_graph.ekg.schema.rainbow_review.ReviewedOpportunityGraph
-              data_root: '${paths.rainbow_json}'
-              include: ['*CNES*']
-              exclude: [fake/*]
-              recursive: true
-            - factory: genai_graph.ekg.schema.architecture_doc.ArchitectureDocumentGraph
-              data_root: '${paths.add_json}'
-              include: ['*CNES*']
-              exclude: [fake/*]
-              recursive: true
-            - factory: genai_graph.ekg.schema.crm_export.CrmExtractGraph
-              files:
-                - '${paths.ekg_data}/crm_export/report1750429630460_SHORTEN.xlsx'
-              pd_read_parameters: {}
-              filter_by_existing:
-                node_label: Opportunity
-                property: opportunity_id
+          graph:
+            factory: genai_graph.ekg.schema.rainbow_review.ReviewedOpportunityGraph
+            data_root: '${paths.rainbow_json}'
+            include: ['*CNES*']
+            exclude: [fake/*]
+            recursive: true
+      - id: arch_doc
+        run: kg_build
+        after: [rainbow]
+        with:
+          kg_name: rainbow_add_crm
+          delete_first: false
+          graph:
+            factory: genai_graph.ekg.schema.architecture_doc.ArchitectureDocumentGraph
+            data_root: '${paths.add_json}'
+            include: ['*CNES*']
+            exclude: [fake/*]
+            recursive: true
+      - id: crm
+        run: kg_build
+        after: [arch_doc]
+        with:
+          kg_name: rainbow_add_crm
+          delete_first: false
+          graph:
+            factory: genai_graph.ekg.schema.crm_export.CrmExtractGraph
+            files:
+              - '${paths.ekg_data}/crm_export/report1750429630460_SHORTEN.xlsx'
+            pd_read_parameters: {}
+            filter_by_existing:
+              node_label: Opportunity
+              property: opportunity_id
     defaults:
       delete_first: false
       export_html: true
@@ -134,11 +156,11 @@ workflows:
         run: kg_build
         with:
           kg_name: several_rainbow
-          graphs:
-            - factory: genai_graph.ekg.schema.rainbow_review.ReviewedOpportunityGraph
-              data_root: '${paths.rainbow_json}'
-              include: ['*.json']
-              recursive: true
+          graph:
+            factory: genai_graph.ekg.schema.rainbow_review.ReviewedOpportunityGraph
+            data_root: '${paths.rainbow_json}'
+            include: ['*.json']
+            recursive: true
     defaults:
       delete_first: false
       export_html: true
@@ -151,12 +173,12 @@ workflows:
         run: kg_build
         with:
           kg_name: stratnav_subset
-          graphs:
-            - factory: genai_graph.ekg.schema.stratnav.StratnavGraph
-              neo4j_export_file: '${paths.stratnav_db}/subset/sn-subset200.jsonl'
-              embeddings:
-                - field: L3.descriptionEmbedding
-                  model: ada_002@openrouter
+          graph:
+            factory: genai_graph.ekg.schema.stratnav.StratnavGraph
+            neo4j_export_file: '${paths.stratnav_db}/subset/sn-subset200.jsonl'
+            embeddings:
+              - field: L3.descriptionEmbedding
+                model: ada_002@openrouter
     defaults:
       delete_first: false
       export_html: true
@@ -181,16 +203,16 @@ workflows:
         after: [base]
         with:
           kg_name: learned
-          graphs:
-            - factory: genai_graph.ekg.schema.learned_graph.L3TechApproachMatcher
-              similarities:
-                - relationship: POSSIBLE_OFFERING
-                  from: TechnicalApproach.architecture
-                  to: L3.description
-                  iterate_over: from
-                  threshold: 0.8
-                  top_k: 5
-                  combiner: first
+          graph:
+            factory: genai_graph.ekg.schema.learned_graph.L3TechApproachMatcher
+            similarities:
+              - relationship: POSSIBLE_OFFERING
+                from: TechnicalApproach.architecture
+                to: L3.description
+                iterate_over: from
+                threshold: 0.8
+                top_k: 5
+                combiner: first
     defaults:
       delete_first: false
       export_html: true
