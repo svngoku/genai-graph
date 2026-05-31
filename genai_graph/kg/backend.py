@@ -355,16 +355,29 @@ class KuzuBackend(KgBackend):
         # Note: Simplified return - actual was_created status would require checking result
         return (True, str(merge_value))
 
-    def ensure_vector_extension(self) -> None:
-        """Install and load the Ladybug vector extension."""
+    def ensure_vector_extension(self) -> bool:
+        """Install and load the Ladybug vector extension.
+
+        Returns:
+            True if the vector extension is loaded and available, False otherwise.
+        """
+        from loguru import logger
+
         try:
             self.execute("INSTALL VECTOR;")
-            self.execute("LOAD VECTOR;")
         except Exception as e:
-            # Vector extension may already be loaded
-            from loguru import logger
-
-            logger.debug(f"Vector extension status: {e}")
+            msg = str(e)
+            if "already" not in msg.lower():
+                logger.warning(f"Vector extension install failed (vector indexes will be unavailable): {e}")
+        try:
+            self.execute("LOAD EXTENSION VECTOR;")
+            return True
+        except Exception as e:
+            msg = str(e)
+            if "already loaded" in msg.lower():
+                return True
+            logger.warning(f"Vector extension load failed (vector indexes will be unavailable): {e}")
+            return False
 
     def create_vector_index(
         self,
@@ -395,7 +408,9 @@ class KuzuBackend(KgBackend):
         from loguru import logger
 
         # Ensure vector extension is loaded
-        self.ensure_vector_extension()
+        if not self.ensure_vector_extension():
+            logger.warning(f"Skipping vector index {index_name}: VECTOR extension not available")
+            return
 
         try:
             cypher = (

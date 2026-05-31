@@ -26,6 +26,12 @@ embeddings:
     local: artic_22@ollama
   cache: ${paths.data_root}/hf_models
 
+kg_build:
+  llms:
+    default: gpt_4o_mini@edenai
+  embeddings:
+    default: ada_002@edenai
+
 embeddings_store:
   default:
     backend: Chroma 
