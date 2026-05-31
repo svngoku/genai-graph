@@ -355,6 +355,9 @@ def _create_summary_artifact(
         summary_lines.append("- None")
 
     try:  # pragma: no cover - network / environment dependent
-        create_markdown_artifact("\n".join(summary_lines), key="kg-create-summary")
+        import re as _re
+
+        safe_key = _re.sub(r"[^a-z0-9-]", "-", cfg_name.lower())
+        create_markdown_artifact("\n".join(summary_lines), key=f"kg-create-{safe_key}")
     except Exception as exc:  # pragma: no cover - defensive
         get_run_logger().warning("Failed to create Prefect artifact: %s", exc)
