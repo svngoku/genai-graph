@@ -11,9 +11,9 @@ Recent changes (Feb 2026):
 from __future__ import annotations
 
 import tempfile
+from pathlib import Path
 
 import pytest
-from upath import UPath
 
 from genai_graph.ekg.baml_client.types import (
     CompetitiveLandscape,
@@ -131,7 +131,7 @@ class TestEmbeddedStructsWithEmbeddings:
     def temp_kuzu_db(self):
         """Create a temporary Kuzu database."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = UPath(tmpdir) / "test.kuzu"
+            db_path = Path(tmpdir) / "test.kuzu"
             backend = KuzuBackend()
             backend.connect(str(db_path))
             yield backend, db_path

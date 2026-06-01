@@ -11,12 +11,12 @@ can be reused by CLI tools and tests.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 from genai_tk.utils.import_utils import ImportResolver
 from loguru import logger
 from pydantic import BaseModel, Field
-from upath import UPath
 
 from genai_graph.kg.factories.json_factory import JsonFileBackedFactory
 from genai_graph.kg.manager import KgManager
@@ -25,7 +25,7 @@ from genai_graph.kg.manager import KgManager
 class JsonArtifact(BaseModel):
     """Represents a single BAML JSON file used to build the KG."""
 
-    path: UPath
+    path: Path
     subgraph: str
 
     model_config = {
@@ -45,8 +45,8 @@ class MarkdownLineage(BaseModel):
     """Lineage information for a markdown document and its derived artifacts."""
 
     profile: str
-    markdown_path: UPath
-    source_path: UPath | None = None
+    markdown_path: Path
+    source_path: Path | None = None
     json_files: list[JsonArtifact] = Field(default_factory=list)
 
     model_config = {
@@ -105,7 +105,7 @@ def build_lineage_for_manager(manager: KgManager) -> tuple[list[MarkdownLineage]
 
     # Aggregate lineage by markdown file so that multiple JSON files that
     # originate from the same document are grouped together.
-    by_markdown: dict[UPath, MarkdownLineage] = {}
+    by_markdown: dict[Path, MarkdownLineage] = {}
     import_errors: list[LineageImportError] = []
 
     for graph_cfg in graphs_cfg:
@@ -166,7 +166,7 @@ def build_lineage_for_manager(manager: KgManager) -> tuple[list[MarkdownLineage]
 def _build_lineage_for_json(
     profile: str,
     subgraph_name: str,
-    json_path: UPath,
+    json_path: Path,
     data_root: str | None = None,
 ) -> MarkdownLineage | None:
     """Build lineage entry for a single JSON file.
@@ -225,10 +225,10 @@ def _build_lineage_for_json(
 
 
 def _resolve_related_path(
-    manifest_path: UPath,
-    target_path: UPath,
+    manifest_path: Path,
+    target_path: Path,
     exts: tuple[str, ...],
-) -> UPath | None:
+) -> Path | None:
     """Resolve a related path from a manifest file.
 
     The function is intentionally forgiving about manifest structure – it
@@ -274,8 +274,8 @@ def _resolve_related_path(
 
     all_strings = iter_strings(data)
 
-    def to_candidate_paths(require_target_match: bool) -> list[UPath]:
-        candidates: list[UPath] = []
+    def to_candidate_paths(require_target_match: bool) -> list[Path]:
+        candidates: list[Path] = []
         for text in all_strings:
             lower = text.lower().strip()
             if not lower.endswith(exts):
@@ -284,7 +284,7 @@ def _resolve_related_path(
                 # Skip URLs – we only care about local filesystem paths.
                 continue
 
-            path = UPath(text)
+            path = Path(text)
             if not path.is_absolute():
                 path = manifest_path.parent / path
 
@@ -312,9 +312,9 @@ def _resolve_related_path(
 
 
 def _guess_lineage_from_paths(
-    json_path: UPath,
+    json_path: Path,
     data_root: str | None = None,
-) -> tuple[UPath | None, UPath | None]:
+) -> tuple[Path | None, Path | None]:
     """Best-effort lineage guessing using configured paths.
 
     This is used as a fallback when manifests do not explicitly record
@@ -359,8 +359,8 @@ def _guess_lineage_from_paths(
     md_root = paths_cfg.get(base_key + "_md")
     pdf_root = paths_cfg.get(base_key + "_pdf")
 
-    markdown_path: UPath | None = None
-    source_path: UPath | None = None
+    markdown_path: Path | None = None
+    source_path: Path | None = None
 
     # Normalise stems to connect files that differ in underscores/spaces or
     # other punctuation.
@@ -370,7 +370,7 @@ def _guess_lineage_from_paths(
     json_stem_norm = _norm(json_path.stem)
 
     if md_root:
-        md_root_path = UPath(str(md_root))
+        md_root_path = Path(str(md_root))
         if md_root_path.exists():
             for candidate in md_root_path.rglob("*.md"):
                 if _norm(candidate.stem) == json_stem_norm:
@@ -378,7 +378,7 @@ def _guess_lineage_from_paths(
                     break
 
     if pdf_root:
-        pdf_root_path = UPath(str(pdf_root))
+        pdf_root_path = Path(str(pdf_root))
         if pdf_root_path.exists():
             for candidate in pdf_root_path.rglob("*.pdf"):
                 if _norm(candidate.stem) == json_stem_norm:

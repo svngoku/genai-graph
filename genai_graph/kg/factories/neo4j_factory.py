@@ -12,11 +12,11 @@ Features:
 """
 
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from loguru import logger
 from pydantic import BaseModel, Field
-from upath import UPath
 
 from genai_graph.kg.factories.base import KgFactory
 from genai_graph.kg.schema.core import GraphNode, GraphRelation, GraphSchema
@@ -152,7 +152,7 @@ class Neo4jFactory(KgFactory):
         from genai_tk.utils.file_patterns import resolve_config_path
 
         resolved_path = resolve_config_path(self.neo4j_export_file)
-        export_path = UPath(resolved_path)
+        export_path = Path(resolved_path)
 
         if not export_path.exists():
             logger.warning(f"Neo4j export file not found: {export_path}")
@@ -171,7 +171,7 @@ class Neo4jFactory(KgFactory):
         Neo4jFactory._initialized_files.add(file_key)
         self._initialized = True
 
-    def _analyze_and_load(self, export_path: UPath) -> None:
+    def _analyze_and_load(self, export_path: Path) -> None:
         """Analyze and load data from Neo4j JSONL file.
 
         This method performs streaming processing of the JSONL file,

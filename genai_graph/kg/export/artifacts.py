@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -18,7 +19,6 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from loguru import logger
 from pydantic import BaseModel
-from upath import UPath
 
 from genai_graph.kg.backend import KgBackend
 from genai_graph.kg.manager import get_kg_manager
@@ -28,7 +28,7 @@ class HtmlExportResult(BaseModel):
     """Result of HTML export task."""
 
     config_name: str
-    output_path: UPath
+    output_path: Path
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -37,9 +37,9 @@ class ParquetExportResult(BaseModel):
     """Result of parquet export task."""
 
     config_name: str
-    nodes_path: UPath
-    rels_path: UPath
-    manifest_path: UPath
+    nodes_path: Path
+    rels_path: Path
+    manifest_path: Path
     node_count: int
     rel_count: int
 
@@ -116,7 +116,7 @@ class CacheFingerprints(BaseModel):
 def export_html(
     config_name: str,
     backend: KgBackend,
-    output_dir: UPath | None = None,
+    output_dir: Path | None = None,
 ) -> HtmlExportResult:
     """Export an HTML visualization of the current KG and return its path.
 
@@ -197,7 +197,7 @@ def _ensure_factories_registered_for(config_name: str) -> None:
     _load_config(config_name)
 
 
-def export_schema(config_name: str) -> UPath:
+def export_schema(config_name: str) -> Path:
     """Export the KG schema as a text file.
 
     Args:
@@ -219,7 +219,7 @@ def export_schema(config_name: str) -> UPath:
     return destination
 
 
-def export_schema_json(config_name: str) -> UPath:
+def export_schema_json(config_name: str) -> Path:
     """Export the KG schema as a canonical JSON file (nodes, links, vector_indexes).
 
     Args:
@@ -242,7 +242,7 @@ def export_schema_json(config_name: str) -> UPath:
     return destination
 
 
-def export_schema_html(config_name: str) -> UPath:
+def export_schema_html(config_name: str) -> Path:
     """Export the KG schema visualization as an HTML file.
 
     Args:
@@ -274,7 +274,7 @@ def export_schema_html(config_name: str) -> UPath:
     return destination
 
 
-def export_info(config_name: str, backend: KgBackend) -> UPath:
+def export_info(config_name: str, backend: KgBackend) -> Path:
     """Export the KG info as a markdown file.
 
     Args:
@@ -356,7 +356,7 @@ def export_info(config_name: str, backend: KgBackend) -> UPath:
 
         if outcome_info.get("warnings_report"):
             report_info = outcome_info["warnings_report"]
-            report_path = UPath(report_info["file"])
+            report_path = Path(report_info["file"])
             report_name = report_path.name
             lines.append(f"- **Warnings Report**: [📊 {report_name}]({report_name})")
 
@@ -526,7 +526,7 @@ def export_info(config_name: str, backend: KgBackend) -> UPath:
     return destination
 
 
-def get_parquet_export_dir(config_name: str) -> UPath:
+def get_parquet_export_dir(config_name: str) -> Path:
     """Get the directory path for parquet exports of a KG config.
 
     Args:
@@ -1365,7 +1365,7 @@ def import_from_parquet(
     return nodes_imported, rels_imported
 
 
-def export_warnings(config_name: str, warnings: list[str]) -> UPath:
+def export_warnings(config_name: str, warnings: list[str]) -> Path:
     """Export warnings to a structured Markdown report.
 
     Args:

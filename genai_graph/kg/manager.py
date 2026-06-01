@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from genai_tk.utils.config_mngr import global_config
 from genai_tk.utils.singleton import once
 from loguru import logger
 from pydantic import BaseModel, Field
-from upath import UPath
 
 if TYPE_CHECKING:  # pragma: no cover - type checking only
     from genai_graph.kg.ingest.lineage import MarkdownLineage
@@ -121,16 +121,16 @@ class KgManager(BaseModel):
     tag: str
     warnings: list[str] = Field(default_factory=list)
 
-    _base_path: UPath | None = None
-    _db_path: UPath | None = None
-    _html_path: UPath | None = None
-    _schema_path: UPath | None = None
-    _schema_json_path: UPath | None = None
-    _schema_html_path: UPath | None = None
-    _info_path: UPath | None = None
-    _outcomes_file: UPath | None = None
-    _warnings_file: UPath | None = None
-    _warnings_md_path: UPath | None = None
+    _base_path: Path | None = None
+    _db_path: Path | None = None
+    _html_path: Path | None = None
+    _schema_path: Path | None = None
+    _schema_json_path: Path | None = None
+    _schema_html_path: Path | None = None
+    _info_path: Path | None = None
+    _outcomes_file: Path | None = None
+    _warnings_file: Path | None = None
+    _warnings_md_path: Path | None = None
 
     model_config = {
         "arbitrary_types_allowed": True,
@@ -259,7 +259,7 @@ class KgManager(BaseModel):
     # Filesystem layout helpers - for any profile
     # ------------------------------------------------------------------
 
-    def get_base_path_for(self, profile: str) -> UPath:
+    def get_base_path_for(self, profile: str) -> Path:
         """Return the base path for any given KG profile.
 
         Args:
@@ -268,41 +268,41 @@ class KgManager(BaseModel):
         Returns:
             Root directory for the specified KG profile
         """
-        return UPath(global_config().get_dir_path("paths.kg_outputs", create_if_not_exists=True)) / profile
+        return Path(global_config().get_dir_path("paths.kg_outputs", create_if_not_exists=True)) / profile
 
-    def get_db_path_for(self, profile: str) -> UPath:
+    def get_db_path_for(self, profile: str) -> Path:
         """Return the database path for any given KG profile."""
         return self.get_base_path_for(profile) / f"{profile}-{self.tag}.db"
 
-    def get_html_path_for(self, profile: str) -> UPath:
+    def get_html_path_for(self, profile: str) -> Path:
         """Return the HTML export path for any given KG profile."""
         return self.get_base_path_for(profile) / f"{profile}-{self.tag}.html"
 
-    def get_schema_path_for(self, profile: str) -> UPath:
+    def get_schema_path_for(self, profile: str) -> Path:
         """Return the schema text file path for any given KG profile."""
         return self.get_base_path_for(profile) / f"{profile}-{self.tag}-schema.txt"
 
-    def get_schema_json_path_for(self, profile: str) -> UPath:
+    def get_schema_json_path_for(self, profile: str) -> Path:
         """Return the schema JSON file path for any given KG profile."""
         return self.get_base_path_for(profile) / f"{profile}-{self.tag}-schema.json"
 
-    def get_schema_html_path_for(self, profile: str) -> UPath:
+    def get_schema_html_path_for(self, profile: str) -> Path:
         """Return the schema HTML file path for any given KG profile."""
         return self.get_base_path_for(profile) / f"{profile}-{self.tag}-schema.html"
 
-    def get_info_path_for(self, profile: str) -> UPath:
+    def get_info_path_for(self, profile: str) -> Path:
         """Return the info file path for any given KG profile."""
         return self.get_base_path_for(profile) / f"{profile}-{self.tag}-info.md"
 
-    def get_outcomes_file_for(self, profile: str) -> UPath:
+    def get_outcomes_file_for(self, profile: str) -> Path:
         """Return the outcomes log file path for any given KG profile."""
         return self.get_base_path_for(profile) / f"{profile}-{self.tag}-outcomes.jsonl"
 
-    def get_warnings_file_for(self, profile: str) -> UPath:
+    def get_warnings_file_for(self, profile: str) -> Path:
         """Return the warnings log file path for any given KG profile."""
         return self.get_base_path_for(profile) / f"{profile}-{self.tag}-warnings.log"
 
-    def get_warnings_md_path_for(self, profile: str) -> UPath:
+    def get_warnings_md_path_for(self, profile: str) -> Path:
         """Return the warnings markdown report path for any given KG profile."""
         return self.get_base_path_for(profile) / f"{profile}-{self.tag}-warnings.md"
 
@@ -315,72 +315,72 @@ class KgManager(BaseModel):
     # ------------------------------------------------------------------
 
     @property
-    def base_path(self) -> UPath:
+    def base_path(self) -> Path:
         """Root directory for this KG profile."""
         if self._base_path is None:
             self._base_path = (
-                UPath(global_config().get_dir_path("paths.kg_outputs", create_if_not_exists=True)) / self.profile
+                Path(global_config().get_dir_path("paths.kg_outputs", create_if_not_exists=True)) / self.profile
             )
         return self._base_path
 
     @property
-    def db_path(self) -> UPath:
+    def db_path(self) -> Path:
         """Path to the Kuzu database file for this KG."""
         if self._db_path is None:
             self._db_path = self.base_path / f"{self.profile}-{self.tag}.db"
         return self._db_path
 
     @property
-    def html_path(self) -> UPath:
+    def html_path(self) -> Path:
         """Path to the HTML export file for this KG."""
         if self._html_path is None:
             self._html_path = self.base_path / f"{self.profile}-{self.tag}.html"
         return self._html_path
 
     @property
-    def schema_path(self) -> UPath:
+    def schema_path(self) -> Path:
         """Path to the schema text file for this KG."""
         if self._schema_path is None:
             self._schema_path = self.base_path / f"{self.profile}-{self.tag}-schema.txt"
         return self._schema_path
 
     @property
-    def schema_json_path(self) -> UPath:
+    def schema_json_path(self) -> Path:
         """Path to the schema JSON file for this KG."""
         if self._schema_json_path is None:
             self._schema_json_path = self.base_path / f"{self.profile}-{self.tag}-schema.json"
         return self._schema_json_path
 
     @property
-    def schema_html_path(self) -> UPath:
+    def schema_html_path(self) -> Path:
         """Path to the schema HTML visualization for this KG."""
         if self._schema_html_path is None:
             self._schema_html_path = self.base_path / f"{self.profile}-{self.tag}-schema.html"
         return self._schema_html_path
 
     @property
-    def info_path(self) -> UPath:
+    def info_path(self) -> Path:
         """Path to the info markdown file for this KG."""
         if self._info_path is None:
             self._info_path = self.base_path / f"{self.profile}-{self.tag}-info.md"
         return self._info_path
 
     @property
-    def outcomes_file(self) -> UPath:
+    def outcomes_file(self) -> Path:
         """Path to the outcomes log file (JSONL)."""
         if self._outcomes_file is None:
             self._outcomes_file = self.base_path / f"{self.profile}-{self.tag}-outcomes.jsonl"
         return self._outcomes_file
 
     @property
-    def warnings_file(self) -> UPath:
+    def warnings_file(self) -> Path:
         """Path to the warnings log file (plain text)."""
         if self._warnings_file is None:
             self._warnings_file = self.base_path / f"{self.profile}-{self.tag}-warnings.log"
         return self._warnings_file
 
     @property
-    def warnings_md_path(self) -> UPath:
+    def warnings_md_path(self) -> Path:
         """Path to the warnings markdown report file."""
         if self._warnings_md_path is None:
             self._warnings_md_path = self.base_path / f"{self.profile}-{self.tag}-warnings.md"

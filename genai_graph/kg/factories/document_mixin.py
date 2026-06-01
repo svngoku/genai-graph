@@ -25,7 +25,6 @@ import mimetypes
 from typing import TYPE_CHECKING
 
 from loguru import logger
-from upath import UPath
 
 if TYPE_CHECKING:
     from genai_graph.ekg.schema.common_nodes import Document
@@ -40,7 +39,7 @@ class DocumentMixin:
     ``GraphRelation`` that should be registered in the schema.
     """
 
-    def create_document_node(self, file_path: UPath) -> "Document":
+    def create_document_node(self, file_path: Path) -> "Document":
         """Build a :class:`Document` from a file's on-disk metadata.
 
         Args:

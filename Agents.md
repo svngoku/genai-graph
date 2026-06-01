@@ -122,7 +122,7 @@ class MyModel(BaseModel):
     path: Path
     
     model_config = {
-        "arbitrary_types_allowed": True,  # For non-JSON types like Path, UPath
+        "arbitrary_types_allowed": True,  # For non-JSON types like Path
         "frozen": True,  # For immutable models
         "extra": "forbid",  # Reject unknown fields
     }

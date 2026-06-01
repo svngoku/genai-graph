@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
-from upath import UPath
 
 from genai_graph.kg.export import HtmlExportResult
 from genai_graph.kg.factories import KgFactory
@@ -92,7 +91,7 @@ class KgRunResult(BaseModel):
     """Aggregated result of a KG creation run."""
 
     config_name: str
-    db_path: Path | UPath
+    db_path: Path
     stats: DocumentStats
     warnings: list[str]
     import_results: list[ImportResult] = Field(default_factory=list)

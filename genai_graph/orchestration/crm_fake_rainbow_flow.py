@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -17,7 +18,6 @@ from loguru import logger
 from prefect import flow, task
 from prefect.task_runners import ConcurrentTaskRunner  # type: ignore[attr-defined]
 from pydantic import BaseModel, Field
-from upath import UPath
 
 
 class FakeRainbowTaskResult(BaseModel):
@@ -66,7 +66,7 @@ async def _generate_fake_rainbow_task(
     safe_account_name = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in account_name)
     filename = f"{opportunity_id}_{safe_account_name}.json"
 
-    output_path = UPath(output_dir) / "fake" / filename
+    output_path = Path(output_dir) / "fake" / filename
 
     # Check if file already exists
     if output_path.exists() and not force:
@@ -136,7 +136,7 @@ def crm_fake_rainbow_flow(
     logger.info("Generating {} fake Rainbow JSON files to: {}", num_files, resolved_output_dir)
 
     # Read Excel file
-    crm_path = UPath(resolved_crm_path)
+    crm_path = Path(resolved_crm_path)
     if not crm_path.exists():
         raise FileNotFoundError(f"CRM export file not found: {resolved_crm_path}")
 

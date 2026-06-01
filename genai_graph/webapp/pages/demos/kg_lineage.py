@@ -12,6 +12,7 @@ This page lets users:
 from __future__ import annotations
 
 from collections import defaultdict
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import streamlit as st
@@ -20,7 +21,6 @@ from genai_tk.utils.config_mngr import global_config
 from genai_tk.utils.file_patterns import resolve_config_path
 from loguru import logger
 from streamlit import session_state as sss
-from upath import UPath
 
 from genai_graph.kg.manager import get_kg_manager
 from genai_graph.webapp.ui_components.kg_config_selector import (
@@ -32,7 +32,7 @@ if TYPE_CHECKING:  # pragma: no cover - type checking only
     from genai_graph.kg.ingest.lineage import JsonArtifact, MarkdownLineage
 
 
-def _get_data_roots() -> list[UPath]:
+def _get_data_roots() -> list[Path]:
     """Get resolved data root paths for relative path display.
 
     Includes paths.ekg_data (common parent for all data) plus any
@@ -44,7 +44,7 @@ def _get_data_roots() -> list[UPath]:
         # Primary root: paths.ekg_data is the common parent for md/, json/, pdf/
         ekg_data = cfg.get_dir_path("paths.ekg_data")
         if ekg_data:
-            roots.append(UPath(ekg_data))
+            roots.append(Path(ekg_data))
 
         # Also include explicit data_root values from subgraphs
         manager = get_kg_manager()
@@ -54,20 +54,20 @@ def _get_data_roots() -> list[UPath]:
         for subgraph_cfg in subgraphs_cfg:
             if isinstance(subgraph_cfg, dict) and "data_root" in subgraph_cfg:
                 resolved = resolve_config_path(subgraph_cfg["data_root"])
-                roots.append(UPath(resolved))
+                roots.append(Path(resolved))
     except Exception as exc:
         logger.warning("Could not extract data_roots: {}", exc)
 
     return roots
 
 
-def _make_relative_path(full_path: UPath | str, data_roots: list[UPath]) -> str:
+def _make_relative_path(full_path: Path | str, data_roots: list[Path]) -> str:
     """Convert a full path to a relative path based on data_root.
 
     Tries each data_root and returns the relative path for the first match.
     Falls back to the full path if no data_root matches.
     """
-    full_path = UPath(full_path)
+    full_path = Path(full_path)
     for root in data_roots:
         try:
             if full_path.is_relative_to(root):
@@ -116,7 +116,7 @@ def _select_configuration() -> None:
 
 def _group_lineage_by_directory(
     lineage: list["MarkdownLineage"],
-    data_roots: list[UPath],
+    data_roots: list[Path],
 ) -> dict[str, list["MarkdownLineage"]]:
     """Group lineage entries by their markdown parent directory (relative to data_root)."""
 
@@ -173,7 +173,7 @@ def _select_markdown_entry(
     return entries[0]
 
 
-def _render_markdown_tab(entry: "MarkdownLineage", data_roots: list[UPath]) -> None:
+def _render_markdown_tab(entry: "MarkdownLineage", data_roots: list[Path]) -> None:
     """Render the Markdown content tab."""
 
     st.subheader("Markdown Document")
@@ -189,7 +189,7 @@ def _render_markdown_tab(entry: "MarkdownLineage", data_roots: list[UPath]) -> N
         st.error(f"Failed to read markdown file: {exc}")
 
 
-def _render_source_tab(entry: "MarkdownLineage", data_roots: list[UPath]) -> None:
+def _render_source_tab(entry: "MarkdownLineage", data_roots: list[Path]) -> None:
     """Render the source (PDF or other) tab."""
 
     st.subheader("Source Document (PDF or original)")
@@ -211,7 +211,7 @@ def _render_source_tab(entry: "MarkdownLineage", data_roots: list[UPath]) -> Non
         )
 
 
-def _render_json_tab(entry: "MarkdownLineage", data_roots: list[UPath]) -> None:
+def _render_json_tab(entry: "MarkdownLineage", data_roots: list[Path]) -> None:
     """Render the JSON content tab with optional per-file selector."""
 
     st.subheader("BAML Generated Files")
@@ -237,7 +237,7 @@ def _render_json_tab(entry: "MarkdownLineage", data_roots: list[UPath]) -> None:
     artifact = json_files[selected_index]
 
     relative_path = _make_relative_path(artifact.path, data_roots)
-    st.caption(f"UPath: {relative_path}\nSubgraph: {artifact.subgraph}")
+    st.caption(f"Path: {relative_path}\nSubgraph: {artifact.subgraph}")
 
     try:
         raw = artifact.path.read_text(encoding="utf-8")
@@ -259,15 +259,15 @@ def _render_json_tab(entry: "MarkdownLineage", data_roots: list[UPath]) -> None:
         st.code(raw, language="json")
 
 
-def _get_schema_directory() -> UPath:
+def _get_schema_directory() -> Path:
     """Get the path to the Python schema directory."""
     root = global_config().get_dir_path("paths.src")
     return root / "ekg" / "schema"
 
 
-def _get_baml_schema_directory() -> UPath:
+def _get_baml_schema_directory() -> Path:
     """Get the path to the BAML schema directory."""
-    return UPath(__file__).parent.parent.parent.parent / "ekg" / "baml_src" / "schema"
+    return Path(__file__).parent.parent.parent.parent / "ekg" / "baml_src" / "schema"
 
 
 def _render_schema_tab() -> None:
@@ -287,7 +287,7 @@ def _render_schema_tab() -> None:
         _render_baml_schema(baml_dir)
 
 
-def _render_python_schema(schema_dir: UPath) -> None:
+def _render_python_schema(schema_dir: Path) -> None:
     """Render Python schema files from the schema directory."""
 
     if not schema_dir.exists():
@@ -320,7 +320,7 @@ def _render_python_schema(schema_dir: UPath) -> None:
             st.error(f"Failed to read file: {exc}")
 
 
-def _render_baml_schema(baml_dir: UPath) -> None:
+def _render_baml_schema(baml_dir: Path) -> None:
     """Render BAML schema files from the baml_src/schema directory."""
 
     if not baml_dir.exists():
@@ -367,7 +367,7 @@ def _increase_markdown_header_levels(content: str) -> str:
     return re.sub(r"^(#+)(\s+.*)$", replace_header, content, flags=re.MULTILINE)
 
 
-def _render_chunks_tab(entry: "MarkdownLineage", data_roots: list[UPath]) -> None:
+def _render_chunks_tab(entry: "MarkdownLineage", data_roots: list[Path]) -> None:
     """Render the Markdown chunks tab showing how the file is chunked for RAG."""
 
     st.subheader("Markdown Chunks")
@@ -375,7 +375,7 @@ def _render_chunks_tab(entry: "MarkdownLineage", data_roots: list[UPath]) -> Non
     st.caption(f"Chunks for: {relative_path}")
 
     try:
-        path = UPath(entry.markdown_path)
+        path = Path(entry.markdown_path)
         if not path.exists():
             st.error(f"Markdown file not found: {relative_path}")
             return

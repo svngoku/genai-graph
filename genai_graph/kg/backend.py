@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from upath import UPath
 
 
 class QueryExecutor(ABC):
@@ -668,7 +667,7 @@ def create_backend_from_config(config_key: str = "default", kg_config_name: str 
     return backend
 
 
-def get_backend_storage_path_from_config(config_key: str = "default", kg_config_name: str | None = None) -> UPath:
+def get_backend_storage_path_from_config(config_key: str = "default", kg_config_name: str | None = None) -> Path:
     """Return the filesystem path used by the configured graph backend.
 
     This helper reads the same configuration used by create_backend_from_config
@@ -707,7 +706,7 @@ def get_backend_storage_path_from_config(config_key: str = "default", kg_config_
     if not connection_path:
         raise ValueError(f"Missing 'path' in graph_db config for '{config_key}'")
 
-    return UPath(str(connection_path))
+    return Path(str(connection_path))
 
 
 def delete_backend_storage_from_config(config_key: str = "default", kg_config_name: str | None = None) -> None:
@@ -729,7 +728,7 @@ def delete_backend_storage_from_config(config_key: str = "default", kg_config_na
 
     if not db_path.exists():
         # Also check for orphaned WAL files even if main db doesn't exist
-        wal_path = UPath(str(db_path) + ".wal")
+        wal_path = Path(str(db_path) + ".wal")
         if wal_path.exists():
             wal_path.unlink()
         return
@@ -737,7 +736,7 @@ def delete_backend_storage_from_config(config_key: str = "default", kg_config_na
     if db_path.is_file():
         db_path.unlink()
         # Also remove WAL file if it exists (Kuzu write-ahead log)
-        wal_path = UPath(str(db_path) + ".wal")
+        wal_path = Path(str(db_path) + ".wal")
         if wal_path.exists():
             wal_path.unlink()
     else:

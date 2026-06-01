@@ -11,10 +11,10 @@ Tests cover:
 """
 
 import tempfile
+from pathlib import Path
 
 import pytest
 from pydantic import BaseModel, Field
-from upath import UPath
 
 from genai_graph.kg.backend import KuzuBackend
 from genai_graph.kg.embeddings_handler import EmbeddingsHandler
@@ -34,7 +34,7 @@ class SimpleNode(BaseModel):
 def temp_kuzu_db():
     """Create a temporary Kuzu database."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        db_path = UPath(tmpdir) / "test.kuzu"
+        db_path = Path(tmpdir) / "test.kuzu"
         backend = KuzuBackend()
         backend.connect(str(db_path))
         yield backend, db_path

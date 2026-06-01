@@ -33,6 +33,8 @@ workflows:
     params:
       graph: {required: true}
       kg_name: {}
+  artifacts:
+    publish_result: true
 
   one_rainbow:
     description: "Single CNES TMA VENUS rainbow review"
@@ -193,7 +195,7 @@ workflows:
         run: stratnav_subset
         after: [rainbow_crm]
 
-  learned:
+  rainbow_stratnav_learned:
     description: "StratNav + Rainbow + CRM with learned similarity relationships"
     pipeline:
       - id: base
@@ -217,3 +219,5 @@ workflows:
       delete_first: false
       export_html: true
       force_rebuild: false
+    artifacts:
+      publish_result: true

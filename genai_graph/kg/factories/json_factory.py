@@ -6,11 +6,11 @@ files in a directory structure with model subdirectory.
 """
 
 import json
+from pathlib import Path
 from typing import ClassVar
 
 from loguru import logger
 from pydantic import BaseModel
-from upath import UPath
 
 from genai_graph.kg.factories.base import KgFactory
 from genai_graph.kg.factories.document_mixin import DocumentMixin
@@ -32,7 +32,7 @@ class JsonFileBackedFactory(DocumentMixin, KgFactory):
     recursive: bool = True
     case_sensitive: bool = False
 
-    _files_cache: list[UPath] | None = None
+    _files_cache: list[Path] | None = None
 
     # Class-level cache to track which (data_root, model) pairs have been initialized
     _initialized_roots: ClassVar[set[tuple[str, str]]] = set()
@@ -67,7 +67,7 @@ class JsonFileBackedFactory(DocumentMixin, KgFactory):
             return
 
         resolved_root = resolve_config_path(self.data_root)
-        root_path = UPath(resolved_root)
+        root_path = Path(resolved_root)
 
         if not root_path.exists():
             logger.warning(f"Data root directory not found: {root_path}")
@@ -114,13 +114,13 @@ class JsonFileBackedFactory(DocumentMixin, KgFactory):
         cls._initialized_roots.clear()
         logger.debug(f"Cleared JsonFileBackedFactory cache ({cls.__name__})")
 
-    def get_all_file_paths(self) -> list[UPath]:
+    def get_all_file_paths(self) -> list[Path]:
         """Get all discovered JSON file paths."""
         if self._files_cache is None:
             return []
         return self._files_cache
 
-    def get_struct_data_by_file_path(self, file_path: UPath) -> BaseModel | None:
+    def get_struct_data_by_file_path(self, file_path: Path) -> BaseModel | None:
         """Load structured data from a JSON file."""
         schema = self.build_schema()
         root_model_class = schema.root_model_class
@@ -138,7 +138,7 @@ class JsonFileBackedFactory(DocumentMixin, KgFactory):
 
     def get_struct_data_by_key(self, key: str) -> BaseModel | None:
         """Load structured data by key (interprets key as file path)."""
-        file_path = UPath(key)
+        file_path = Path(key)
         return self.get_struct_data_by_file_path(file_path)
 
     def build_schema(self) -> GraphSchema:

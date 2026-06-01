@@ -78,9 +78,7 @@ class TestDocumentMixin:
         mixin = DocumentMixin()
 
         with patch("genai_tk.utils.hashing.file_digest", return_value="deadbeef"):
-            from upath import UPath
-
-            doc = mixin.create_document_node(UPath(test_file))
+            doc = mixin.create_document_node(Path(test_file))
 
         assert doc.path == str(test_file)
         assert doc.filename == "sample.json"
@@ -91,10 +89,8 @@ class TestDocumentMixin:
 
     def test_create_document_node_handles_stat_error(self, tmp_path: Path) -> None:
         """create_document_node should not raise when stat fails."""
-        from upath import UPath
-
         mixin = DocumentMixin()
-        non_existent = UPath(tmp_path / "ghost.json")
+        non_existent = Path(tmp_path / "ghost.json")
 
         doc = mixin.create_document_node(non_existent)
 

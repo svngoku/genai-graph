@@ -545,9 +545,9 @@ class ResolvedSchema(BaseModel):
         """
         import json as _json
 
-        from upath import UPath
+        from pathlib import Path
 
-        data = _json.loads(UPath(path).read_text(encoding="utf-8"))
+        data = _json.loads(Path(path).read_text(encoding="utf-8"))
         meta_data = data.get("meta", {})
         meta = SchemaMeta(
             format=meta_data.get("format", "genai_graph.resolved_schema"),

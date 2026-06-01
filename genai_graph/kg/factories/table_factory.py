@@ -11,13 +11,13 @@ Cache layout: kg_outputs/{config_name}/table_cache/{table_name}/
 import re
 from abc import abstractmethod
 from datetime import datetime
+from pathlib import Path
 from typing import Any, ClassVar
 
 import pandas as pd
 from genai_tk.utils.hashing import file_digest
 from loguru import logger
 from pydantic import BaseModel
-from upath import UPath
 
 from genai_graph.kg.factories.base import KgFactory
 from genai_graph.kg.schema.core import GraphSchema
@@ -41,7 +41,7 @@ class TableBackedFactory(KgFactory):
     All per-file DataFrames are merged in memory for fast key lookups.
     """
 
-    files: list[UPath]
+    files: list[Path]
     pd_read_parameters: dict[str, Any] = {}
 
     # Class-level cache: table_name -> merged DataFrame
@@ -79,7 +79,7 @@ class TableBackedFactory(KgFactory):
         """Normalise a column name to aid fuzzy matching."""
         return re.sub(r"[^a-z0-9]+", "_", name.strip().lower()).strip("_")
 
-    def _get_cache_dir(self) -> UPath:
+    def _get_cache_dir(self) -> Path:
         """Return (and create) the Parquet cache directory for this factory.
 
         Cache is stored under ``kg_outputs/_table_cache/{table_name}/``,
@@ -155,7 +155,7 @@ class TableBackedFactory(KgFactory):
             logger.warning(msg)
             TableBackedFactory._shown_warnings.add(msg)
 
-    def _load_dataframe(self, file_path: UPath) -> pd.DataFrame:
+    def _load_dataframe(self, file_path: Path) -> pd.DataFrame:
         """Load an Excel or CSV file into a DataFrame."""
         suffix = file_path.suffix.lower()
         if suffix in (".xlsx", ".xls"):

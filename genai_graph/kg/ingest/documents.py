@@ -13,6 +13,7 @@ For Neo4j imports:
 - This bypasses hierarchical extraction and directly loads pre-built nodes/relationships
 """
 
+from pathlib import Path
 from typing import TYPE_CHECKING, List
 
 from loguru import logger
@@ -147,12 +148,11 @@ def add_documents_to_graph(
             if isinstance(graph_impl, JsonFileBackedFactory):
                 # Extract relative path from full file path for cleaner source tracking
                 from genai_tk.utils.file_patterns import resolve_config_path
-                from upath import UPath
 
-                file_path = UPath(key)
+                file_path = Path(key)
                 try:
                     data_root = resolve_config_path(graph_impl.data_root)
-                    root_path = UPath(data_root)
+                    root_path = Path(data_root)
                     source_key = str(file_path.relative_to(root_path))
                 except (ValueError, AttributeError):
                     # Fallback to filename if relative path fails

@@ -19,6 +19,7 @@ The tasks are designed as DAG building blocks:
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from genai_tk.utils.import_utils import ImportResolver
@@ -520,8 +521,6 @@ def create_document_nodes_task(bundles: list[GraphBundle], backend: KgBackend) -
     Returns:
         Aggregate :class:`DocumentStats` across all processed bundles.
     """
-    from upath import UPath
-
     from genai_graph.kg.factories import DocumentMixin
     from genai_graph.kg.ingest.merge import _format_value_for_cypher  # type: ignore[attr-defined]
 
@@ -558,7 +557,7 @@ def create_document_nodes_task(bundles: list[GraphBundle], backend: KgBackend) -
         log.info("Creating Document nodes for %d file(s) from %s", len(file_paths), getattr(factory, "name", "?"))
 
         for raw_path in file_paths:
-            fp = UPath(raw_path) if not isinstance(raw_path, UPath) else raw_path
+            fp = Path(raw_path) if not isinstance(raw_path, Path) else raw_path
             file_key = str(fp)
 
             # ── 1. Build Document node ─────────────────────────────────────

@@ -19,7 +19,6 @@ from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import create_engine, text
 from streamlit import session_state as sss
-from upath import UPath
 
 from genai_graph.kg.factories import TableBackedFactory
 from genai_graph.kg.manager import get_kg_manager
@@ -120,10 +119,10 @@ def _discover_table_subgraphs() -> list[TableInfo]:
                     k: v for k, v in graph_cfg.items() if k not in {"factory", "initial_load", "trigger", "pull"}
                 }
 
-                # Resolve file paths to UPath
+                # Resolve file paths to Path
                 if "files" in constructor_kwargs:
                     constructor_kwargs["files"] = [
-                        UPath(resolve_config_path(str(f))) for f in constructor_kwargs["files"]
+                        Path(resolve_config_path(str(f))) for f in constructor_kwargs["files"]
                     ]
 
                 resolved_files = [str(f) for f in constructor_kwargs["files"]]
@@ -162,7 +161,7 @@ def _discover_table_subgraphs() -> list[TableInfo]:
     return tables
 
 
-def _row_count_from_meta(cache_dir: UPath) -> int:
+def _row_count_from_meta(cache_dir: Path) -> int:
     """Sum row_count values from all .meta.json sidecars in a cache directory."""
     from genai_graph.kg.factories.table_factory import TableFileCacheMeta
 
@@ -181,7 +180,7 @@ def _row_count_from_meta(cache_dir: UPath) -> int:
 
 def _load_table_data(table_info: TableInfo) -> pd.DataFrame:
     """Load all data from the Parquet cache for this table."""
-    cache_dir = UPath(table_info.cache_dir)
+    cache_dir = Path(table_info.cache_dir)
     try:
         parquet_files = sorted(cache_dir.glob("*.parquet"))
         if not parquet_files:
@@ -292,7 +291,7 @@ def _render_import_history(table_info: TableInfo, data_roots: list[Path]) -> Non
 
     st.subheader("📜 Import History")
 
-    cache_dir = UPath(table_info.cache_dir)
+    cache_dir = Path(table_info.cache_dir)
     meta_files = sorted(cache_dir.glob("*.meta.json")) if cache_dir.exists() else []
 
     if not meta_files:
@@ -449,10 +448,10 @@ def _discover_table_subgraphs() -> list[TableInfo]:
                         resolved_db = resolve_config_path(db_path)
                         constructor_kwargs["db_dsn"] = f"sqlite:///{resolved_db}"
 
-                # Convert file paths to UPath
+                # Convert file paths to Path
                 if "files" in constructor_kwargs:
                     constructor_kwargs["files"] = [
-                        UPath(resolve_config_path(str(f))) for f in constructor_kwargs["files"]
+                        Path(resolve_config_path(str(f))) for f in constructor_kwargs["files"]
                     ]
 
                 subgraph_instance = imported(**constructor_kwargs)
