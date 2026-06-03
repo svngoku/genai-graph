@@ -544,7 +544,6 @@ class ResolvedSchema(BaseModel):
         The file must have been written by ``to_json_str()`` / ``export_schema_json()``.
         """
         import json as _json
-
         from pathlib import Path
 
         data = _json.loads(Path(path).read_text(encoding="utf-8"))
