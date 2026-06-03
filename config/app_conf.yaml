@@ -2,39 +2,114 @@
 # Application configuration file 
 ################
 
-# Profile selects a profile overlay directory: config/profiles/<profile>/
-# Override with BLUEPRINT_CONFIG env var.
+# Active profile — override with BLUEPRINT_CONFIG env var.
 profile: ${oc.env:BLUEPRINT_CONFIG,ekg_local}
 
-# Note : configuration leverage OmegaConf solvers. See :
-# https://omegaconf.readthedocs.io/en/2.3_branch/usage.html#variable-interpolation
+# :merge: lists gitignore-style patterns (relative to this directory) for YAML
+# files to load and deep-merge into the config, in sorted order.
+:merge:
+  - "**/*.yaml"
+  - "!demos/**"
 
+# :profiles: provides inline per-profile overrides merged after :merge: files.
+:profiles:
+  ekg_local:
+    llm:
+      models:
+        default: gpt_4o@openai
+        fake: parrot_local@fake
+        fast: llama31_8@groq
+        coder: qwen25_coder32@openrouter
+      cache: sqlite
+      cache_path: ${paths.data_root}/llm_cache/langchain.db
+    embeddings:
+      models:
+        default: ada_002@openai
+        local: artic_22@ollama
+      cache: ${paths.data_root}/hf_models
+    kg_build:
+      llms:
+        default: gpt_4o_mini@edenai
+      embeddings:
+        default: ada_002@edenai
+    embeddings_store:
+      default:
+        backend: Chroma
+        embeddings: default
+        table_name_prefix: embeddings
+        config:
+          storage: ${paths.data_root}/vector_store
+      chroma_indexed:
+        backend: Chroma
+        embeddings: default
+        table_name_prefix: embeddings
+        record_manager: sqlite:///${paths.data_root}/vector_store/record_manager_cache.sql
+        config:
+          storage: ${paths.data_root}/vector_store
+      in_memory:
+        backend: InMemory
+        embeddings: default
+        table_name_prefix: embeddings
+      in_memory_chroma:
+        backend: Chroma
+        embeddings: default
+        table_name_prefix: embeddings
+        config:
+          storage: '::memory:.'
+      local_fast:
+        backend: Chroma
+        embeddings: local
+        table_name_prefix: embeddings_local
+        config:
+          storage: ${paths.data_root}/vector_store_local
+      postgres:
+        backend: PgVector
+        embeddings: default
+        table_name_prefix: embeddings_pg
+        config:
+          postgres_url: ${paths.postgres}
+          postgres_schema: public
+    rag:
+      embeddings_store: default
+      chunker:
+    documents:
+      base: ./use_case_data
+    monitoring:
+      langsmith: true
+      project: GenAI_demo
+    kv_store:
+      default:
+        type: LocalFileStore
+        path: ${paths.data_root}/kv_store
+    graph_db:
+      kuzu_local: &kuzu_local
+        type: kuzu
+        path: ${paths.kg_outputs}/default/kuzu/ekg_database.db
+      neo4j_local:
+        type: neo4j
+        path: neo4j://localhost
+        username: tcl
+        password: ${oc.env:NEO4_PASSWORD,null}
+      default: *kuzu_local
 
 paths:
-  data_root : ${oc.env:HOME}
-  project : ${oc.env:PWD}
+  data_root: ${oc.env:HOME}
+  project: ${oc.env:PWD}
   src: ${paths.project}/genai_graph
   config: ${paths.project}/config
   demo_conf: ${paths.project}/config/demos
   models: ${oc.env:HOME}/.models
   postgres: postgresql://${oc.env:POSTGRES_USER,unknown_user}:${oc.env:POSTGRES_PASSWORD,password}@localhost:5432/ekg
-  datasets : ${paths.project}/use_case_data
+  datasets: ${paths.project}/use_case_data
   ekg_data: ${paths.data_root}/OneDrive/KORTEX_EKG/proto/input_data
   kg_outputs: ${oc.env:HOME}/kg_outputs
-
-# Directories scanned recursively for YAML files at startup.
-config_dirs: [config/]
-
-# Glob patterns to exclude from auto-scan (relative to each config_dir).
-config_exclude: []
-
 
 #### 
 # User Interface Configuration : list of Streamlit pages, authentication, ... 
 ####    
 ui:
-  app_name : Enterprise Knowledge Graph Demos
-  pages_dir : ${paths.src}/webapp/pages
+  app_name: Enterprise Knowledge Graph Demos
+  pages_dir: ${paths.src}/webapp/pages
   navigation:
     Settings:
       - settings/welcome.py
@@ -59,10 +134,6 @@ ui:
       - path: demos/kg_warnings.py
         name: "Creation Warnings"
 
-
-
-
-
 #### 
 # Authentication
 ####  
@@ -83,9 +154,10 @@ cli:
     - genai_tk.agents.commands_agents.AgentCommands
     - genai_tk.extra.structured.commands_baml.BamlCommands
     - genai_tk.main.cli.register_commands
- 
+
 logging:
   format: "<cyan>{time:HH:mm:ss}</cyan>-<level>{level: <7}</level> | <magenta>{file.name}</magenta>:<green>{line} <italic>{function}</italic></green>- <level>{message}</level>"
   level: INFO
-  backtrace : True  # Should be False in production  - see https://loguru.readthedocs.io/en/stable/overview.html#fully-descriptive-exceptions
-  
+  backtrace: true  # Should be False in production
+
+
