@@ -44,7 +44,7 @@ For BAML tool fundamentals (writing `.baml`, generating types, CLI) see the
 uv sync
 
 # Run Streamlit app
-make webapp
+just webapp
 
 # CLI help
 uv run cli --help
@@ -141,10 +141,10 @@ cli baml run FakeArchitectureJson \
 ## Development
 
 ```bash
-make install-dev   # Install with dev dependencies
-make fmt           # Format with ruff
-make lint          # Lint with ruff
-make test          # Run all tests
-make webapp        # Launch Streamlit app
+just install-dev   # Install with dev dependencies
+just fmt           # Format with ruff
+just lint          # Lint with ruff
+just test          # Run all tests
+just webapp        # Launch Streamlit app
 ```
 

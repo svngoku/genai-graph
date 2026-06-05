@@ -3,6 +3,7 @@
 # Project-specific recipes defined here.
 
 set dotenv-load
+set dotenv-path := "~/.env"
 set shell := ["bash", "-euc"]
 set positional-arguments
 
@@ -28,10 +29,6 @@ default:
     @just --list --unsorted
 
 # ─── Web Applications ───────────────────────────────────────────────────────
-
-[doc('Launch Streamlit app')]
-webapp:
-    PYTHONPATH={{ dev_pythonpath }} uv run streamlit run "{{ streamlit_entry }}"
 
 [doc('Launch FastAPI server locally')]
 fast-api:

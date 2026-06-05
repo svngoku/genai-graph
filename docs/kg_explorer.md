@@ -48,7 +48,7 @@ The KG Explorer is a Streamlit page that provides an interactive interface for e
 
 2. Launch the Streamlit app:
    ```bash
-   make webapp
+   just webapp
    # or directly:
    uv run streamlit run genai_graph/main/streamlit.py
    ```
