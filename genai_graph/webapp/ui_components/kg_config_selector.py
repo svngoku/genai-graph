@@ -26,7 +26,7 @@ Usage::
 from collections.abc import Callable
 
 import streamlit as st
-from genai_tk.utils.config_mngr import global_config
+from genai_tk.config_mgmt.config_mngr import global_config
 from loguru import logger
 from streamlit import session_state as sss
 

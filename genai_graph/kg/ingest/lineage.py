@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from genai_tk.utils.import_utils import ImportResolver
+from genai_tk.config_mgmt.import_utils import ImportResolver
 from loguru import logger
 from pydantic import BaseModel, Field
 
@@ -327,7 +327,7 @@ def _guess_lineage_from_paths(
     """
 
     # Import lazily to avoid circular import issues at module import time.
-    from genai_tk.utils.config_mngr import global_config
+    from genai_tk.config_mgmt.config_mngr import global_config
 
     try:
         cfg = global_config()

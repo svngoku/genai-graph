@@ -14,6 +14,8 @@ Features the simplified GraphSchema API that:
 
 # Add the src directory to Python path for imports
 
+import asyncio
+
 from genai_tk.utils.pydantic_utils.kv_store import PydanticStore
 from rich.console import Console
 from rich.panel import Panel
@@ -38,7 +40,7 @@ from genai_graph.kg.schema import GraphNode, GraphRelation, GraphSchema
 console = Console()
 
 # Configuration constants
-KV_STORE_ID = "file"
+KV_STORE_ID = "default"
 OPPORTUNITY_KEY = "cnes-venus-tma"
 
 
@@ -115,7 +117,7 @@ def load_test_data() -> ReviewedOpportunity:
     console.print(Panel("[bold cyan]Loading Test Data[/bold cyan]"))
 
     store = PydanticStore(kvstore_id=KV_STORE_ID, model=ReviewedOpportunity)
-    opportunity = store.load_object(OPPORTUNITY_KEY)
+    opportunity = asyncio.run(store.load_object(OPPORTUNITY_KEY))
 
     if not opportunity:
         console.print(f"[red]Error: Could not load opportunity '{OPPORTUNITY_KEY}' from store[/red]")

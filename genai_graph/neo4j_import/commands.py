@@ -11,7 +11,7 @@ from typing import Annotated
 
 import typer
 from genai_tk.main.cli import CliTopCommand
-from genai_tk.utils.config_mngr import global_config
+from genai_tk.config_mgmt.config_mngr import global_config
 from loguru import logger
 from rich.console import Console
 from rich.panel import Panel
@@ -69,7 +69,7 @@ class Neo4jCommands(CliTopCommand):
                 cli neo4j analyze '${paths.stratnav_db}/somedb.jsonl' -o schema.cypher
                 ```
             """
-            from genai_tk.utils.file_patterns import resolve_config_path
+            from genai_tk.config_mgmt.file_patterns import resolve_config_path
 
             from genai_graph.neo4j_import.schema_analyzer import SchemaAnalyzer
 
@@ -136,7 +136,7 @@ class Neo4jCommands(CliTopCommand):
                 cli neo4j convert '${paths.stratnav_db}/somedb.jsonl' '${paths.data_root}/ladybug_import'
                 ```
             """
-            from genai_tk.utils.file_patterns import resolve_config_path
+            from genai_tk.config_mgmt.file_patterns import resolve_config_path
 
             from genai_graph.neo4j_import.converter import Neo4jToKuzuConverter
 
@@ -240,7 +240,7 @@ class Neo4jCommands(CliTopCommand):
                 cli neo4j subset '${paths.stratnav_db}/db.jsonl' '${paths.data_root}/subset.jsonl' -n 100
                 ```
             """
-            from genai_tk.utils.file_patterns import resolve_config_path
+            from genai_tk.config_mgmt.file_patterns import resolve_config_path
 
             from genai_graph.neo4j_import.converter import SubsetCreator
 
@@ -340,7 +340,7 @@ class Neo4jCommands(CliTopCommand):
                 cli neo4j import '${paths.stratnav_db}/db.jsonl' --db '${paths.data_root}/kuzu_db'
                 ```
             """
-            from genai_tk.utils.file_patterns import resolve_config_path
+            from genai_tk.config_mgmt.file_patterns import resolve_config_path
 
             from genai_graph.neo4j_import.kuzu_manager import import_neo4j_to_kuzu
 
@@ -449,7 +449,7 @@ class Neo4jCommands(CliTopCommand):
                 cli neo4j query "MATCH (n) RETURN n" --db '${paths.data_root}/kuzu_db'
                 ```
             """
-            from genai_tk.utils.file_patterns import resolve_config_path
+            from genai_tk.config_mgmt.file_patterns import resolve_config_path
 
             from genai_graph.neo4j_import.kuzu_manager import KuzuImporter
 
@@ -526,7 +526,7 @@ class Neo4jCommands(CliTopCommand):
                 cli neo4j info --db '${paths.data_root}/kuzu_db'
                 ```
             """
-            from genai_tk.utils.file_patterns import resolve_config_path
+            from genai_tk.config_mgmt.file_patterns import resolve_config_path
 
             from genai_graph.neo4j_import.kuzu_manager import KuzuImporter
 

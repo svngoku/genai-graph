@@ -86,7 +86,7 @@ class TableBackedFactory(KgFactory):
         shared across all KG configs that use the same source data.
         Checksums ensure that stale entries are automatically invalidated.
         """
-        from genai_tk.utils.config_mngr import global_config
+        from genai_tk.config_mgmt.config_mngr import global_config
 
         cache_dir = (
             global_config().get_dir_path("paths.kg_outputs", create_if_not_exists=True)

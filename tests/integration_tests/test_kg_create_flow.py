@@ -23,7 +23,7 @@ def test_create_kg_flow_runs(tmp_path: Path, monkeypatch) -> None:
     """
 
     # Point data_root to a temporary directory so the test is isolated.
-    from genai_tk.utils.config_mngr import global_config
+    from genai_tk.config_mgmt.config_mngr import global_config
 
     cfg = global_config()
     cfg.set("paths.ekg_data", str(tmp_path))

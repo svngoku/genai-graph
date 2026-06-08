@@ -149,7 +149,7 @@ class Neo4jFactory(KgFactory):
         Uses class-level cache to avoid redundant processing when the same
         factory is instantiated multiple times.
         """
-        from genai_tk.utils.file_patterns import resolve_config_path
+        from genai_tk.config_mgmt.file_patterns import resolve_config_path
 
         resolved_path = resolve_config_path(self.neo4j_export_file)
         export_path = Path(resolved_path)

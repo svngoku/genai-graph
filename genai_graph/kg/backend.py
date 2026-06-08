@@ -607,7 +607,7 @@ def create_backend_from_config(config_key: str = "default", kg_config_name: str 
     Returns:
         Connected KgBackend instance
     """
-    from genai_tk.utils.config_mngr import global_config
+    from genai_tk.config_mgmt.config_mngr import global_config
 
     config = global_config()
     graph_db_config = config.get("graph_db", {})
@@ -681,7 +681,7 @@ def get_backend_storage_path_from_config(config_key: str = "default", kg_config_
     Returns:
         Path to the backend storage location.
     """
-    from genai_tk.utils.config_mngr import global_config
+    from genai_tk.config_mgmt.config_mngr import global_config
 
     config = global_config()
     graph_db_config = config.get("graph_db", {})

@@ -12,9 +12,9 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-from genai_tk.utils.config_mngr import global_config
-from genai_tk.utils.file_patterns import resolve_config_path
-from genai_tk.utils.import_utils import ImportResolver
+from genai_tk.config_mgmt.config_mngr import global_config
+from genai_tk.config_mgmt.file_patterns import resolve_config_path
+from genai_tk.config_mgmt.import_utils import ImportResolver
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import create_engine, text

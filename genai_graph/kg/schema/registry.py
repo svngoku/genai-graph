@@ -10,7 +10,7 @@ from __future__ import annotations
 import typing
 from typing import Any
 
-from genai_tk.utils.import_utils import ImportResolver
+from genai_tk.config_mgmt.import_utils import ImportResolver
 from genai_tk.utils.singleton import once
 from loguru import logger
 from pydantic import BaseModel, Field

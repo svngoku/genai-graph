@@ -13,7 +13,7 @@ from typing import Any
 
 import pandas as pd
 from genai_tk.extra.structured.baml_util import baml_invoke
-from genai_tk.utils.file_patterns import resolve_config_path
+from genai_tk.config_mgmt.file_patterns import resolve_config_path
 from loguru import logger
 from prefect import flow, task
 from prefect.task_runners import ConcurrentTaskRunner  # type: ignore[attr-defined]

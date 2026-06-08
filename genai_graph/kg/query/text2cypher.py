@@ -176,7 +176,7 @@ def _embed_query_vector(cypher_query: str, question: str) -> dict[str, list[floa
     if _QUERY_VECTOR_PARAM not in cypher_query:
         return None
 
-    from genai_tk.utils.config_mngr import global_config
+    from genai_tk.config_mgmt.config_mngr import global_config
 
     from genai_graph.kg.embeddings_handler import EmbeddingsHandler
 

@@ -152,7 +152,7 @@ def _ensure_factories_registered_for(config_name: str) -> None:
     full YAML kwargs; ``build_schema()`` does not require real data files so this is
     safe even when source files are absent.
     """
-    from genai_tk.utils.import_utils import ImportResolver
+    from genai_tk.config_mgmt.import_utils import ImportResolver
 
     from genai_graph.kg.factories.base import KgFactory
     from genai_graph.kg.schema.registry import GraphRegistry
@@ -799,7 +799,7 @@ def compute_fingerprints_for_config(config_name: str) -> CacheFingerprints:
         ``CacheFingerprints`` with all computable fields populated.
     """
     from genai_tk.utils.hashing import buffer_digest, file_digest
-    from genai_tk.utils.import_utils import ImportResolver
+    from genai_tk.config_mgmt.import_utils import ImportResolver
 
     manager = get_kg_manager()
 
@@ -1403,7 +1403,7 @@ def clear_all_parquet_caches() -> int:
     """
     import shutil
 
-    from genai_tk.utils.config_mngr import global_config
+    from genai_tk.config_mgmt.config_mngr import global_config
 
     try:
         kg_outputs = global_config().get_dir_path("paths.kg_outputs", create_if_not_exists=False)

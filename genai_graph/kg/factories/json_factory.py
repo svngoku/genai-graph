@@ -43,7 +43,7 @@ class JsonFileBackedFactory(DocumentMixin, KgFactory):
         Uses class-level cache to avoid redundant file discovery when the same
         factory is instantiated multiple times.
         """
-        from genai_tk.utils.file_patterns import resolve_config_path, resolve_files
+        from genai_tk.config_mgmt.file_patterns import resolve_config_path, resolve_files
 
         schema = self.build_schema()
         root_model_class = schema.root_model_class

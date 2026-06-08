@@ -97,7 +97,7 @@ class CrmExtractGraph(TableBackedFactory, BaseModel):
 
 
 if __name__ == "__main__":
-    from genai_tk.utils.config_mngr import global_config
+    from genai_tk.config_mgmt.config_mngr import global_config
     from rich.console import Console
     from rich.panel import Panel
     from rich.table import Table

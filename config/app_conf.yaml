@@ -79,8 +79,9 @@ profile: ${oc.env:BLUEPRINT_CONFIG,ekg_local}
       project: GenAI_demo
     kv_store:
       default:
-        type: LocalFileStore
-        path: ${paths.data_root}/kv_store
+        type: key_value.aio.stores.filetree.FileTreeStore
+        args:
+          data_directory: ${paths.data_root}/kv_store
     graph_db:
       kuzu_local: &kuzu_local
         type: kuzu

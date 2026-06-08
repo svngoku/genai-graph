@@ -147,7 +147,7 @@ def add_documents_to_graph(
 
             if isinstance(graph_impl, JsonFileBackedFactory):
                 # Extract relative path from full file path for cleaner source tracking
-                from genai_tk.utils.file_patterns import resolve_config_path
+                from genai_tk.config_mgmt.file_patterns import resolve_config_path
 
                 file_path = Path(key)
                 try:

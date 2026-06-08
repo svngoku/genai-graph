@@ -75,7 +75,7 @@ def get_default_llm() -> str:
         Default LLM identifier
     """
     try:
-        from genai_tk.utils.config_mngr import global_config
+        from genai_tk.config_mgmt.config_mngr import global_config
 
         return global_config().get_str("llm.models.default")
     except Exception as e:

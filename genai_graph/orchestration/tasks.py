@@ -22,7 +22,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from genai_tk.utils.import_utils import ImportResolver
+from genai_tk.config_mgmt.import_utils import ImportResolver
 from loguru import logger
 from prefect import get_run_logger, task
 from prefect.cache_policies import NO_CACHE
