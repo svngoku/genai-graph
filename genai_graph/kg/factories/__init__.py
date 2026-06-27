@@ -14,6 +14,7 @@ This package provides factories that load data from various sources:
 """
 
 from genai_graph.kg.factories.base import KgFactory
+from genai_graph.kg.factories.document_factory import DocumentDirectoryFactory
 from genai_graph.kg.factories.document_mixin import DocumentMixin
 from genai_graph.kg.factories.json_factory import JsonFileBackedFactory
 from genai_graph.kg.factories.neo4j_factory import (
@@ -32,6 +33,7 @@ from genai_graph.kg.factories.table_factory import TableBackedFactory
 __all__ = [
     "KgFactory",
     "DocumentMixin",
+    "DocumentDirectoryFactory",
     "JsonFileBackedFactory",
     "TableBackedFactory",
     "Neo4jFactory",

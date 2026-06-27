@@ -3,12 +3,12 @@ from pathlib import Path
 
 import streamlit as st
 from dotenv import load_dotenv
-from genai_tk.utils.basic_auth import authenticate, load_auth_config
 from genai_tk.config_mgmt.config_exceptions import (
     ConfigError,
     ConfigKeyNotFoundError,
 )
 from genai_tk.config_mgmt.config_mngr import global_config
+from genai_tk.utils.basic_auth import authenticate, load_auth_config
 from genai_tk.utils.logger_factory import setup_logging
 from loguru import logger
 

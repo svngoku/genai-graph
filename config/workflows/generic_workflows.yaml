@@ -1,0 +1,72 @@
+# ---------------------------------------------------------------------------
+# Generic Knowledge Graph Workflows  (DSL v2)
+#
+# These workflows are domain-agnostic and can be used with any project that
+# imports genai-graph.  For domain-specific workflows (e.g. EKG / Atos) see
+# the project that imports genai-graph (e.g. ekg-atos).
+#
+# Usage:
+#   cli workflow run document_graph --dry-run
+#   cli workflow run document_graph --set data_dir=/path/to/docs
+# ---------------------------------------------------------------------------
+
+workflows:
+
+  # --------------------------------------------------------------------------
+  # Primitive: single factory build (hidden — used by higher-level workflows)
+  # --------------------------------------------------------------------------
+  kg_build:
+    description: "Build a KG from a single graph factory configuration"
+    run: genai_graph.orchestration.workflow_steps.kg_build_step
+    hidden: true
+    cache: manifest
+    defaults:
+      kg_name: inline
+      delete_first: false
+      export_html: true
+      force_rebuild: false
+    params:
+      graph: {required: true}
+      kg_name: {}
+    artifacts:
+      publish_result: true
+
+  # --------------------------------------------------------------------------
+  # Generic Document Graph
+  #
+  # Scans a directory of text / markdown files and builds a graph of
+  # Document nodes linked to Chunk nodes.
+  #
+  # Required param:  data_dir   — path to directory to scan
+  # Optional params: include    — list of glob patterns  (default: ['*.md','*.txt'])
+  #                  exclude    — list of glob patterns to exclude
+  #                  chunk_size — token target per chunk  (default: 512)
+  #                  overlap    — token overlap           (default: 50)
+  #                  kg_name    — name for the output KG  (default: document_graph)
+  # --------------------------------------------------------------------------
+  document_graph:
+    description: "Build a Document+Chunk graph from a directory of text files"
+    pipeline:
+      - id: build
+        run: kg_build
+        with:
+          kg_name: '${document_graph.kg_name}'
+          delete_first: '${document_graph.delete_first}'
+          export_html: '${document_graph.export_html}'
+          graph:
+            factory: genai_graph.kg.factories.document_factory.DocumentDirectoryFactory
+            data_root: '${document_graph.data_dir}'
+            include: '${document_graph.include}'
+            exclude: '${document_graph.exclude}'
+            recursive: true
+            chunk_size: '${document_graph.chunk_size}'
+            overlap: '${document_graph.overlap}'
+    defaults:
+      kg_name: document_graph
+      delete_first: false
+      export_html: true
+      data_dir: '${paths.data_root}/documents'
+      include: ['*.md', '*.txt', '*.rst']
+      exclude: []
+      chunk_size: 512
+      overlap: 50

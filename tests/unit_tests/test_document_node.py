@@ -5,9 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-from genai_graph.ekg.schema.canonical_nodes import DocumentNode
-from genai_graph.ekg.schema.common_nodes import Document
 from genai_graph.kg.factories.document_mixin import DocumentMixin, _mtime_iso
+from genai_graph.kg.nodes.document import Document, DocumentNode
 
 
 class TestDocumentModel:

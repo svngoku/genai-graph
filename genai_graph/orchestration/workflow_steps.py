@@ -38,18 +38,12 @@ def kg_create_step(
     delete_first: bool = False,
     export_html: bool = True,
     force_rebuild: bool = False,
-    inline: bool = False,
 ) -> dict[str, Any]:
     """Execute the KG creation flow for a given config profile.
 
     This wrapper handles:
     - Clearing factory caches (prevents cross-contamination)
-    - Setting up ephemeral Prefect context
     - Running the full create_kg_flow
-
-    Args:
-        inline: When True, run the flow body directly without creating a
-            Prefect subflow — all tasks appear flat under the parent workflow.
 
     Returns a summary dict suitable for workflow engine result tracking.
     """
@@ -58,8 +52,7 @@ def kg_create_step(
     _clear_factory_caches()
     logger.info("Running KG creation flow for config: {}", config_name)
 
-    run_fn = create_kg_flow.fn if inline else create_kg_flow.with_options(flow_run_name=f"kg:{config_name}")
-    result = run_fn(
+    result = create_kg_flow(
         config_name=config_name,
         delete_first=delete_first,
         export_html=export_html,
@@ -69,42 +62,33 @@ def kg_create_step(
     return _result_dict(config_name, result)
 
 
-@workflow(name="kg_build", description="Build a KG from a single graph factory configuration", hidden=True)
+@workflow(name="kg_build", description="Build a KG from inline graph factory configurations", hidden=True)
 def kg_build_step(
     *,
-    graph: dict[str, Any],
+    graphs: list[dict[str, Any]],
     kg_name: str = "inline",
     delete_first: bool = False,
     export_html: bool = True,
     force_rebuild: bool = False,
     force: bool = False,
-    inline: bool = False,
 ) -> dict[str, Any]:
-    """Execute the KG creation flow with a single inline graph configuration.
+    """Execute the KG creation flow with inline graph configurations.
 
     Instead of looking up a ``config_name`` in ``kg_configs``, this step
-    receives a graph factory definition directly and registers it as a
+    receives graph factory definitions directly and registers them as a
     temporary KG profile before running the build flow.
 
     Args:
-        graph: Graph factory configuration (same format as a single entry in
-            ``workflows.<name>.steps`` in ``ekg_workflows.yaml``).
+        graphs: List of graph factory configurations (each a dict with a
+            ``factory`` key, same format as entries in ``ekg_workflows.yaml``).
         kg_name: Name used for the database directory and profile identity.
         delete_first: Whether to delete existing database before building.
         export_html: Whether to export an HTML visualization.
         force_rebuild: Whether to force rebuild of import caches.
         force: Alias for force_rebuild (set by --force CLI flag).
-        inline: When True, run the flow body directly without creating a
-            Prefect subflow — all tasks appear flat under the parent workflow.
     """
     from genai_graph.kg.manager import KgGraphConfig, KgProfileConfig, get_kg_manager
     from genai_graph.orchestration.flows import create_kg_flow
-
-    if not isinstance(graph, dict):
-        raise TypeError(
-            f"'graph' must be a dict with a 'factory' key, got {type(graph).__name__!r} ({graph!r}). "
-            "To run a named workflow use: cli workflow run <workflow_name>"
-        )
 
     # --force is an alias for force_rebuild; either implies delete_first.
     if force:
@@ -114,19 +98,16 @@ def kg_build_step(
 
     _clear_factory_caches()
 
-    # Register the inline graph as a temporary profile in the KgManager
+    # Register the inline graphs as a temporary profile in the KgManager
     manager = get_kg_manager()
-    profile_cfg = KgProfileConfig(graphs=[KgGraphConfig(**graph)])
+    profile_cfg = KgProfileConfig(graphs=[KgGraphConfig(**g) for g in graphs])
     manager.ekg_config.kg_configs[kg_name] = profile_cfg
     manager.profile = kg_name
     manager.reset_cached_paths()
 
-    factory_path = graph.get("factory", "?")
-    factory_short = factory_path.rsplit(".", 1)[-1]
-    logger.info("Running KG build flow for inline config '{}' with factory '{}'", kg_name, factory_path)
+    logger.info("Running KG build flow for inline config '{}' ({} graph(s))", kg_name, len(graphs))
 
-    run_fn = create_kg_flow.fn if inline else create_kg_flow.with_options(flow_run_name=f"kg:{kg_name}/{factory_short}")
-    result = run_fn(
+    result = create_kg_flow(
         config_name=kg_name,
         delete_first=delete_first,
         export_html=export_html,

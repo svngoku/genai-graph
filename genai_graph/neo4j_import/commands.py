@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from genai_tk.main.cli import CliTopCommand
 from genai_tk.config_mgmt.config_mngr import global_config
+from genai_tk.main.cli import CliTopCommand
 from loguru import logger
 from rich.console import Console
 from rich.panel import Panel

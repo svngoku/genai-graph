@@ -798,8 +798,8 @@ def compute_fingerprints_for_config(config_name: str) -> CacheFingerprints:
     Returns:
         ``CacheFingerprints`` with all computable fields populated.
     """
-    from genai_tk.utils.hashing import buffer_digest, file_digest
     from genai_tk.config_mgmt.import_utils import ImportResolver
+    from genai_tk.utils.hashing import buffer_digest, file_digest
 
     manager = get_kg_manager()
 

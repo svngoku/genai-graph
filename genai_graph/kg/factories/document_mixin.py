@@ -1,7 +1,7 @@
 """Mixin for factories that back their nodes by a source file.
 
 Any factory that reads its data from files on disk can opt in to this mixin
-to automatically produce :class:`~genai_graph.ekg.schema.common_nodes.Document`
+to automatically produce :class:`~genai_graph.kg.nodes.document.Document`
 nodes alongside the domain entities extracted from those files.
 
 The mixin deliberately carries *zero* business logic at ingestion time — the
@@ -22,12 +22,13 @@ Usage::
 from __future__ import annotations
 
 import mimetypes
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
 
 if TYPE_CHECKING:
-    from genai_graph.ekg.schema.common_nodes import Document
+    from genai_graph.kg.nodes.document import Document
     from genai_graph.kg.schema.core import GraphNode, GraphRelation
 
 
@@ -50,7 +51,7 @@ class DocumentMixin:
         """
         from genai_tk.utils.hashing import file_digest
 
-        from genai_graph.ekg.schema.common_nodes import Document
+        from genai_graph.kg.nodes.document import Document
 
         try:
             stat = file_path.stat()
@@ -93,7 +94,7 @@ class DocumentMixin:
         Returns:
             ``(nodes, relations)`` tuple to be merged into ``build_schema()`` output.
         """
-        from genai_graph.ekg.schema.canonical_nodes import DocumentNode
+        from genai_graph.kg.nodes.document import DocumentNode
         from genai_graph.kg.schema.core import GraphRelation
 
         contains = GraphRelation(

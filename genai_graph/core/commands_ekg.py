@@ -89,7 +89,7 @@ def _display_kg_results(profile_name: str, results: dict[str, Any]) -> None:
             console.print(f"  [green]📊 HTML:[/green] file://{export_path}")
 
 
-class EkgCommands(CliTopCommand):
+class KgCommands(CliTopCommand):
     """Commands for interacting with a Knowledge Graph."""
 
     def get_description(self) -> tuple[str, str]:  # type: ignore[override]
@@ -731,3 +731,8 @@ class EkgCommands(CliTopCommand):
                 logger.error("Fake Rainbow generation failed: {}", exc)
                 console.print(f"[red]❌ Generation failed: {exc}[/red]")
                 raise typer.Exit(1) from exc
+
+
+# Backward-compatibility alias — the class was renamed from EkgCommands to KgCommands
+# to reflect that it now serves as a generic KG command group.
+EkgCommands = KgCommands

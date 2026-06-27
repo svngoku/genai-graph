@@ -8,8 +8,8 @@ import json
 from datetime import datetime
 from typing import Any, Dict, NamedTuple, Union
 
-from genai_tk.core.factories.embeddings_factory import EmbeddingsFactory
 from genai_tk.config_mgmt.config_mngr import global_config
+from genai_tk.core.factories.embeddings_factory import EmbeddingsFactory
 from loguru import logger
 from pydantic import BaseModel
 from rich.console import Console
