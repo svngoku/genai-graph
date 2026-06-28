@@ -687,8 +687,6 @@ def extract_graph_data(
                             item_data[embedding_field] = handler.compute_embeddings(field_value)
                         except Exception as e:
                             logger.warning(f"Failed to compute embedding for {node_type}.{field_name}: {e}")
-                else:
-                    logger.debug(f"Skipping embeddings for {node_type}; no index_fields configured")
 
                 # Use primary key for deduplication
                 if key_value not in node_registry[node_type]:

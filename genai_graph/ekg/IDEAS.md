@@ -1,5 +1,10 @@
 
 
+# Improve doc and test
+
+genai-graph has evolued di be more Pydancic centric. 
+The core class is GraphSchema
+
 
 
 

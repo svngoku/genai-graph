@@ -86,8 +86,8 @@ class TestKgBuildStep:
         r.db_path = "/tmp/kg/inline"
         return r
 
-    def _minimal_graphs(self) -> list[dict]:
-        return [{"factory": "genai_graph.ekg.schema.rainbow_review.ReviewedOpportunityGraph"}]
+    def _minimal_graph(self) -> dict:
+        return {"factory": "genai_graph.ekg.schema.rainbow_review.ReviewedOpportunityGraph"}
 
     @patch("genai_graph.orchestration.flows.create_kg_flow")
     @patch("genai_graph.orchestration.workflow_steps._clear_factory_caches")
@@ -97,7 +97,7 @@ class TestKgBuildStep:
         manager = MagicMock()
         mock_mgr.return_value = manager
 
-        result = kg_build_step(graphs=self._minimal_graphs(), kg_name="my_kg")
+        result = kg_build_step(graph=self._minimal_graph(), kg_name="my_kg")
 
         assert result["config_name"] == "my_kg"
         assert result["total_processed"] == 5
@@ -113,13 +113,12 @@ class TestKgBuildStep:
     @patch("genai_graph.orchestration.workflow_steps._clear_factory_caches")
     @patch("genai_graph.kg.manager.get_kg_manager")
     def test_registers_inline_profile(self, mock_mgr: Any, mock_clear: Any, mock_flow: Any) -> None:
-        """kg_build_step must register the inline graphs as a temporary KG profile."""
+        """kg_build_step must register the inline graph as a temporary KG profile."""
         mock_flow.return_value = self._mock_result()
         manager = MagicMock()
         mock_mgr.return_value = manager
 
-        graphs = self._minimal_graphs()
-        kg_build_step(graphs=graphs, kg_name="inline_test")
+        kg_build_step(graph=self._minimal_graph(), kg_name="inline_test")
 
         # Verify profile was written into the manager and profile was set
         manager.ekg_config.kg_configs.__setitem__.assert_called_once()
@@ -134,7 +133,7 @@ class TestKgBuildStep:
         mock_flow.return_value = self._mock_result(processed=7, failed=2)
         mock_mgr.return_value = MagicMock()
 
-        result = kg_build_step(graphs=self._minimal_graphs(), kg_name="test")
+        result = kg_build_step(graph=self._minimal_graph(), kg_name="test")
 
         assert set(result.keys()) == {"config_name", "total_processed", "total_failed", "warnings_count", "db_path"}
         assert result["total_processed"] == 7
@@ -147,7 +146,7 @@ class TestKgBuildStep:
         mock_flow.return_value = self._mock_result()
         mock_mgr.return_value = MagicMock()
 
-        kg_build_step(graphs=self._minimal_graphs(), kg_name="k", force_rebuild=True, delete_first=True)
+        kg_build_step(graph=self._minimal_graph(), kg_name="k", force_rebuild=True, delete_first=True)
 
         mock_flow.assert_called_once_with(
             config_name="k",

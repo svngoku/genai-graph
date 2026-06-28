@@ -62,25 +62,25 @@ def kg_create_step(
     return _result_dict(config_name, result)
 
 
-@workflow(name="kg_build", description="Build a KG from inline graph factory configurations", hidden=True)
+@workflow(name="kg_build", description="Build a KG from a single graph factory configuration", hidden=True)
 def kg_build_step(
     *,
-    graphs: list[dict[str, Any]],
+    graph: dict[str, Any],
     kg_name: str = "inline",
     delete_first: bool = False,
     export_html: bool = True,
     force_rebuild: bool = False,
     force: bool = False,
 ) -> dict[str, Any]:
-    """Execute the KG creation flow with inline graph configurations.
+    """Execute the KG creation flow with a single inline graph configuration.
 
     Instead of looking up a ``config_name`` in ``kg_configs``, this step
-    receives graph factory definitions directly and registers them as a
+    receives a graph factory definition directly and registers it as a
     temporary KG profile before running the build flow.
 
     Args:
-        graphs: List of graph factory configurations (each a dict with a
-            ``factory`` key, same format as entries in ``ekg_workflows.yaml``).
+        graph: Graph factory configuration (a dict with a ``factory`` key,
+            same format as entries in ``ekg_workflows.yaml``).
         kg_name: Name used for the database directory and profile identity.
         delete_first: Whether to delete existing database before building.
         export_html: Whether to export an HTML visualization.
@@ -98,14 +98,14 @@ def kg_build_step(
 
     _clear_factory_caches()
 
-    # Register the inline graphs as a temporary profile in the KgManager
+    # Register the inline graph as a temporary profile in the KgManager
     manager = get_kg_manager()
-    profile_cfg = KgProfileConfig(graphs=[KgGraphConfig(**g) for g in graphs])
+    profile_cfg = KgProfileConfig(graphs=[KgGraphConfig(**graph)])
     manager.ekg_config.kg_configs[kg_name] = profile_cfg
     manager.profile = kg_name
     manager.reset_cached_paths()
 
-    logger.info("Running KG build flow for inline config '{}' ({} graph(s))", kg_name, len(graphs))
+    logger.info("Running KG build flow for inline config '{}' with factory '{}'", kg_name, graph.get("factory", "?"))
 
     result = create_kg_flow(
         config_name=kg_name,

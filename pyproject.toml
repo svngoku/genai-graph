@@ -90,6 +90,10 @@ package = true
 default-groups = ["ui", "demos", "extra", "dev"]
 constraint-dependencies = [
     "ruamel-yaml-clibz==0.2.12",
+    "requests<2.34",  # 2.34.x has broken compat.py (missing JSONDecodeError export)
+    "langsmith<0.9",  # 0.9.x has circular import in _openapi_client
+    "alembic<1.18",   # 1.18.x has missing PriorityDispatcher (breaks Prefect)
+    "openai<2.44",    # 2.44.0 has circular import in _utils/_files
 ] # required because of Prefect update. Might be removed later.
 
 [build-system]
