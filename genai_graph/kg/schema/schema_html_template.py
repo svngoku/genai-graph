@@ -25,13 +25,14 @@ SCHEMA_HTML_TEMPLATE = """
       padding: 0;
       width: 100%;
       height: 100%;
+      min-height: 600px;
       overflow: hidden;
       background: radial-gradient(ellipse at center, #1a1f2e 0%, #0b0f17 100%);
       color: #e6e6e6;
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     }
 
-    svg { width: 100vw; height: 100vh; display: block; }
+    svg { width: 100%; height: max(600px, 100vh); display: block; }
 
     /* Link/Edge styles */
     .link-path {

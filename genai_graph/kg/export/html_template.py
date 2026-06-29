@@ -25,13 +25,14 @@ HTML_TEMPLATE = """
             padding: 0; 
             width: 100%; 
             height: 100%; 
+            min-height: 600px;
             overflow: hidden; 
             background: linear-gradient(90deg, #101010, #1a1a2e); 
             color: white; 
             font-family: 'Inter', sans-serif; 
         }
 
-        svg { width: 100vw; height: 100vh; display: block; }
+        svg { width: 100%; height: max(600px, 100vh); display: block; }
         
         /* Links/Edges */
         .links line { stroke: rgba(255, 255, 255, 0.4); stroke-width: 2px; cursor: pointer; }
