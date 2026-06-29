@@ -62,9 +62,7 @@ class TestTableNameIdentity:
 
         node_a = GraphNode(node_class=Alpha, name_from="name", key_from="name")
         # Distinct table_name avoids using the class __name__
-        node_b = GraphNode(
-            node_class=AlphaLegacy, name_from="name", key_from="name", table_name="AlphaV1"
-        )
+        node_b = GraphNode(node_class=AlphaLegacy, name_from="name", key_from="name", table_name="AlphaV1")
         schema = GraphSchema(root_model_class=None, nodes=[node_a, node_b], relations=[])
         warnings = schema.get_warnings()
         assert not any("share the label" in w for w in warnings)

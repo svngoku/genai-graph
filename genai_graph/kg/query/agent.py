@@ -46,7 +46,7 @@ def build_kg_agent_system_prompt(single_tool_mode: bool = False, kg_config_name:
     else:
         raise FileNotFoundError(
             f"No schema file found for profile '{profile}'. "
-            f"Run 'cli kg create' or 'cli kg schema --regen --kg {profile}'." 
+            f"Run 'cli kg create' or 'cli kg schema --regen --kg {profile}'."
         )
 
     # SYSTEM_PROMPT contains detailed guidance originally written for a
