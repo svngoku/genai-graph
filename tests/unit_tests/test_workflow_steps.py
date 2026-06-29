@@ -87,7 +87,7 @@ class TestKgBuildStep:
         return r
 
     def _minimal_graph(self) -> dict:
-        return {"factory": "genai_graph.ekg.schema.rainbow_review.ReviewedOpportunityGraph"}
+        return {"factory": "some_project.schema.my_graph.MyGraph"}
 
     @patch("genai_graph.orchestration.flows.create_kg_flow")
     @patch("genai_graph.orchestration.workflow_steps._clear_factory_caches")

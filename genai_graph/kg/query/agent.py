@@ -1,7 +1,7 @@
 """Utilities for building KG-aware LangChain agents.
 
 This module centralizes the system prompt and tools used by CLI commands
-that interact with the Knowledge Graph (KG).
+and web applications that interact with the Knowledge Graph (KG).
 """
 
 from genai_tk.core.prompts import dedent_ws
@@ -13,8 +13,8 @@ from genai_graph.kg.manager import get_kg_manager
 from genai_graph.kg.query.text2cypher import SYSTEM_PROMPT, _embed_query_vector, _ensure_vector_indexes
 
 
-def build_ekg_agent_system_prompt(single_tool_mode: bool = False, kg_config_name: str | None = None) -> str:
-    """Build the system prompt for the EKG LangChain agent.
+def build_kg_agent_system_prompt(single_tool_mode: bool = False, kg_config_name: str | None = None) -> str:
+    """Build the system prompt for the KG LangChain agent.
 
     The prompt explains the agent's role, how to use the Cypher tool, and
     embeds the graph schema and Cypher authoring guidelines.
@@ -46,7 +46,7 @@ def build_ekg_agent_system_prompt(single_tool_mode: bool = False, kg_config_name
     else:
         raise FileNotFoundError(
             f"No schema file found for profile '{profile}'. "
-            f"Run 'cli kg create' or 'cli kg schema --regen --kg {profile}'."
+            f"Run 'cli kg create' or 'cli kg schema --regen --kg {profile}'." 
         )
 
     # SYSTEM_PROMPT contains detailed guidance originally written for a
@@ -59,13 +59,13 @@ def build_ekg_agent_system_prompt(single_tool_mode: bool = False, kg_config_name
         instructions = dedent_ws(
             """
             CRITICAL INSTRUCTION:
-            You MUST call the `ekg_cypher_query` tool to execute the query.
+            You MUST call the `kg_cypher_query` tool to execute the query.
             DO NOT respond with just the Cypher query text.
             Your ONLY job is to:
             1. Generate the appropriate Cypher query
-            2. Call the ekg_cypher_query tool with that query
+            2. Call the kg_cypher_query tool with that query
             3. Let the tool return the results
-            
+
             You will be stopped after the first tool call, so make it count.
             """
         )
@@ -73,8 +73,8 @@ def build_ekg_agent_system_prompt(single_tool_mode: bool = False, kg_config_name
         instructions = dedent_ws(
             """
             IMPORTANT:
-            - When a question requires information from the EKG, you MUST call the
-              `ekg_cypher_query` tool instead of replying with a raw Cypher query.
+            - When a question requires information from the KG, you MUST call the
+              `kg_cypher_query` tool instead of replying with a raw Cypher query.
             - Your final answers to the user must be clear natural-language
               explanations grounded in the tool results.
             - Only show raw Cypher when the user explicitly asks to see the query
@@ -85,12 +85,12 @@ def build_ekg_agent_system_prompt(single_tool_mode: bool = False, kg_config_name
 
     return dedent_ws(
         f"""
-        You are an AI assistant that answers questions about enterprise data stored in a
-        Cypher knowledge graph (the Enterprise Knowledge Graph, or EKG).
+        You are an AI assistant that answers questions about data stored in a
+        Cypher knowledge graph (KG).
 
         You have access to a single tool:
 
-        - `ekg_cypher_query`: execute read-only Cypher queries against the EKG and
+        - `kg_cypher_query`: execute read-only Cypher queries against the KG and
           return results as tables and text.
 
         Use this tool whenever a question requires precise data lookup, filtering,
@@ -98,7 +98,7 @@ def build_ekg_agent_system_prompt(single_tool_mode: bool = False, kg_config_name
 
         {instructions}
 
-        When you call `ekg_cypher_query`:
+        When you call `kg_cypher_query`:
         - First think about what information is needed and how it maps to the graph
           schema.
         - Then write a single Cypher query that retrieves exactly that information.
@@ -145,14 +145,14 @@ def build_ekg_agent_system_prompt(single_tool_mode: bool = False, kg_config_name
     )
 
 
-def create_ekg_cypher_tool(
+def create_kg_cypher_tool(
     *,
     backend_config: str = "default",
     kg_config_name: str | None = None,
     console: Console | None = None,
     debug: bool = False,
 ) -> BaseTool:
-    """Create a LangChain tool that executes Cypher against the EKG backend.
+    """Create a LangChain tool that executes Cypher against the KG backend.
 
     Args:
         backend_config: Name of the backend configuration to use.
@@ -161,9 +161,9 @@ def create_ekg_cypher_tool(
         debug: If True, print generated Cypher queries before execution.
     """
 
-    @tool("ekg_cypher_query")
-    def ekg_cypher_query(cypher_query: str, question: str = "") -> str:
-        """Execute a read-only Cypher query against the Enterprise Knowledge Graph.
+    @tool("kg_cypher_query")
+    def kg_cypher_query(cypher_query: str, question: str = "") -> str:
+        """Execute a read-only Cypher query against the Knowledge Graph.
 
         The input must be a complete Cypher statement starting with MATCH
         (or OPTIONAL MATCH) or CALL QUERY_VECTOR_INDEX, and ending with RETURN.
@@ -174,7 +174,7 @@ def create_ekg_cypher_tool(
 
         backend = create_backend_from_config(backend_config, kg_config_name)
         if not backend:
-            return "EKG database not found. Load data first with 'cli kg add-doc --key <data_key>'."
+            return "KG database not found. Load data first with 'cli kg add-doc --key <data_key>'."
 
         if hasattr(backend, "ensure_vector_extension"):
             backend.ensure_vector_extension()
@@ -201,4 +201,4 @@ def create_ekg_cypher_tool(
             # Fallback to a simple string representation
             return df.head(30).to_string(index=False)
 
-    return ekg_cypher_query
+    return kg_cypher_query

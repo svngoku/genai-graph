@@ -9,8 +9,8 @@ types, configuring the LLM client, and running `cli baml extract`), see the
 
 | Task | Files to Modify | Command |
 |------|----------------|---------|
-| Add/modify extracted fields | `genai_graph/ekg/baml_src/schema/*.baml` | `cd genai_graph/ekg && baml-cli generate` |
-| Update graph schema | `genai_graph/ekg/schema/*_review.py` | N/A |
+| Add/modify extracted fields | `ekg_atos/ekg_atos/baml_src/schema/*.baml` | `cd ekg_atos/ && baml-cli generate` |
+| Update graph schema | `ekg_atos/ekg_atos/schema/*_review.py` | N/A |
 | Configure KG | `config/ekg.yaml` | N/A |
 | Extract from documents | N/A | `cli baml extract <root_dir> <output_dir> --function ExtractRainbow` |
 | Build knowledge graph | N/A | `cli kg create --kg <name>` |
@@ -33,7 +33,7 @@ Ladybug Graph Database
 
 ## Step 1: Define BAML Schema
 
-**Location**: `genai_graph/ekg/baml_src/schema/*.baml`
+**Location**: `ekg_atos/ekg_atos/baml_src/schema/*.baml`
 
 Add or modify class definitions using standard BAML syntax. For BAML language reference
 (types, annotations, enums, etc.) see the [genai-tk BAML docs](../../genai-tk/docs/baml.md).
@@ -59,7 +59,7 @@ class KeyStatementOfWorkElement {
 After modifying `.baml` files, regenerate Python types:
 
 ```bash
-cd genai_graph/ekg
+cd ekg_atos/ekg_atos
 baml-cli generate
 ```
 
@@ -69,7 +69,7 @@ This generates `baml_client/types.py` with Pydantic models.
 
 Graph factories define how extracted data becomes nodes and relationships in the graph.
 
-**Location**: `genai_graph/ekg/schema/*.py`
+**Location**: `ekg_atos/ekg_atos/schema/*.py`
 
 ### Basic Factory Structure
 
@@ -78,9 +78,9 @@ reused in `build_schema()` and passed directly to `GraphRelation`.
 
 ```python
 from pydantic import BaseModel
-from genai_graph.ekg.baml_client.types import Opportunity, Person, ReviewedOpportunity
-from genai_graph.ekg.schema.canonical_nodes import CustomerNode  # canonical shared node
-from genai_graph.ekg.schema.common_nodes import Geo
+from ekg_atos.baml_client.types import Opportunity, Person, ReviewedOpportunity
+from ekg_atos.schema.canonical_nodes import CustomerNode  # canonical shared node
+from ekg_atos.schema.common_nodes import Geo
 from genai_graph.kg.factories import JsonFileBackedFactory
 from genai_graph.kg.schema import GraphNode, GraphRelation, GraphSchema
 
@@ -363,7 +363,7 @@ Fields prefixed with `p_` and suffixed with `_` are:
 kg_configs:
   my_kg:
     graphs:
-      - factory: genai_graph.ekg.schema.rainbow_review.ReviewedOpportunityGraph
+      - factory: ekg_atos.schema.rainbow_review.ReviewedOpportunityGraph
         data_root: ${paths.rainbow_json}
         include: 
           - "*CNES*TMA*VENUS*"  # File glob pattern
@@ -401,7 +401,7 @@ kg_configs:
     import:
       - crm_export           # Import nodes/rels from another KG config
     graphs:
-      - factory: genai_graph.ekg.schema.my_factory.MyGraph
+      - factory: ekg_atos.schema.my_factory.MyGraph
         data_root: ${paths.my_data}
         include: ["*CNES*"]
         exclude: ["fake/*"]
@@ -547,8 +547,8 @@ class identity — this allows `common_nodes.Customer` (which extends
 
 **Step 1**: Define canonical type in `common_nodes.py`:
 ```python
-from genai_graph.ekg.baml_client.types import Customer as BamlCustomer
-from genai_graph.ekg.baml_client.types import Partner as BamlPartner
+from ekg_atos.baml_client.types import Customer as BamlCustomer
+from ekg_atos.baml_client.types import Partner as BamlPartner
 
 class Customer(BamlCustomer):
     """Extended Customer with fields from multiple sources."""
@@ -573,13 +573,13 @@ class GeoLocation(BamlGeo):  # ❌ __name__ = "GeoLocation" ≠ "Geo"
 **Step 2**: Import canonical types in factories that need cross-source dedup:
 ```python
 # In rainbow_review.py
-from genai_graph.ekg.schema.common_nodes import Customer, Geo, Partner
+from ekg_atos.schema.common_nodes import Customer, Geo, Partner
 
 # In stratnav.py (Neo4j TechnologyPartner → canonical Partner)
-from genai_graph.ekg.schema.common_nodes import Customer, Geo, Partner
+from ekg_atos.schema.common_nodes import Customer, Geo, Partner
 
 # In crm_export.py
-from genai_graph.ekg.schema.common_nodes import Customer
+from ekg_atos.schema.common_nodes import Customer
 ```
 
 **For Neo4j factories**: The `neo4j_label` parameter preserves the original
@@ -726,7 +726,7 @@ are defined on the **target** node class of the relationship (the `to_node`).
 
 ```bash
 # BAML generation
-cd genai_graph/ekg && baml-cli generate
+cd ekg_atos/ && baml-cli generate
 
 # Extract data
 cli baml extract SOURCE DEST --function ExtractRainbow --force

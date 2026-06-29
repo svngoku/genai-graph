@@ -179,14 +179,14 @@ class GraphRegistry(BaseModel):
         # Filter out None values from schemas without root_model_class
         merged_root_classes = [schema.root_model_class for schema in schemas if schema.root_model_class is not None]
 
-        # Merge nodes, de-duplicating by class name (which determines Kuzu table name).
-        # When multiple node_classes have the same __name__, prefer the one that appears first
+        # Merge nodes, de-duplicating by label (which may be table_name or class __name__).
+        # When multiple nodes share the same label, prefer the one that appears first
         # (typically from more authoritative sources like Neo4j or database imports).
         merged_nodes: list[Any] = []
         seen_node_names: set[str] = set()
         for schema in schemas:
             for node in schema.nodes:
-                node_name = node.node_class.__name__
+                node_name = node.label
                 if node_name in seen_node_names:
                     continue
                 seen_node_names.add(node_name)

@@ -333,46 +333,40 @@ class TestGraphNodeEmbeddingConfig:
         assert node_config.index_fields == ["name", "description"]
 
 
-class TestL3DescriptionEmbedding:
-    """Test L3 node with descriptionEmbedding field."""
+class TestNodeWithEmbeddingField:
+    """Test a node model that includes a pre-computed embedding field."""
 
-    def test_l3_model_has_embedding_field(self):
-        """Test that L3 model includes descriptionEmbedding field."""
-        from genai_graph.ekg.schema.common_nodes import L3
+    @pytest.fixture
+    def service_item_cls(self) -> type:
+        from pydantic import BaseModel
 
-        # Create an L3 instance with embedding
-        l3 = L3(
+        class ServiceItem(BaseModel):
+            name: str
+            code: str | None = None
+            description: str | None = None
+            description_embedding: list[float] | None = None
+
+        return ServiceItem
+
+    def test_model_has_embedding_field(self, service_item_cls: type) -> None:
+        """Test that a model with an embedding field stores it correctly."""
+        item = service_item_cls(
             name="Cloud Storage",
             code="CS001",
             description="A service for cloud storage",
             description_embedding=[0.1, 0.2, 0.3],
         )
+        assert item.description_embedding == [0.1, 0.2, 0.3]
 
-        assert l3.description_embedding == [0.1, 0.2, 0.3]
+    def test_embedding_optional(self, service_item_cls: type) -> None:
+        """Test that the embedding field is optional."""
+        item = service_item_cls(name="Cloud Storage", code="CS001")
+        assert item.description_embedding is None
 
-    def test_l3_embedding_optional(self):
-        """Test that descriptionEmbedding is optional."""
-        from genai_graph.ekg.schema.common_nodes import L3
-
-        # Create L3 without embedding
-        l3 = L3(
-            name="Cloud Storage",
-            code="CS001",
-        )
-
-        assert l3.description_embedding is None
-
-    def test_l3_embedding_with_none(self):
+    def test_embedding_with_none(self, service_item_cls: type) -> None:
         """Test explicitly setting embedding to None."""
-        from genai_graph.ekg.schema.common_nodes import L3
-
-        l3 = L3(
-            name="Cloud Storage",
-            code="CS001",
-            description_embedding=None,
-        )
-
-        assert l3.description_embedding is None
+        item = service_item_cls(name="Cloud Storage", code="CS001", description_embedding=None)
+        assert item.description_embedding is None
 
 
 class TestEmbeddingFieldNaming:
@@ -585,11 +579,33 @@ class TestNeo4jNodeMappingIndexFields:
         node_cfg = schema.nodes[0]
         assert node_cfg.index_field_specs == [("name", None), ("description", "embeddings_768@fake")]
 
-    def test_l3_stratnav_mapping_pins_ada002_for_description(self):
-        """Test that the real L3 StratnavGraph mapping pins ada_002@openai for description."""
-        from genai_graph.ekg.schema.stratnav import StratnavGraph
+    def test_neo4j_mapping_explicit_model_override_pins_embedding_model(self):
+        """Test that an explicit (field, model) tuple in index_fields is passed through."""
+        from pydantic import BaseModel
 
-        factory = StratnavGraph.__new__(StratnavGraph)
+        from genai_graph.kg.factories.neo4j_factory import Neo4jImportFactory, Neo4jNodeMapping
+
+        class Concept(BaseModel):
+            name: str
+            description: str | None = None
+            description_embedding: list[float] | None = None
+
+        class ConceptFactory(Neo4jImportFactory):
+            neo4j_export_file: str = "/dev/null"
+
+            def get_node_mappings(self):
+                return [
+                    Neo4jNodeMapping(
+                        neo4j_label="Concept",
+                        node_class=Concept,
+                        property_mappings={"name": "name", "description": "description"},
+                        name_field="name",
+                        key_field="name",
+                        index_fields=[("description", "ada_002@openai")],
+                    )
+                ]
+
+        factory = ConceptFactory.__new__(ConceptFactory)
         object.__setattr__(factory, "_initialized", False)
         object.__setattr__(factory, "_node_data", {})
         object.__setattr__(factory, "_rel_data", {})
@@ -597,8 +613,8 @@ class TestNeo4jNodeMappingIndexFields:
         object.__setattr__(factory, "_neo4j_id_to_label", {})
 
         schema = factory.build_schema()
-        l3_node = next(n for n in schema.nodes if n.node_class.__name__ == "L3")
-        specs = {field: model for field, model in l3_node.index_field_specs}
+        concept_node = next(n for n in schema.nodes if n.node_class.__name__ == "Concept")
+        specs = {field: model for field, model in concept_node.index_field_specs}
         assert specs.get("description") == "ada_002@openai"
 
 
@@ -622,8 +638,14 @@ class TestEmbeddingDeserialization:
         """Test that build_nodes_and_relationships parses JSON-encoded embedding strings."""
         import json as _json
 
-        from genai_graph.ekg.schema.common_nodes import L3
+        from pydantic import BaseModel
+
         from genai_graph.kg.factories.neo4j_factory import Neo4jImportFactory, Neo4jNodeMapping
+
+        class ServiceItem(BaseModel):
+            name: str
+            description: str | None = None
+            description_embedding: list[float] | None = None
 
         embedding_values = [0.1, 0.2, 0.3]
         json_embedding = _json.dumps(embedding_values)  # "[0.1, 0.2, 0.3]"
@@ -634,8 +656,8 @@ class TestEmbeddingDeserialization:
             def get_node_mappings(self):
                 return [
                     Neo4jNodeMapping(
-                        neo4j_label="L3",
-                        node_class=L3,
+                        neo4j_label="ServiceItem",
+                        node_class=ServiceItem,
                         property_mappings={
                             "name": "name",
                             "descriptionEmbedding": "description_embedding",
@@ -653,7 +675,7 @@ class TestEmbeddingDeserialization:
             factory,
             "_node_data",
             {
-                "L3": [
+                "ServiceItem": [
                     {
                         "_neo4j_id": "1",
                         "name": "TestService",
@@ -665,16 +687,21 @@ class TestEmbeddingDeserialization:
         object.__setattr__(factory, "_rel_data", {})
 
         nodes_data, _ = factory.build_nodes_and_relationships()
-        l3_nodes = list(nodes_data.get("L3"))
-        assert len(l3_nodes) == 1
-        emb = l3_nodes[0].get("description_embedding")
+        service_nodes = list(nodes_data.get("ServiceItem"))
+        assert len(service_nodes) == 1
+        emb = service_nodes[0].get("description_embedding")
         assert isinstance(emb, list), f"Expected list, got {type(emb)}: {emb}"
         assert emb == pytest.approx(embedding_values)
 
     def test_neo4j_factory_preserves_list_float_embedding(self):
         """Test that already-list float embeddings are preserved."""
-        from genai_graph.ekg.schema.common_nodes import L3
+        from pydantic import BaseModel
+
         from genai_graph.kg.factories.neo4j_factory import Neo4jImportFactory, Neo4jNodeMapping
+
+        class ServiceItem(BaseModel):
+            name: str
+            description_embedding: list[float] | None = None
 
         embedding_values = [0.1, 0.2, 0.3]
 
@@ -684,8 +711,8 @@ class TestEmbeddingDeserialization:
             def get_node_mappings(self):
                 return [
                     Neo4jNodeMapping(
-                        neo4j_label="L3",
-                        node_class=L3,
+                        neo4j_label="ServiceItem",
+                        node_class=ServiceItem,
                         property_mappings={
                             "name": "name",
                             "descriptionEmbedding": "description_embedding",
@@ -703,7 +730,7 @@ class TestEmbeddingDeserialization:
             factory,
             "_node_data",
             {
-                "L3": [
+                "ServiceItem": [
                     {
                         "_neo4j_id": "1",
                         "name": "TestService",
@@ -715,7 +742,7 @@ class TestEmbeddingDeserialization:
         object.__setattr__(factory, "_rel_data", {})
 
         nodes_data, _ = factory.build_nodes_and_relationships()
-        emb = list(nodes_data.get("L3"))[0].get("description_embedding")
+        emb = list(nodes_data.get("ServiceItem"))[0].get("description_embedding")
         assert emb == pytest.approx(embedding_values)
 
 

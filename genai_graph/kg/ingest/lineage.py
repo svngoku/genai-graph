@@ -74,10 +74,10 @@ def _detect_baml_version_mismatch(exc: Exception) -> str | None:
         pkg_ver = pkg_match.group(1)
         return (
             f"BAML version mismatch: client was generated with {gen_ver} but baml-py {pkg_ver} is installed. "
-            f"Run `uv run baml-cli generate --from genai_graph/ekg/baml_src/` to regenerate the client."
+            f"Run `uv run baml-cli generate --from <your_project>/baml_src/` to regenerate the client."
         )
     if "baml" in msg.lower() and ("version" in msg.lower() or "out of date" in msg.lower()):
-        return "BAML version mismatch detected. Run `uv run baml-cli generate --from genai_graph/ekg/baml_src/` to regenerate the client."
+        return "BAML version mismatch detected. Run `uv run baml-cli generate --from <your_project>/baml_src/` to regenerate the client."
     return None
 
 

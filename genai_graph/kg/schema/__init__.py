@@ -7,9 +7,18 @@ This package provides:
 - GraphRegistry: Registry for graph factories
 - generate_schema_description: LLM-friendly schema documentation
 - ResolvedSchema: Canonical enriched schema with all render methods
+- compiler: Standalone compilation functions (build_model_field_map, etc.)
 """
 
 from genai_graph.kg.schema._helpers import _get_kuzu_type_for_field
+from genai_graph.kg.schema.compiler import (
+    build_model_field_map,
+    compile_schema,
+    compute_excluded_fields,
+    deduce_node_field_paths,
+    deduce_relation_field_paths,
+    validate_schema_coherence,
+)
 from genai_graph.kg.schema.core import (
     GraphNode,
     GraphRelation,
@@ -45,4 +54,11 @@ __all__ = [
     "register_graph",
     "ResolvedSchema",
     "VectorIndexInfo",
+    # Compiler
+    "build_model_field_map",
+    "compile_schema",
+    "compute_excluded_fields",
+    "deduce_node_field_paths",
+    "deduce_relation_field_paths",
+    "validate_schema_coherence",
 ]

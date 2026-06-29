@@ -311,55 +311,84 @@ class TestSimilaritySpec:
 
 
 # ---------------------------------------------------------------------------
-# L3TechApproachMatcher schema
+# Generic SimilarityFactory schema test
 # ---------------------------------------------------------------------------
 
 
-class TestL3TechApproachMatcherSchema:
-    def _make_l3_matcher(self):
-        from genai_graph.ekg.schema.learned_graph import L3TechApproachMatcher
+class TestSimilarityFactorySchema:
+    """Test SimilarityFactory schema construction with generic domain models."""
 
-        return L3TechApproachMatcher(
+    def _make_matcher(self):
+        """Build a minimal SimilarityFactory that links Concept → Topic by description."""
+        from pydantic import BaseModel
+
+        from genai_graph.kg.factories.similarity import SimilarityFactory
+        from genai_graph.kg.schema import GraphNode, GraphRelation, GraphSchema
+
+        class Concept(BaseModel):
+            name: str
+            description: str | None = None
+            description_embedding: list[float] | None = None
+
+        class Topic(BaseModel):
+            name: str
+            description: str | None = None
+            description_embedding: list[float] | None = None
+
+        concept_node = GraphNode(node_class=Concept, name_from="name", key_from="name", index_fields=["description"])
+        topic_node = GraphNode(node_class=Topic, name_from="name", key_from="name", index_fields=["description"])
+
+        class ConceptTopicMatcher(SimilarityFactory):
+            def build_schema(self) -> GraphSchema:
+                return GraphSchema(
+                    nodes=[concept_node, topic_node],
+                    relations=[
+                        GraphRelation(
+                            from_node=concept_node,
+                            to_node=topic_node,
+                            name="RELATED_TO",
+                            properties={"similarity_score": float},
+                        )
+                    ],
+                )
+
+        return ConceptTopicMatcher(
             similarities=[
                 SimilaritySpec(
-                    relationship="POSSIBLE_OFFERING",
-                    from_node="TechnicalApproach.architecture",
-                    to_node="L3.description",
+                    relationship="RELATED_TO",
+                    from_node="Concept.description",
+                    to_node="Topic.description",
                     iterate_over="from",
                 )
-            ],
+            ]
         )
 
     def test_build_schema_contains_expected_nodes(self) -> None:
-        matcher = self._make_l3_matcher()
+        matcher = self._make_matcher()
         schema = matcher.build_schema()
-
         node_labels = {n.label for n in schema.nodes}
-        assert "L3" in node_labels
-        assert "TechnicalApproach" in node_labels
+        assert "Concept" in node_labels
+        assert "Topic" in node_labels
 
-    def test_build_schema_has_possible_offering_relation(self) -> None:
-        matcher = self._make_l3_matcher()
+    def test_build_schema_has_relation(self) -> None:
+        matcher = self._make_matcher()
         schema = matcher.build_schema()
-
         assert len(schema.relations) == 1
         rel = schema.relations[0]
-        assert rel.name == "POSSIBLE_OFFERING"
-        # Direction: TechnicalApproach → POSSIBLE_OFFERING → L3
-        assert rel.from_node.label == "TechnicalApproach"
-        assert rel.to_node.label == "L3"
+        assert rel.name == "RELATED_TO"
+        assert rel.from_node.label == "Concept"
+        assert rel.to_node.label == "Topic"
 
     def test_build_schema_relation_has_similarity_score_property(self) -> None:
-        matcher = self._make_l3_matcher()
+        matcher = self._make_matcher()
         schema = matcher.build_schema()
         rel = schema.relations[0]
-
         assert rel.properties is not None
         assert "similarity_score" in rel.properties
         assert rel.properties["similarity_score"] is float
 
     def test_get_struct_data_by_key_returns_none(self) -> None:
-        matcher = self._make_l3_matcher()
+        matcher = self._make_matcher()
         assert matcher.get_struct_data_by_key("any-key") is None
 
 

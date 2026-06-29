@@ -121,7 +121,7 @@ workflows:
         ref: kg_build
         with:
           graphs:
-            - factory: genai_graph.ekg.schema.rainbow_review.ReviewedOpportunityGraph
+            - factory: ekg_atos.schema.rainbow_review.ReviewedOpportunityGraph
               data_root: '${paths.rainbow_json}'
               include: ['*CNES*TMA*VENUS*']
               exclude: [fake/*]
@@ -139,15 +139,15 @@ workflows:
         ref: kg_build
         with:
           graphs:
-            - factory: genai_graph.ekg.schema.rainbow_review.ReviewedOpportunityGraph
+            - factory: ekg_atos.schema.rainbow_review.ReviewedOpportunityGraph
               data_root: '${paths.rainbow_json}'
               include: ['*CNES*']
               recursive: true
-            - factory: genai_graph.ekg.schema.architecture_doc.ArchitectureDocumentGraph
+            - factory: ekg_atos.schema.architecture_doc.ArchitectureDocumentGraph
               data_root: '${paths.add_json}'
               include: ['*CNES*']
               recursive: true
-            - factory: genai_graph.ekg.schema.crm_export.CrmExtractGraph
+            - factory: ekg_atos.schema.crm_export.CrmExtractGraph
               files: ['${paths.ekg_data}/crm_export/report.xlsx']
               filter_by_existing:
                 node_label: Opportunity
@@ -210,7 +210,7 @@ workflows:
         wait_for: [base]                       # Resolved to: base.stratnav.build (terminal)
         with:
           graphs:
-            - factory: genai_graph.ekg.schema.learned_graph.L3TechApproachMatcher
+            - factory: ekg_atos.schema.learned_graph.L3TechApproachMatcher
               similarities:
                 - relationship: POSSIBLE_OFFERING
                   from: TechnicalApproach.architecture
@@ -346,7 +346,7 @@ workflows:
         ref: kg_build
         with:
           graphs:
-            - factory: genai_graph.ekg.schema.my_schema.MyGraph
+            - factory: ekg_atos.schema.my_schema.MyGraph
               data_root: '${paths.ekg_data}/my_data/'
               include: ['*.json']
               recursive: true

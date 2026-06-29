@@ -150,6 +150,17 @@ class GraphNode(BaseModel):
     key_from: str | Callable[[dict[str, Any], str], str] = "AUTO_ID"
     description: str = ""
     index_fields: list[str | tuple[str, str]] = []
+    table_name: str | None = None
+    """Explicit database table name for this node.
+
+    When set, overrides ``node_class.__name__`` as the Ladybug table name and
+    merge/dedup key.  Use this when two different Pydantic classes should map
+    to the same node table (e.g. a shared canonical type across projects) or
+    to prevent accidental collisions between classes that happen to have the
+    same ``__name__``.
+
+    Leave as ``None`` (default) to use the class name.
+    """
 
     # TODO: consider removing once orphan detection can infer reachability automatically.
     # Set to True for nodes from explicit mappings (Neo4j, etc.) to skip orphan warnings.
@@ -298,8 +309,12 @@ class GraphNode(BaseModel):
 
     @property
     def label(self) -> str:
-        """Return the canonical label for this node (its class name)."""
-        return self.node_class.__name__
+        """Return the canonical label for this node (table name or class name).
+
+        Returns ``table_name`` when explicitly set, otherwise falls back to
+        ``node_class.__name__``.
+        """
+        return self.table_name if self.table_name is not None else self.node_class.__name__
 
     def struct_field_names(self) -> list[str]:
         """Return the field names under which embedded structs are stored.
@@ -788,6 +803,22 @@ class GraphSchema(BaseModel):
 
         for label in missing_labels:
             warnings_list.append(f"Class {label} is referenced in relationships but has no GraphNode")
+
+        # Check for duplicate node labels — two nodes sharing the same table name is an error.
+        seen_labels: dict[str, str] = {}
+        for node in self.nodes:
+            lbl = node.label
+            cls_name = node.node_class.__name__
+            if lbl in seen_labels:
+                existing_cls = seen_labels[lbl]
+                if existing_cls != cls_name:
+                    warnings_list.append(
+                        f"Two different node classes share the label '{lbl}': "
+                        f"'{existing_cls}' and '{cls_name}'. "
+                        f"Set `table_name` on one of them to resolve the collision."
+                    )
+            else:
+                seen_labels[lbl] = cls_name
 
         # Check for duplicate relationships between the same node pair
         relation_pairs: dict[tuple[str, str], list[str]] = {}

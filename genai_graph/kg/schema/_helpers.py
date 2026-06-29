@@ -6,7 +6,7 @@ live in ``genai_tk.extra.structured.baml_util``.
 
 This module contains only knowledge-graph-domain helpers:
 
-- BAML description loading for *this* project's inlined BAML files
+- Optional BAML description loading (injectable via ``baml_file_map`` parameter)
 - Node / field / relation description extraction (uses GraphNode API)
 - Enum collection from a GraphSchema
 - Kuzu/Ladybug type mapping
@@ -15,7 +15,6 @@ This module contains only knowledge-graph-domain helpers:
 from __future__ import annotations
 
 from enum import Enum
-from functools import lru_cache
 from typing import Any, get_args, get_origin
 
 from genai_tk.extra.structured.baml_util import parse_baml_content
@@ -27,25 +26,31 @@ _humanize_type_compact = humanize_type
 
 
 # ---------------------------------------------------------------------------
-# BAML description loading (project-specific: loads this project's inlined BAML)
+# BAML description loading (injectable; project passes its own baml_file_map)
 # ---------------------------------------------------------------------------
 
 
-@lru_cache(maxsize=1)
-def _parse_baml_descriptions() -> dict[str, Any]:
-    """Parse ``@description`` annotations from this project's inlined BAML files.
+def _parse_baml_descriptions(baml_file_map: dict[str, str] | None = None) -> dict[str, Any]:
+    """Parse ``@description`` annotations from BAML files.
+
+    Args:
+        baml_file_map: Optional mapping of filename → BAML content.  When
+            ``None`` or empty, an empty description dict is returned so that
+            downstream enrichment gracefully falls back to Pydantic
+            ``Field(description=...)`` and docstrings.
 
     Returns:
         Dict with keys ``classes``, ``fields``, ``enums``.
     """
-    from genai_graph.ekg.baml_client.inlinedbaml import _file_map
-
     classes: dict[str, str] = {}
     fields: dict[str, dict[str, str]] = {}
     enums: dict[str, dict[str, str]] = {}
 
+    if not baml_file_map:
+        return {"classes": classes, "fields": fields, "enums": enums}
+
     excluded = {"clients.baml", "generators.baml"}
-    for filename, content in _file_map.items():
+    for filename, content in baml_file_map.items():
         if filename not in excluded:
             parse_baml_content(content, classes, fields, enums)
 

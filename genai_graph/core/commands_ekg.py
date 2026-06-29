@@ -428,8 +428,8 @@ class KgCommands(CliTopCommand):
 
             from genai_graph.kg.manager import get_kg_manager
             from genai_graph.kg.query import (
-                build_ekg_agent_system_prompt,
-                create_ekg_cypher_tool,
+                build_kg_agent_system_prompt,
+                create_kg_cypher_tool,
             )
 
             # Get the current KG manager (auto-activates)
@@ -438,8 +438,8 @@ class KgCommands(CliTopCommand):
 
             setup_langchain(llm, lc_debug, lc_verbose)
 
-            system_prompt = build_ekg_agent_system_prompt(single_tool_mode=first_tool)
-            ekg_tool = create_ekg_cypher_tool(
+            system_prompt = build_kg_agent_system_prompt(single_tool_mode=first_tool)
+            ekg_tool = create_kg_cypher_tool(
                 backend_config=GRAPH_DB_CONFIG,
                 kg_config_name=kg_config_name,
                 console=console,

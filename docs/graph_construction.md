@@ -125,7 +125,7 @@ When an entity appears in multiple data sources under different names
 
 1. **Create a canonical class** in `common_nodes.py` extending the BAML type:
 ```python
-from genai_graph.ekg.baml_client.types import Partner as BamlPartner
+from ekg_atos.baml_client.types import Partner as BamlPartner
 
 class Partner(BamlPartner):
     """Partner organization (canonical type for deduplication)."""
@@ -133,7 +133,7 @@ class Partner(BamlPartner):
 
 2. **Create a `GraphNode` singleton** in `canonical_nodes.py`:
 ```python
-from genai_graph.ekg.schema.common_nodes import Partner
+from ekg_atos.schema.common_nodes import Partner
 from genai_graph.kg.schema import GraphNode
 
 PartnerNode: GraphNode = GraphNode(
@@ -146,7 +146,7 @@ PartnerNode: GraphNode = GraphNode(
 
 3. **Import the singleton** in all factories (not the raw class):
 ```python
-from genai_graph.ekg.schema.canonical_nodes import CustomerNode, PartnerNode
+from ekg_atos.schema.canonical_nodes import CustomerNode, PartnerNode
 ```
 
 4. **Map the Neo4j label** to the canonical class (Neo4j factories only):
@@ -164,7 +164,7 @@ Neo4jNodeMapping(
 
 ```python
 # common_nodes.py
-from genai_graph.ekg.baml_client.types import Customer as BamlCustomer
+from ekg_atos.baml_client.types import Customer as BamlCustomer
 
 class Customer(BamlCustomer):
     """Extended Customer with fields from multiple sources."""
@@ -193,7 +193,7 @@ CustomerNode: GraphNode = GraphNode(
 **Usage in factories**:
 ```python
 # Import the GraphNode singleton, not the raw class
-from genai_graph.ekg.schema.canonical_nodes import CustomerNode, GeoNode, PartnerNode, OpportunityNode
+from ekg_atos.schema.canonical_nodes import CustomerNode, GeoNode, PartnerNode, OpportunityNode
 
 # Use in build_schema()
 nodes = [OpportunityNode, CustomerNode, PartnerNode]
@@ -271,7 +271,7 @@ stratnav_subset_rainbow_crm:
     - rainbow_add_crm         # Imports nodes/rels from parquet
     - stratnav_subset
   graphs:
-    - factory: genai_graph.ekg.schema.my_factory.MyGraph
+    - factory: ekg_atos.schema.my_factory.MyGraph
 ```
 
 **Import process**:
@@ -301,7 +301,7 @@ kg_configs:
     import:
       - crm_export              # Import CRM data first
     graphs:
-      - factory: "genai_graph.ekg.schema.rainbow_review.ReviewedOpportunityGraph"
+      - factory: "ekg_atos.schema.rainbow_review.ReviewedOpportunityGraph"
         data_root: ${paths.rainbow_json}
         include: 
           - "*CNES*TMA*VENUS*"
@@ -402,7 +402,7 @@ During KG creation, various warnings may appear. Here's a reference guide:
 ```
 No graphs are registered in the GraphRegistry.
 The following factories failed to load:
-  - genai_graph.ekg.schema.my_factory.MyGraph: ImportError: cannot import name ...
+  - ekg_atos.schema.my_factory.MyGraph: ImportError: cannot import name ...
 ```
 **Cause**: Factory import failed due to syntax error, missing dependency, or wrong module path.  
 **Solution**: Check the listed module paths and fix the import errors shown in the message.

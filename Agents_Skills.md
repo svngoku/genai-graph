@@ -15,7 +15,7 @@ apply it, **what files** are involved, and the **step-by-step** checklist.
 
 | What | Where |
 |------|-------|
-| Node model class | `genai_graph/ekg/schema/stratnav.py`, `common_nodes.py`, `rainbow_review.py` |
+| Node model class | `ekg_atos/ekg_atos/schema/stratnav.py`, `common_nodes.py`, `rainbow_review.py` |
 | Factory property mappings | Same schema file — `property_mappings` dict in `Neo4jNodeMapping` / `GraphNode` |
 | Neo4j factory base | `genai_graph/kg/factories/neo4j_factory.py` — auto-populates `id` from `key_field` |
 | Schema generation | `genai_graph/kg/ingest/extract.py` — `metadata_field_names` list skips certain fields |
@@ -50,8 +50,8 @@ The Neo4j factory auto-generates `mapped_props["id"]` from `key_field` (see `neo
 
 | Step | File | Action |
 |------|------|--------|
-| 1 | `genai_graph/ekg/schema/common_nodes.py` | Create canonical class extending BAML type |
-| 2 | `genai_graph/ekg/schema/common_nodes.py` | Add to `get_common_nodes()` with appropriate `key_from` |
+| 1 | `ekg_atos/ekg_atos/schema/common_nodes.py` | Create canonical class extending BAML type |
+| 2 | `ekg_atos/ekg_atos/schema/common_nodes.py` | Add to `get_common_nodes()` with appropriate `key_from` |
 | 3 | Factory that defined the old type (e.g. `stratnav.py`) | Delete old class, import canonical from `common_nodes` |
 | 4 | Factory that defined the old type | Update `Neo4jNodeMapping.node_class` and `Neo4jRelationMapping.to_node`/`from_node` |
 | 5 | Other factories using the type (e.g. `rainbow_review.py`) | Change import from `baml_client.types` to `common_nodes` |
@@ -64,7 +64,7 @@ The Neo4j factory auto-generates `mapped_props["id"]` from `key_field` (see `neo
 #### 1. Create canonical type in `common_nodes.py`
 
 ```python
-from genai_graph.ekg.baml_client.types import Partner as BamlPartner
+from ekg_atos.baml_client.types import Partner as BamlPartner
 
 class Partner(BamlPartner):
     """Partner organization (canonical type for deduplication)."""
@@ -89,7 +89,7 @@ Export it from the module. Other factories import this singleton.
 #### 3–4. Update the factory that owned the old type
 
 - Delete old class definition (e.g. `TechnologyPartner`).
-- Add to import: `from genai_graph.ekg.schema.canonical_nodes import ..., PartnerNode`
+- Add to import: `from ekg_atos.schema.canonical_nodes import ..., PartnerNode`
 - Update `Neo4jNodeMapping`: keep `neo4j_label="TechnologyPartner"` (matches source data), change `node_class=Partner`.
 - Update `Neo4jRelationMapping`: change `to_node=Partner` (or `from_node`) — these still use raw classes.
 
@@ -98,12 +98,12 @@ Export it from the module. Other factories import this singleton.
 Replace raw class imports with the node singleton:
 ```python
 # Before
-from genai_graph.ekg.baml_client.types import Partner
+from ekg_atos.baml_client.types import Partner
 # ...nodes list...
 GraphNode(node_class=Partner, name_from="name", key_from="name")
 
 # After
-from genai_graph.ekg.schema.canonical_nodes import PartnerNode
+from ekg_atos.schema.canonical_nodes import PartnerNode
 # ...nodes list...
 PartnerNode  # use the singleton directly
 ```
@@ -123,8 +123,8 @@ python -m pytest tests/ -x -q
 
 Also verify at runtime:
 ```python
-from genai_graph.ekg.schema.common_nodes import Partner
-from genai_graph.ekg.schema.stratnav import StratnavGraph
+from ekg_atos.schema.common_nodes import Partner
+from ekg_atos.schema.stratnav import StratnavGraph
 sg = StratnavGraph.__new__(StratnavGraph)
 mapping = [m for m in sg.get_node_mappings() if m.neo4j_label == "TechnologyPartner"][0]
 assert mapping.node_class.__name__ == "Partner"
@@ -197,13 +197,13 @@ A `GraphRelation` (or `Neo4jRelationMapping`) references a node class in `from_n
 
 | Concept | Path |
 |---------|------|
-| BAML schema definitions | `genai_graph/ekg/baml_src/schema/*.baml` |
-| Generated BAML types | `genai_graph/ekg/baml_client/types.py` (DO NOT EDIT) |
-| Canonical Pydantic classes | `genai_graph/ekg/schema/common_nodes.py` |
-| Canonical `GraphNode` singletons | `genai_graph/ekg/schema/canonical_nodes.py` |
-| Stratnav (Neo4j) factory | `genai_graph/ekg/schema/stratnav.py` |
-| Rainbow review (BAML) factory | `genai_graph/ekg/schema/rainbow_review.py` |
-| CRM export factory | `genai_graph/ekg/schema/crm_export.py` |
+| BAML schema definitions | `ekg_atos/ekg_atos/baml_src/schema/*.baml` |
+| Generated BAML types | `ekg_atos/ekg_atos/baml_client/types.py` (DO NOT EDIT) |
+| Canonical Pydantic classes | `ekg_atos/ekg_atos/schema/common_nodes.py` |
+| Canonical `GraphNode` singletons | `ekg_atos/ekg_atos/schema/canonical_nodes.py` |
+| Stratnav (Neo4j) factory | `ekg_atos/ekg_atos/schema/stratnav.py` |
+| Rainbow review (BAML) factory | `ekg_atos/ekg_atos/schema/rainbow_review.py` |
+| CRM export factory | `ekg_atos/ekg_atos/schema/crm_export.py` |
 | Neo4j factory base class | `genai_graph/kg/factories/neo4j_factory.py` |
 | Schema generation / extract | `genai_graph/kg/ingest/extract.py` |
 | Merge logic | `genai_graph/kg/ingest/merge.py` |

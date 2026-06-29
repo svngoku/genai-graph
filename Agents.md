@@ -257,3 +257,9 @@ For comprehensive workflow documentation, see:
 - **[../genai-tk/docs/workflows.md](../genai-tk/docs/workflows.md)** — Core workflow engine documentation
 - **[../genai-tk/docs/prefect.md](../genai-tk/docs/prefect.md)** — Prefect integration and flow writing guide
 
+For graph schema authoring:
+
+- **[docs/graph-definition-guide.md](docs/graph-definition-guide.md)** — 5-minute guide: models → GraphNode → schema → ingest → query
+- **[docs/graph-authoring-patterns.md](docs/graph-authoring-patterns.md)** — JSON, tables, Neo4j, documents, similarity, canonical reuse
+- **[docs/schema-compilation.md](docs/schema-compilation.md)** — Field-path deduction, `table_name`, exclusion, compiler functions
+

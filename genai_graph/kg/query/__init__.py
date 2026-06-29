@@ -6,8 +6,8 @@ This package provides:
 """
 
 from genai_graph.kg.query.agent import (
-    build_ekg_agent_system_prompt,
-    create_ekg_cypher_tool,
+    build_kg_agent_system_prompt,
+    create_kg_cypher_tool,
 )
 from genai_graph.kg.query.text2cypher import (
     SYSTEM_PROMPT,
@@ -19,6 +19,6 @@ __all__ = [
     "SYSTEM_PROMPT",
     "text2cypher_chain",
     "query_kg",
-    "build_ekg_agent_system_prompt",
-    "create_ekg_cypher_tool",
+    "build_kg_agent_system_prompt",
+    "create_kg_cypher_tool",
 ]

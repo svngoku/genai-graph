@@ -32,7 +32,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from loguru import logger
 from streamlit import session_state as sss
 
-from genai_graph.kg.query import build_ekg_agent_system_prompt, create_ekg_cypher_tool
+from genai_graph.kg.query import build_kg_agent_system_prompt, create_kg_cypher_tool
 from genai_graph.webapp.ui_components.kg_config_selector import (
     init_kg_config_session_state,
     render_kg_config_selector,
@@ -338,10 +338,10 @@ async def setup_agent_if_needed() -> Any:
             kg_config_name = sss.kg_config_selected
 
             # Build system prompt
-            system_prompt = build_ekg_agent_system_prompt(single_tool_mode=False, kg_config_name=kg_config_name)
+            system_prompt = build_kg_agent_system_prompt(single_tool_mode=False, kg_config_name=kg_config_name)
 
-            # Create EKG Cypher tool
-            ekg_tool = create_ekg_cypher_tool(
+            # Create KG Cypher tool
+            ekg_tool = create_kg_cypher_tool(
                 backend_config=GRAPH_DB_CONFIG,
                 kg_config_name=kg_config_name,
                 console=None,  # No console output in Streamlit

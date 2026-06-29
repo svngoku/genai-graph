@@ -146,15 +146,22 @@ class ResolvedSchema(BaseModel):
         schema: GraphSchema,
         graph_names: list[str] | None = None,
         print_enums: bool = True,
+        descriptions: dict[str, Any] | None = None,
     ) -> "ResolvedSchema":
-        """Build a ``ResolvedSchema`` from a ``GraphSchema`` + BAML docs.
+        """Build a ``ResolvedSchema`` from a ``GraphSchema`` and optional descriptions.
 
         Args:
             schema: The raw graph schema (from registry or factory).
             graph_names: Names of the graph factories included (for metadata).
             print_enums: Whether to resolve and include enumeration types.
+            descriptions: Optional pre-parsed BAML/custom description dict with
+                keys ``classes``, ``fields``, ``enums``.  When ``None``, field
+                and class descriptions fall back to Pydantic ``Field(description
+                =...)`` and docstrings only.  Pass the result of
+                ``_parse_baml_descriptions(your_baml_file_map)`` to enrich with
+                BAML ``@description`` annotations.
         """
-        baml_docs = _parse_baml_descriptions()
+        baml_docs = _parse_baml_descriptions(None) if descriptions is None else descriptions
 
         # Track embedded classes so they don't appear as top-level nodes.
         embedded_class_names: set[str] = set()
