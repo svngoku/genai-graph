@@ -70,3 +70,32 @@ workflows:
       exclude: []
       chunk_size: 512
       overlap: 50
+
+  # --------------------------------------------------------------------------
+  # Markdown Knowledge Tree
+  #
+  # Ingests a Markdown corpus into a Document + Section graph, extracting each
+  # document's heading hierarchy as a navigable tree — no chunking, no
+  # embeddings. An agent walks the tree via the tools in
+  # genai_graph.kg.query.markdown_tree_tools instead of vector search.
+  #
+  # Required param:  sources    — list of directories, files, or .zip archives
+  #                  db_path    — path to the Ladybug database file
+  # Optional params: include    — glob patterns  (default: ['*.md'])
+  #                  exclude    — glob patterns to exclude
+  #                  recursive  — recurse into sub-directories (default: true)
+  #                  force      — delete stale sections for re-ingested docs
+  #                  delete_first — drop the Section tables before ingesting
+  # --------------------------------------------------------------------------
+  markdown_tree:
+    description: "Build a Markdown Knowledge Tree (Document + Section graph) from a corpus"
+    run: genai_graph.orchestration.markdown_tree_flow.markdown_tree_build_step
+    defaults:
+      include: ['*.md']
+      exclude: []
+      recursive: true
+      force: false
+      delete_first: false
+    params:
+      sources: {required: true}
+      db_path: {required: true}

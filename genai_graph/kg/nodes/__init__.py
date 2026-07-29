@@ -6,6 +6,7 @@ the downstream project that imports genai-graph.
 """
 
 from genai_graph.kg.nodes.document import CONTAINS_DOC, NEXT_CHUNK, Chunk, ChunkNode, Document, DocumentNode
+from genai_graph.kg.nodes.markdown_tree import HAS_SECTION, HAS_SUBSECTION, MarkdownSection, SectionNode
 
 __all__ = [
     "Document",
@@ -14,4 +15,8 @@ __all__ = [
     "ChunkNode",
     "CONTAINS_DOC",
     "NEXT_CHUNK",
+    "MarkdownSection",
+    "SectionNode",
+    "HAS_SECTION",
+    "HAS_SUBSECTION",
 ]

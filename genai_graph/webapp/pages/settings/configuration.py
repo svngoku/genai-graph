@@ -128,11 +128,11 @@ def monitoring_configuration_section() -> None:
 
         if langsmith_enabled:
             global_config().set("monitoring.langsmith", "true")
-            os.environ["LANGCHAIN_TRACING_V2"] = "true"
+            os.environ["LANGSMITH_TRACING"] = "true"
             os.environ["LANGCHAIN_PROJECT"] = global_config().get_str("monitoring.project")
-            os.environ["LANGCHAIN_TRACING_SAMPLING_RATE"] = "1.0"
+            os.environ["LANGSMITH_TRACING_SAMPLING_RATE "] = "1.0"
         else:
-            os.environ["LANGCHAIN_TRACING_V2"] = "false"
+            os.environ["LANGSMITH_TRACING"] = "false"
             global_config().set("monitoring.langsmith", "false")
 
         monitoring_options.append("LangSmith detected")

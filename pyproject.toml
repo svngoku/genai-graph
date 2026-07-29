@@ -9,7 +9,7 @@ dependencies = [
     # For local development with unpushed genai-tk changes, use local path:
     # "genai_tk @ file:///home/tcl/prj/genai-tk",
     # For production or when using GitHub version:
-    "genai_tk @ git+https://github.com/tclatos/genai-tk@main",
+    "genai_tk",
     # Application framework dependencies
     "pydantic>=2.7.0,<3",         # Data validation framework
     "devtools>=0.12.2",           # Development utilities
@@ -26,7 +26,6 @@ dependencies = [
     "baml-py==0.223.0",         # FIXED VERSION to avoid to re-generate BAML sources with each new version of baml-py. Update this version when you want to update the BAML sources.
     "langchain-classic>=1.0.0",
     # "gpt-researcher>=0.13.3",
-    "baml-cli>=0.1.0",
     "pandas>=2.3.3",
     "langchain-litellm>=0.3.2",
     "case-converter>=1.2.0",
@@ -39,6 +38,7 @@ dependencies = [
     "chonkie>=1.5.2",
     "tokenizers>=0.21.0",           # Hugging Face tokenizers (for chonkie)
     "ladybug==0.16.1",              # no Vector in 0.17.0
+    "markdown-it-py>=3.0.0",        # CommonMark parser with line-number tracking (Markdown Knowledge Tree)
 ]
 
 [project.urls]
@@ -95,6 +95,12 @@ constraint-dependencies = [
     "alembic<1.18",   # 1.18.x has missing PriorityDispatcher (breaks Prefect)
     "openai<2.44",    # 2.44.0 has circular import in _utils/_files
 ]
+
+[tool.uv.sources]
+# Keep in sync with any downstream project (e.g. rfq_pricing) that pulls in
+# genai-graph as a path dependency — uv requires a single resolved git ref
+# for genai-tk across the whole dependency graph.
+genai_tk = { git = "https://github.com/tclatos/genai-tk", rev = "orchestrator/testing-ci-config" }
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
