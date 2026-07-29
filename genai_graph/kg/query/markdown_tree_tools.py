@@ -21,8 +21,10 @@ _DOCUMENT_LABEL = DocumentNode.node_class.__name__
 _SECTION_LABEL = SectionNode.node_class.__name__
 
 
-def _query_rows(backend: KgBackend, query: str, parameters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-    """Run a Cypher query and return rows as dicts, or `[]` if the table doesn't exist yet.
+def _query_rows(
+    backend: KgBackend, query: str, parameters: dict[str, Any] | None = None
+) -> tuple[list[dict[str, Any]], str]:
+    """Run a Cypher query and return (rows, query_string).
 
     A fresh (never-ingested) or just-dropped database legitimately has no
     Document/MarkdownSection tables — treat that as "no results" rather than
@@ -33,24 +35,50 @@ def _query_rows(backend: KgBackend, query: str, parameters: dict[str, Any] | Non
     except Exception as exc:  # noqa: BLE001
         if "does not exist" in str(exc):
             logger.debug("Markdown Knowledge Tree table not found (not yet ingested?): {}", exc)
-            return []
+            return [], query
         raise
-    return df.to_dict(orient="records")
+    return df.to_dict(orient="records"), query
+
+
+def _resolve_document_path(backend: KgBackend, document_id: str) -> str | None:
+    """Resolve a document by path (unchanged) or content_hash (lookup).
+
+    Args:
+        backend: Connected `KgBackend`.
+        document_id: Either a document path or a content_hash prefix.
+
+    Returns:
+        The full document path, or None if not found.
+    """
+    # Try exact path match first
+    query = f"MATCH (d:{_DOCUMENT_LABEL} {{path: $id}}) RETURN d.path AS path LIMIT 1"
+    rows, _ = _query_rows(backend, query, {"id": document_id})
+    if rows:
+        return rows[0]["path"]
+
+    # Try content_hash prefix/exact match
+    query = f"MATCH (d:{_DOCUMENT_LABEL}) WHERE d.content_hash STARTS WITH $id OR d.content_hash = $id RETURN d.path AS path LIMIT 1"
+    rows, _ = _query_rows(backend, query, {"id": document_id})
+    if rows:
+        return rows[0]["path"]
+
+    return None
 
 
 def list_documents(backend: KgBackend) -> list[dict[str, Any]]:
-    """List every ingested document with its section count.
+    """List every ingested document with its section count and content hash.
 
     Args:
         backend: Connected `KgBackend`.
 
     Returns:
-        List of `{path, filename, section_count}` dicts, ordered by filename.
+        List of `{path, filename, content_hash, section_count}` dicts, ordered by filename.
     """
-    rows = _query_rows(
-        backend, f"MATCH (d:{_DOCUMENT_LABEL}) RETURN d.path AS path, d.filename AS filename ORDER BY d.filename"
+    rows, _ = _query_rows(
+        backend,
+        f"MATCH (d:{_DOCUMENT_LABEL}) RETURN d.path AS path, d.filename AS filename, d.content_hash AS content_hash ORDER BY d.filename",
     )
-    count_rows = _query_rows(
+    count_rows, _ = _query_rows(
         backend, f"MATCH (s:{_SECTION_LABEL}) RETURN s.document_path AS document_path, count(s) AS section_count"
     )
     counts_by_path = {r["document_path"]: r["section_count"] for r in count_rows}
@@ -59,7 +87,9 @@ def list_documents(backend: KgBackend) -> list[dict[str, Any]]:
     return rows
 
 
-def get_document_toc(backend: KgBackend, document_path: str) -> list[dict[str, Any]]:
+def get_document_toc(
+    backend: KgBackend, document_id: str, return_query: bool = False
+) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], str]:
     """Return the table of contents (heading tree) for one document.
 
     No section body text is returned — this is the map an agent uses to
@@ -67,30 +97,40 @@ def get_document_toc(backend: KgBackend, document_path: str) -> list[dict[str, A
 
     Args:
         backend: Connected `KgBackend`.
-        document_path: `Document.path` primary key.
+        document_id: Document path or content_hash (prefix or full).
+        return_query: When True, return (rows, query_string) tuple.
 
     Returns:
-        List of `{section_id, parent_section_id, title, level, line_start, sequence}`
-        dicts, ordered by document position.
+        List of dicts or (list, query_string) tuple depending on return_query.
     """
+    document_path = _resolve_document_path(backend, document_id)
+    if not document_path:
+        result = []
+        query = f"-- No document found matching: {document_id}"
+        return (result, query) if return_query else result
+
     query = f"""
         MATCH (s:{_SECTION_LABEL} {{document_path: $document_path}})
         RETURN s.section_id AS section_id, s.parent_section_id AS parent_section_id,
                s.title AS title, s.level AS level, s.line_start AS line_start, s.sequence AS sequence
         ORDER BY s.sequence
     """
-    return _query_rows(backend, query, {"document_path": document_path})
+    rows, _ = _query_rows(backend, query, {"document_path": document_path})
+    return (rows, query) if return_query else rows
 
 
-def get_section_content(backend: KgBackend, section_ids: list[str]) -> list[dict[str, Any]]:
+def get_section_content(
+    backend: KgBackend, section_ids: list[str], return_query: bool = False
+) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], str]:
     """Fetch the raw Markdown text of one or more sections.
 
     Args:
         backend: Connected `KgBackend`.
         section_ids: `MarkdownSection.section_id` values to fetch.
+        return_query: When True, return (rows, query_string) tuple.
 
     Returns:
-        List of `{section_id, document_path, title, line_start, line_end, text}` dicts.
+        List of dicts or (list, query_string) tuple depending on return_query.
     """
     query = f"""
         MATCH (s:{_SECTION_LABEL})
@@ -99,10 +139,13 @@ def get_section_content(backend: KgBackend, section_ids: list[str]) -> list[dict
                s.line_start AS line_start, s.line_end AS line_end, s.text AS text
         ORDER BY s.document_path, s.line_start
     """
-    return _query_rows(backend, query, {"section_ids": section_ids})
+    rows, _ = _query_rows(backend, query, {"section_ids": section_ids})
+    return (rows, query) if return_query else rows
 
 
-def search_sections(backend: KgBackend, keyword: str, limit: int = 20) -> list[dict[str, Any]]:
+def search_sections(
+    backend: KgBackend, keyword: str, limit: int = 20, return_query: bool = False
+) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], str]:
     """Cross-document keyword search over section titles and body text.
 
     Pure string matching — no embeddings involved.
@@ -111,9 +154,10 @@ def search_sections(backend: KgBackend, keyword: str, limit: int = 20) -> list[d
         backend: Connected `KgBackend`.
         keyword: Substring to search for (case-sensitive Cypher `CONTAINS`).
         limit: Maximum number of matches to return.
+        return_query: When True, return (rows, query_string) tuple.
 
     Returns:
-        List of `{document_path, section_id, title, level, line_start}` dicts.
+        List of dicts or (list, query_string) tuple depending on return_query.
     """
     query = f"""
         MATCH (s:{_SECTION_LABEL})
@@ -123,7 +167,8 @@ def search_sections(backend: KgBackend, keyword: str, limit: int = 20) -> list[d
         ORDER BY s.document_path, s.line_start
         LIMIT $limit
     """
-    return _query_rows(backend, query, {"keyword": keyword, "limit": limit})
+    rows, _ = _query_rows(backend, query, {"keyword": keyword, "limit": limit})
+    return (rows, query) if return_query else rows
 
 
 def _connect(db_path: str) -> KgBackend:
