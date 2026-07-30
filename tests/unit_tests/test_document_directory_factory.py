@@ -14,17 +14,16 @@ class TestDocumentModel:
     def test_required_fields(self) -> None:
         from genai_graph.kg.nodes.document import Document
 
-        doc = Document(path="/data/file.md", filename="file.md")
+        doc = Document(content_hash="abc123", path="/data/file.md", filename="file.md")
         assert doc.path == "/data/file.md"
         assert doc.filename == "file.md"
 
     def test_optional_defaults(self) -> None:
         from genai_graph.kg.nodes.document import Document
 
-        doc = Document(path="/data/file.md", filename="file.md")
+        doc = Document(content_hash="abc123", path="/data/file.md", filename="file.md")
         assert doc.file_size is None
         assert doc.mime_type is None
-        assert doc.content_hash is None
         assert doc.access_level == "public"
         assert doc.allowed_roles == []
         assert doc.allowed_users == []
@@ -33,6 +32,7 @@ class TestDocumentModel:
         from genai_graph.kg.nodes.document import Document
 
         doc = Document(
+            content_hash="secret123",
             path="/data/secret.md",
             filename="secret.md",
             access_level="confidential",
@@ -79,7 +79,7 @@ class TestGraphNodeSingletons:
     def test_document_node_keys(self) -> None:
         from genai_graph.kg.nodes.document import Document, DocumentNode
 
-        assert DocumentNode.key_from == "path"
+        assert DocumentNode.key_from == "content_hash"
         assert DocumentNode.name_from == "filename"
         assert DocumentNode.node_class is Document
         assert DocumentNode.explicitly_defined is True

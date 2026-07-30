@@ -11,25 +11,27 @@ from genai_graph.kg.nodes.document import Document, DocumentNode
 
 class TestDocumentModel:
     def test_required_fields(self) -> None:
-        doc = Document(path="/data/foo.json", filename="foo.json")
+        doc = Document(content_hash="abc123", path="/data/foo.json", filename="foo.json")
+        assert doc.content_hash == "abc123"
         assert doc.path == "/data/foo.json"
         assert doc.filename == "foo.json"
 
     def test_optional_fields_default_none(self) -> None:
-        doc = Document(path="/data/foo.json", filename="foo.json")
+        doc = Document(content_hash="abc123", filename="foo.json")
         assert doc.file_size is None
         assert doc.mime_type is None
         assert doc.modified_at is None
-        assert doc.content_hash is None
+        assert doc.path is None
 
     def test_access_control_defaults(self) -> None:
-        doc = Document(path="/data/foo.json", filename="foo.json")
+        doc = Document(content_hash="abc123", filename="foo.json")
         assert doc.access_level == "public"
         assert doc.allowed_roles == []
         assert doc.allowed_users == []
 
     def test_access_control_explicit(self) -> None:
         doc = Document(
+            content_hash="secret123",
             path="/data/secret.json",
             filename="secret.json",
             access_level="confidential",
@@ -42,12 +44,12 @@ class TestDocumentModel:
 
     def test_full_attributes(self) -> None:
         doc = Document(
+            content_hash="abc123",
             path="/data/foo.json",
             filename="foo.json",
             file_size=1024,
             mime_type="application/json",
             modified_at="2026-01-01T00:00:00+00:00",
-            content_hash="abc123",
         )
         assert doc.file_size == 1024
         assert doc.mime_type == "application/json"
@@ -55,8 +57,8 @@ class TestDocumentModel:
 
 
 class TestDocumentNode:
-    def test_node_key_from_path(self) -> None:
-        assert DocumentNode.key_from == "path"
+    def test_node_key_from_content_hash(self) -> None:
+        assert DocumentNode.key_from == "content_hash"
 
     def test_node_name_from_filename(self) -> None:
         assert DocumentNode.name_from == "filename"

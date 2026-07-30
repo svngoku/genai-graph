@@ -52,6 +52,7 @@ ekg_local:
     - genai_tk.agents.commands_agents.AgentCommands
     - genai_tk.extra.structured.commands_baml.BamlCommands
     - genai_graph.core.commands_ekg.EkgCommands
+    - genai_graph.core.commands_tree.TreeCommands
     - genai_graph.neo4j_import.commands.Neo4jCommands
 
   kv_store: 

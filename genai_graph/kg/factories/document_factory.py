@@ -224,20 +224,22 @@ class DocumentDirectoryFactory(KgFactory):
         try:
             from genai_tk.utils.hashing import file_digest
 
-            content_hash: str | None = file_digest(path)
+            content_hash: str = file_digest(path)
         except Exception as exc:
+            from genai_tk.utils.hashing import buffer_digest
+
             logger.warning("Could not hash {}: {}", path, exc)
-            content_hash = None
+            content_hash = buffer_digest(str(path).encode("utf-8"))
 
         mime_type, _ = mimetypes.guess_type(str(path))
 
         return Document(
+            content_hash=content_hash,
             path=str(path),
             filename=path.name,
             file_size=file_size,
             mime_type=mime_type,
             modified_at=modified_at,
-            content_hash=content_hash,
         )
 
     def _chunk_text(self, text: str) -> list[tuple[str, int | None, int | None, int | None]]:

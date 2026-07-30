@@ -79,15 +79,16 @@ class TestMarkdownTreeFactoryParsing:
         md_file.write_text("# Title\n\nintro\n\n## Sub\n\nbody\n")
 
         factory = MarkdownTreeFactory(sources=[str(tmp_path)])
-        tree = factory.get_struct_data_by_key(str(md_file))
+        bundle = factory.get_struct_data_by_key(str(md_file))
 
-        assert tree is not None
-        assert tree.document.path == str(md_file)
-        assert tree.document.filename == "doc.md"
-        assert [s.title for s in tree.sections] == ["Title", "Sub"]
-        assert tree.sections[0].parent_section_id is None
-        assert tree.sections[1].parent_section_id == tree.sections[0].section_id
-        assert tree.sections[0].section_id == f"{md_file}::1"
+        assert bundle is not None
+        assert bundle.document.path == str(md_file)
+        assert bundle.document.filename == "doc.md"
+        assert [s.title for s in bundle.sections] == ["Title", "Sub"]
+        assert bundle.sections[0].parent_section_id is None
+        assert bundle.sections[1].parent_section_id == bundle.sections[0].section_id
+        markdown_hash = bundle.markdown_document.content_hash
+        assert bundle.sections[0].section_id == f"{markdown_hash}::0"
 
     def test_missing_file_returns_none(self, tmp_path: Path) -> None:
         factory = MarkdownTreeFactory(sources=[str(tmp_path)])

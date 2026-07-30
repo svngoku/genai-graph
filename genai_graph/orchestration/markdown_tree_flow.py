@@ -7,11 +7,14 @@ referenced by dotted path from a genai-tk workflow YAML (`run:` /
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from genai_tk.workflow.registry import workflow
 from loguru import logger
 from prefect import flow
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 @flow(name="markdown_tree")
@@ -24,6 +27,8 @@ def markdown_tree_flow(
     recursive: bool = True,
     force: bool = False,
     delete_first: bool = False,
+    embed_chunks: bool = False,
+    embeddings_model: str | None = None,
 ) -> dict[str, Any]:
     """Build (or update) a Markdown Knowledge Tree graph at *db_path*.
 
@@ -33,14 +38,17 @@ def markdown_tree_flow(
         include: Glob patterns to include (default `["*.md"]`).
         exclude: Glob patterns to exclude.
         recursive: Recurse into sub-directories.
-        force: Delete stale sections for re-ingested documents before merging
+        force: Rebuild sections/chunks for documents already in the graph
             (handles heading/line-number drift on file edits).
-        delete_first: Drop the Section tables before ingesting (full reset of
-            the Markdown tree; the shared Document table is preserved).
+        delete_first: Drop the Section/Chunk tables before ingesting (full reset
+            of the Markdown tree; the shared Document table is preserved).
+        embed_chunks: Compute embeddings for newly-ingested chunks.
+        embeddings_model: Embeddings model id (uses config default when omitted).
 
     Returns:
-        Dict with `db_path`, `documents_processed`, `documents_failed`,
-        `sections_created`, `relationships_created`, `warnings`.
+        Dict with `db_path`, `documents_processed`, `documents_skipped`,
+        `documents_failed`, `sections_created`, `chunks_created`,
+        `relationships_created`, `warnings`.
     """
     from genai_graph.kg.backend import KuzuBackend
     from genai_graph.kg.factories.markdown_tree_factory import MarkdownTreeFactory
@@ -58,6 +66,8 @@ def markdown_tree_flow(
         include=include or ["*.md"],
         exclude=exclude or [],
         recursive=recursive,
+        embed_chunks=embed_chunks,
+        embeddings_model=embeddings_model,
     )
 
     result = ingest_markdown_tree(backend, factory, force=force)
@@ -65,8 +75,10 @@ def markdown_tree_flow(
     return {
         "db_path": db_path,
         "documents_processed": result.documents_processed,
+        "documents_skipped": result.documents_skipped,
         "documents_failed": result.documents_failed,
         "sections_created": result.sections_created,
+        "chunks_created": result.chunks_created,
         "relationships_created": result.relationships_created,
         "warnings": result.warnings,
     }
@@ -82,6 +94,8 @@ def markdown_tree_build_step(
     recursive: bool = True,
     force: bool = False,
     delete_first: bool = False,
+    embed_chunks: bool = False,
+    embeddings_model: str | None = None,
 ) -> dict[str, Any]:
     """Workflow-engine wrapper around `markdown_tree_flow` (see its docstring)."""
     return markdown_tree_flow(
@@ -92,4 +106,35 @@ def markdown_tree_build_step(
         recursive=recursive,
         force=force,
         delete_first=delete_first,
+        embed_chunks=embed_chunks,
+        embeddings_model=embeddings_model,
     )
+
+
+def make_source_already_ingested(db_path: str) -> "Callable[[str], bool]":
+    """Return a callback usable as ``markdownize_flow(already_processed=...)``.
+
+    The returned callable takes a source file's content hash and reports whether
+    a `MarkdownDocument` derived from it is already in the graph at *db_path* —
+    letting the markdownize step skip re-converting files whose output is
+    already stored, without genai-tk depending on genai-graph.
+    """
+    from genai_graph.kg.backend import KuzuBackend
+
+    backend = KuzuBackend()
+    backend.connect(db_path)
+
+    def _already(source_hash: str) -> bool:
+        try:
+            df = backend.execute_get_as_df(
+                "MATCH (m:MarkdownDocument {source_hash: $h}) RETURN m.content_hash AS h LIMIT 1",
+                {"h": source_hash},
+                union=False,
+            )
+        except Exception as exc:  # noqa: BLE001
+            if "does not exist" in str(exc):
+                return False
+            raise
+        return not df.empty
+
+    return _already

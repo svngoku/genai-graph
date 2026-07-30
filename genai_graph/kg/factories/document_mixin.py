@@ -63,20 +63,22 @@ class DocumentMixin:
             modified_at = None
 
         try:
-            content_hash: str | None = file_digest(file_path)
+            content_hash: str = file_digest(file_path)
         except Exception as exc:
+            from genai_tk.utils.hashing import buffer_digest
+
             logger.warning("Could not hash {}: {}", file_path, exc)
-            content_hash = None
+            content_hash = buffer_digest(str(file_path).encode("utf-8"))
 
         mime_type, _ = mimetypes.guess_type(str(file_path))
 
         return Document(
+            content_hash=content_hash,
             path=str(file_path),
             filename=file_path.name,
             file_size=file_size,
             mime_type=mime_type,
             modified_at=modified_at,
-            content_hash=content_hash,
         )
 
     def get_document_schema_elements(

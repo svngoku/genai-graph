@@ -592,11 +592,12 @@ def create_document_nodes_task(bundles: list[GraphBundle], backend: KgBackend) -
                     return _format_value_for_cypher(val)
 
                 merge_doc_cypher = (
-                    f"MERGE (d:Document {{path: {_v(doc.path)}}})\n"
+                    f"MERGE (d:Document {{content_hash: {_v(doc.content_hash)}}})\n"
                     f"ON CREATE SET\n"
                     f"  d.name = {_v(doc.filename)},\n"
                     f"  d._original_name = {_v(doc.filename)},\n"
                     f"  d.filename = {_v(doc.filename)},\n"
+                    f"  d.path = {_v(doc.path)},\n"
                     f"  d.file_size = {_v(doc.file_size)},\n"
                     f"  d.mime_type = {_v(doc.mime_type)},\n"
                     f"  d.modified_at = {_v(doc.modified_at)},\n"
@@ -619,7 +620,7 @@ def create_document_nodes_task(bundles: list[GraphBundle], backend: KgBackend) -
             # ── 4. Create CONTAINS relationship ────────────────────────────
             try:
                 contains_cypher = (
-                    f"MATCH (d:Document {{path: {_v(doc.path)}}}),\n"
+                    f"MATCH (d:Document {{content_hash: {_v(doc.content_hash)}}}),\n"
                     f"      (r:{root_type_name} {{{pk_field}: {_v(root_entity_pk)}}})\n"
                     f"MERGE (d)-[:CONTAINS]->(r)"
                 )

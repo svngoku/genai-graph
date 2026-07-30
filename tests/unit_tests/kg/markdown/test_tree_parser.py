@@ -9,9 +9,22 @@ from genai_graph.kg.markdown.tree_parser import parse_markdown_tree
 
 @pytest.mark.unit
 class TestParseMarkdownTree:
-    def test_empty_document_has_no_sections(self) -> None:
-        assert parse_markdown_tree("") == []
-        assert parse_markdown_tree("Just a paragraph, no headings.") == []
+    def test_empty_document_has_single_root_section(self) -> None:
+        sections = parse_markdown_tree("")
+        assert len(sections) == 1
+        assert sections[0].level == 0
+
+    def test_no_headings_document_has_single_root_section(self) -> None:
+        raw = "Just a paragraph, no headings."
+        sections = parse_markdown_tree(raw)
+        assert len(sections) == 1
+        assert sections[0].level == 0
+        assert sections[0].text == raw
+
+    def test_document_is_reconstructable_from_sections(self) -> None:
+        raw = "# Title\n\nIntro text.\n\n## Section A\n\nBody A.\n\n## Section B\n\nBody B.\n"
+        sections = parse_markdown_tree(raw)
+        assert "\n".join(s.text for s in sections) == raw.rstrip("\n")
 
     def test_flat_headings(self) -> None:
         raw = "# Title\n\nIntro text.\n\n## Section A\n\nBody A.\n\n## Section B\n\nBody B.\n"
@@ -50,9 +63,9 @@ class TestParseMarkdownTree:
         title, section_a, section_b = sections
 
         assert title.line_start == 1
-        # "Title" is H1; its section spans until the next H1-or-shallower heading,
-        # i.e. the whole rest of the document since no other H1 follows.
-        assert title.line_end == 7
+        # "Title" is H1; its *own* text spans only until the next heading of
+        # any level (nested subsections own their own text ranges).
+        assert title.line_end == 2
         assert section_a.line_start == 3
         assert section_a.line_end == 5  # ends right before "## Section B"
         assert section_b.line_start == 6
