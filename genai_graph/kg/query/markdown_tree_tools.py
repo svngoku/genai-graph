@@ -37,7 +37,9 @@ def _query_rows(
             logger.debug("Markdown Knowledge Tree table not found (not yet ingested?): {}", exc)
             return [], query
         raise
-    return df.to_dict(orient="records"), query
+    # pandas renders SQL/Cypher NULLs (e.g. a root section's parent_section_id) as
+    # float NaN rather than None — normalize so callers can compare with `is None`.
+    return df.astype(object).where(df.notna(), None).to_dict(orient="records"), query
 
 
 def _resolve_markdown_hash(backend: KgBackend, document_id: str) -> str | None:

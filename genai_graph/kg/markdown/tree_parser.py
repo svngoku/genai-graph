@@ -23,6 +23,49 @@ from pydantic import BaseModel, Field
 # preamble (text before the first heading) or a heading-less document.
 ROOT_SECTION_TITLE = "(document root)"
 
+# Headings that are page markers from a PDF/Doc → Markdown conversion (e.g.
+# "## Page 12"). These carry no structural meaning and must not become sections.
+_PAGE_MARKER_RE = re.compile(r"^page\s+\d+$", re.IGNORECASE)
+
+# Leading outline number of a heading, ignoring surrounding Markdown emphasis
+# (e.g. "**3.4 Device life cycle**" → "3.4"). The depth (dot-separated component
+# count) gives the heading's logical level in a numbered document.
+_OUTLINE_NUMBER_RE = re.compile(r"^\**\s*(\d+(?:\.\d+)*)\b")
+
+
+def _outline_depth(title: str) -> int | None:
+    """Depth of a heading's leading outline number (``3.4`` → 2), or None if unnumbered."""
+    match = _OUTLINE_NUMBER_RE.match(title)
+    if not match:
+        return None
+    return match.group(1).count(".") + 1
+
+
+def _infer_levels(titles: list[str], md_levels: list[int]) -> list[int]:
+    """Derive logical heading levels for a numbered document from its outline numbers.
+
+    PDF/Doc → Markdown conversions routinely emit inconsistent ``#`` levels (the
+    same "3.1"/"3.5" heading may come out as H4 or H1). When a document is clearly
+    numbered, the outline number is the reliable structure signal: a heading's level
+    is its number's depth (``1`` → 1, ``1.1`` → 2), and an unnumbered heading nests
+    one level below the most recent numbered heading. Documents without meaningful
+    numbering keep their original Markdown levels.
+    """
+    depths = [_outline_depth(t) for t in titles]
+    if sum(d is not None for d in depths) < 3:
+        return md_levels
+
+    levels: list[int] = []
+    last_numbered_level = 0
+    for depth in depths:
+        if depth is not None:
+            level = depth
+            last_numbered_level = level
+        else:
+            level = last_numbered_level + 1
+        levels.append(level)
+    return levels
+
 
 class FlatSection(BaseModel):
     """A single section, before hierarchy is resolved into graph edges."""
@@ -75,8 +118,16 @@ def parse_markdown_tree(raw: str) -> list[FlatSection]:
             title = ""
             if i + 1 < len(tokens) and tokens[i + 1].type == "inline":
                 title = tokens[i + 1].content.strip()
-            headings.append((title, level, line_start))
+            # Drop page-marker headings ("Page 12"): they are conversion artifacts,
+            # not document structure. Their text stays inline in the enclosing section.
+            if not _PAGE_MARKER_RE.match(title):
+                headings.append((title, level, line_start))
         depth += tok.nesting
+
+    # In numbered documents the source '#' levels are unreliable (PDF artifacts);
+    # re-derive each heading's logical level from its outline number.
+    inferred_levels = _infer_levels([h[0] for h in headings], [h[1] for h in headings])
+    headings = [(title, inferred_levels[idx], line_start) for idx, (title, _, line_start) in enumerate(headings)]
 
     sections: list[FlatSection] = []
 

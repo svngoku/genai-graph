@@ -176,4 +176,13 @@ class TreeCommands(CliTopCommand):
             for r in rows:  # type: ignore[union-attr]
                 console.print(f"- [{r['section_id']}] {r['title']} (line {r['line_start']}) — {r['markdown_hash']}")
 
+        @cli_app.command("tui")
+        def tui(
+            db_path: Annotated[str, typer.Option("--db", help="Path to the Ladybug database file.")],
+        ) -> None:
+            """Launch an interactive Textual TUI to browse the Markdown Knowledge Tree."""
+            from genai_graph.kg.query.markdown_tree_tui import run_markdown_tree_tui
+
+            run_markdown_tree_tui(db_path)
+
         logger.debug("Registered 'tree' CLI commands")
