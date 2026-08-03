@@ -198,7 +198,7 @@ This project integrates with the **genai-tk Workflow Engine** for composable, YA
 
 ### Key Concepts
 
-- **Workflows** — Define multi-step pipelines (ppt2pdf → markdownize → kg_create) in YAML
+- **Workflows** — Define multi-step pipelines (office2pdf → markdownize → kg_create) in YAML
 - **Profiles** — Bind workflows to specific data sources and configurations
 - **Steps** — Each step references a Prefect flow or function using a dotted Python path
 - **Dependencies** — Steps declare `needs:` to define execution order
@@ -211,7 +211,7 @@ workflows:
     description: "PPT → PDF → Markdown → Knowledge Graph"
     steps:
       - id: ppt_to_pdf
-        uses: genai_tk.extra.ppt2pdf_prefect_flow.ppt2pdf_flow
+        uses: genai_tk.extra.office2pdf_prefect_flow.office2pdf_flow
         inputs:
           root_dir: "${profile.ppt_dir}"
           output_dir: "${profile.pdf_dir}"

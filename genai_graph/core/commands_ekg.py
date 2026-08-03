@@ -167,7 +167,7 @@ class KgCommands(CliTopCommand):
             cli_overrides.setdefault("export_html", export_html)
 
             # KG workflows: all workflows except data-prep ones
-            _DATA_PREP = {"ppt2pdf_documents", "markdownize_documents", "full_kg_pipeline"}
+            _DATA_PREP = {"office2pdf_documents", "markdownize_documents", "full_kg_pipeline"}
             all_workflow_names = [n for n in list_workflow_names() if n not in _DATA_PREP]
 
             # Determine which workflows to run

@@ -2,16 +2,16 @@
 # Data injection workflows  (DSL v2)
 # ---------------------------------------------------------------------------
 # Usage:
-#   cli workflow run ppt2pdf_documents/rainbow --dry-run
+#   cli workflow run office2pdf_documents/rainbow --dry-run
 #   cli workflow run full_kg_pipeline/rainbow --dry-run
 #   cli workflow list
 # ---------------------------------------------------------------------------
 
 workflows:
 
-  ppt2pdf_documents:
-    description: "Convert PowerPoint files to PDF"
-    run: genai_tk.workflow.prefect.flows.ppt2pdf_flow.ppt2pdf_flow
+  office2pdf_documents:
+    description: "Convert Office documents (PowerPoint, Excel) to PDF"
+    run: genai_tk.workflow.prefect.flows.office2pdf_flow.office2pdf_flow
     defaults:
       batch_size: 5
     params:
@@ -21,7 +21,7 @@ workflows:
       rainbow:
         base_dir: '${paths.rainbow_ppt}'
         output_dir: '${paths.rainbow_pdf}'
-        pathspecs: ['**/*.pptx', '**/*.ppt', '**/*.odp']
+        pathspecs: ['**/*.pptx', '**/*.ppt', '**/*.odp', '**/*.xlsx', '**/*.xls']
         batch_size: 5
 
   markdownize_documents:
@@ -50,11 +50,11 @@ workflows:
     description: "End-to-end pipeline: PPT to PDF, Markdown, then KG creation"
     pipeline:
       - id: ppt_to_pdf
-        run: ppt2pdf_documents
+        run: office2pdf_documents
         with:
           base_dir: '${values.ppt_base_dir}'
           output_dir: '${values.pdf_output_dir}'
-          pathspecs: ['**/*.pptx', '**/*.ppt', '**/*.odp']
+          pathspecs: ['**/*.pptx', '**/*.ppt', '**/*.odp', '**/*.xlsx', '**/*.xls']
 
       - id: markdownize
         run: markdownize_documents

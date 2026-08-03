@@ -22,7 +22,7 @@ workflow DSL — the same DSL used for RAG ingestion, anonymization, and pre-pro
 uv run cli workflow list
 # Profiles include: kg_one_rainbow, kg_rainbow_add_crm, kg_stratnav_subset,
 #                   kg_stratnav_subset_rainbow_crm, kg_learned,
-#                   ppt2pdf_rainbow, markdownize_rainbow, full_rainbow_pipeline
+#                   office2pdf_rainbow, markdownize_rainbow, full_rainbow_pipeline
 ```
 
 ### Run a KG Creation Workflow
@@ -73,7 +73,7 @@ cli kg create one_rainbow --set force_rebuild=true
 | File | Purpose |
 |------|---------|
 | `config/ekg_workflows.yaml` | KG build workflows — step templates, workflows, profiles |
-| `config/workflows.yaml` | Pre-processing workflows — ppt2pdf, markdownize, full pipeline |
+| `config/workflows.yaml` | Pre-processing workflows — office2pdf, markdownize, full pipeline |
 
 Both are merged into the global config via `:merge:` in `app_conf.yaml`, so all workflows
 are available from a single `cli workflow` command.

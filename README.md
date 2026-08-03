@@ -200,7 +200,7 @@ End-to-end: raw documents → queryable knowledge graph
 
 ```bash
 # 1. Convert PPT/PDF to Markdown
-just ppt2pdf   # or: cli workflow run ppt2pdf_documents
+just office2pdf   # or: cli workflow run office2pdf_documents
 just markdownize
 
 # 2. Extract structured data with BAML (LLM)
