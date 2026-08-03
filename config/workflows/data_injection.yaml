@@ -38,13 +38,13 @@ workflows:
         output_dir: '${paths.rainbow_md}'
         pathspecs: ['**/*.pdf']
         batch_size: 5
-        converter: markitdown
+        profile: fast
       rfq:
         base_dir: '${paths.rfq_pdf}'
         output_dir: '${paths.rfq_md}'
         pathspecs: ['**/*.pdf']
         batch_size: 5
-        converter: markitdown
+        profile: fast
 
   full_kg_pipeline:
     description: "End-to-end pipeline: PPT to PDF, Markdown, then KG creation"
@@ -72,7 +72,7 @@ workflows:
       delete_first: false
       export_html: true
       force_rebuild: false
-      converter: markitdown
+      profile: fast
     params:
       ppt_base_dir: {required: true}
       pdf_output_dir: {required: true}
@@ -83,4 +83,4 @@ workflows:
         pdf_output_dir: '${paths.rainbow_pdf}'
         md_output_dir: '${paths.rainbow_md}'
         batch_size: 5
-        converter: markitdown
+        profile: fast
