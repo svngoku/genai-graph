@@ -48,7 +48,7 @@ def _render_kg_plan(invocation: Any) -> None:
     summary.add_column("Value", style="white")
     summary.add_row("Workflow", invocation.workflow_name)
     summary.add_row("Profile", invocation.profile_name or "<none>")
-    summary.add_row("Force", str(invocation.force))
+    summary.add_row("Force stage", invocation.force_stage or "<none>")
     summary.add_row("Steps", str(len(invocation.workflow.steps)))
     console.print(summary)
 
@@ -113,9 +113,12 @@ class KgCommands(CliTopCommand):
                 typer.Option("--dry-run", help="Resolve the workflow plan without executing."),
             ] = False,
             force: Annotated[
-                bool,
-                typer.Option("--force", help="Force rebuild of imported KG dependencies."),
-            ] = False,
+                str | None,
+                typer.Option(
+                    "--force",
+                    help="Force-invalidate caches from this stage onward: parquet, graph, embed, all.",
+                ),
+            ] = None,
             delete_first: Annotated[
                 bool,
                 typer.Option("--delete-first/--no-delete-first", help="Delete existing KG before creation."),
@@ -140,18 +143,27 @@ class KgCommands(CliTopCommand):
 
             Examples:
                 cli kg create one_rainbow
-                cli kg create one_rainbow --force --no-delete-first
+                cli kg create one_rainbow --force parquet --no-delete-first
                 cli kg create --all
                 cli kg create one_rainbow --dry-run
                 cli kg create one_rainbow --set export_html=false
             """
             from genai_tk.workflow.executor import execute_workflow
+            from genai_tk.workflow.force import ForceStage
             from genai_tk.workflow.resolver import (
                 WorkflowResolutionError,
                 list_workflow_names,
                 parse_cli_overrides,
                 resolve_workflow_invocation,
             )
+
+            if force is not None:
+                try:
+                    ForceStage(force)
+                except ValueError:
+                    stages = ", ".join(s.value for s in ForceStage)
+                    console.print(f"[red]Invalid --force stage '{force}'. Choose one of: {stages}[/red]")
+                    raise typer.Exit(1) from None
 
             # Clear parquet caches if requested
             if clear_all_caches:
@@ -162,7 +174,7 @@ class KgCommands(CliTopCommand):
 
             # Build CLI overrides from convenience flags + raw --set values
             cli_overrides: dict[str, Any] = parse_cli_overrides(set_values) if set_values else {}
-            cli_overrides.setdefault("force_rebuild", force)
+            cli_overrides.setdefault("force_stage", force)
             cli_overrides.setdefault("delete_first", delete_first)
             cli_overrides.setdefault("export_html", export_html)
 

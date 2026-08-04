@@ -43,7 +43,7 @@ class TestKgCreateStep:
         result = kg_create_step(
             config_name="stratnav_subset_rainbow_crm",
             delete_first=True,
-            force_rebuild=True,
+            force_stage="parquet",
             export_html=False,
         )
 
@@ -146,7 +146,7 @@ class TestKgBuildStep:
         mock_flow.return_value = self._mock_result()
         mock_mgr.return_value = MagicMock()
 
-        kg_build_step(graph=self._minimal_graph(), kg_name="k", force_rebuild=True, delete_first=True)
+        kg_build_step(graph=self._minimal_graph(), kg_name="k", force_stage="parquet", delete_first=True)
 
         mock_flow.assert_called_once_with(
             config_name="k",

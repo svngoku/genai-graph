@@ -1,16 +1,21 @@
-"""CLI commands for the Markdown Knowledge Tree (``cli tree ...``).
+"""CLI commands for the Markdown Knowledge Tree (``cli doctree ...``).
 
 Provides ``build``, ``list``, ``toc``, ``cat``, and ``search`` sub-commands
-that operate directly on a Ladybug database via
-`genai_graph.kg.markdown.ingest` and `genai_graph.kg.query.markdown_tree_tools`.
+that operate directly on a Ladybug database. ``build`` always markdownizes its
+sources first (directories, files, or ``.zip`` archives — raw Office/PDF/image
+documents or pre-existing Markdown, freely mixed) via
+`genai_tk.workflow.markdownize.markdownize_flow`, then
+ingests the result via `genai_graph.orchestration.markdown_tree_flow.markdown_tree_flow`.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Annotated
 
 import typer
 from genai_tk.main.cli import CliTopCommand
+from genai_tk.workflow.force import ForceStage
 from loguru import logger
 from rich.console import Console
 from rich.table import Table
@@ -31,12 +36,27 @@ class TreeCommands(CliTopCommand):
         def build(
             source: Annotated[
                 list[str],
-                typer.Argument(help="Directories, files, or .zip archives to ingest."),
+                typer.Argument(help="Directories, files, or .zip archives to ingest (raw docs or Markdown)."),
             ],
             db_path: Annotated[
                 str,
                 typer.Option("--db", help="Path to the Ladybug database file."),
             ],
+            md_output_dir: Annotated[
+                str | None,
+                typer.Option(
+                    "--md-output-dir",
+                    help="Where converted Markdown is written. Defaults to '<db_path stem>_markdown'.",
+                ),
+            ] = None,
+            cache_dir: Annotated[
+                str | None,
+                typer.Option("--cache-dir", help="Intermediates directory (unzipped/pdf/manifest)."),
+            ] = None,
+            profile: Annotated[
+                str,
+                typer.Option("--profile", help="markdownize profile: fast, medium, best, or default."),
+            ] = "default",
             include: Annotated[
                 list[str] | None,
                 typer.Option("--include", help="Glob pattern(s) to include (default '*.md')."),
@@ -46,9 +66,12 @@ class TreeCommands(CliTopCommand):
                 typer.Option("--exclude", help="Glob pattern(s) to exclude."),
             ] = None,
             force: Annotated[
-                bool,
-                typer.Option("--force", help="Rebuild sections/chunks for documents already in the graph."),
-            ] = False,
+                str | None,
+                typer.Option(
+                    "--force",
+                    help="Force-invalidate caches from this stage onward: unzip, pdf, md, graph, embed, all.",
+                ),
+            ] = None,
             delete_first: Annotated[
                 bool,
                 typer.Option("--delete-first", help="Drop existing Section/Chunk tables before ingesting."),
@@ -62,39 +85,58 @@ class TreeCommands(CliTopCommand):
                 typer.Option("--embeddings-model", help="Embeddings model id (uses config default when omitted)."),
             ] = None,
         ) -> None:
-            """Build (or update) a Markdown Knowledge Tree graph from a corpus."""
-            from genai_graph.kg.backend import KuzuBackend
-            from genai_graph.kg.factories.markdown_tree_factory import MarkdownTreeFactory
-            from genai_graph.kg.markdown.ingest import drop_markdown_tree, ingest_markdown_tree
+            """Markdownize sources, then build (or update) a Markdown Knowledge Tree graph.
 
-            backend = KuzuBackend()
-            backend.connect(db_path)
+            Examples:
+                cli doctree build ./docs --db ./data/kg/tree.db
+                cli doctree build ./Alko.zip --db ./data/kg/tree.db --force md
+                cli doctree build ./docs --db ./data/kg/tree.db --force all
+            """
+            if force is not None:
+                try:
+                    ForceStage(force)
+                except ValueError as exc:
+                    stages = ", ".join(s.value for s in ForceStage)
+                    console.print(f"[red]Invalid --force stage '{force}'. Choose one of: {stages}[/red]")
+                    raise typer.Exit(1) from exc
 
-            if delete_first:
-                console.print("[yellow]Dropping existing Markdown Knowledge Tree tables...[/yellow]")
-                drop_markdown_tree(backend)
+            from genai_tk.workflow.markdownize import markdownize_flow
 
-            factory = MarkdownTreeFactory(
+            from genai_graph.orchestration.markdown_tree_flow import markdown_tree_flow
+
+            resolved_md_output_dir = md_output_dir or str(Path(db_path).with_suffix("")) + "_markdown"
+
+            console.print(f"[dim]Markdownizing {len(source)} source(s) -> {resolved_md_output_dir}[/dim]")
+            markdownize_flow(
                 sources=source,
+                md_output_dir=resolved_md_output_dir,
+                cache_dir=cache_dir,
+                profile=profile,
+                force_stage=force,
+            )
+
+            result_dict = markdown_tree_flow(
+                sources=[resolved_md_output_dir],
+                db_path=db_path,
                 include=include or ["*.md"],
                 exclude=exclude or [],
+                force_stage=force,
+                delete_first=delete_first,
                 embed_chunks=embed,
                 embeddings_model=embeddings_model,
             )
 
-            result = ingest_markdown_tree(backend, factory, force=force)
-
             table = Table(title="Markdown Knowledge Tree — Build Result")
             table.add_column("Metric", style="cyan")
             table.add_column("Value", style="white")
-            table.add_row("Processed", str(result.documents_processed))
-            table.add_row("Skipped (unchanged)", str(result.documents_skipped))
-            table.add_row("Failed", str(result.documents_failed))
-            table.add_row("Sections created", str(result.sections_created))
-            table.add_row("Chunks created", str(result.chunks_created))
-            table.add_row("Relationships created", str(result.relationships_created))
+            table.add_row("Processed", str(result_dict["documents_processed"]))
+            table.add_row("Skipped (unchanged)", str(result_dict["documents_skipped"]))
+            table.add_row("Failed", str(result_dict["documents_failed"]))
+            table.add_row("Sections created", str(result_dict["sections_created"]))
+            table.add_row("Chunks created", str(result_dict["chunks_created"]))
+            table.add_row("Relationships created", str(result_dict["relationships_created"]))
             console.print(table)
-            for w in result.warnings:
+            for w in result_dict["warnings"]:
                 console.print(f"[yellow]⚠ {w}[/yellow]")
 
         @cli_app.command("list")
@@ -185,4 +227,4 @@ class TreeCommands(CliTopCommand):
 
             run_markdown_tree_tui(db_path)
 
-        logger.debug("Registered 'tree' CLI commands")
+        logger.debug("Registered 'doctree' CLI commands")

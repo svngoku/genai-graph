@@ -1,9 +1,17 @@
 # ---------------------------------------------------------------------------
-# Data injection workflows  (DSL v2)
+# Generic data-injection workflows  (DSL v2)
 # ---------------------------------------------------------------------------
+# Domain-agnostic document -> Markdown -> KG pipeline. `markdownize_documents`
+# handles directories, .zip archives, and files (raw Office/PDF/images or
+# pre-existing Markdown) in one step -- no separate Office->PDF conversion step
+# is needed, `markdownize_flow` does that internally.
+#
+# Projects that import genai-graph (e.g. ekg-atos, rfq_pricing) define their
+# own presets (data paths, KG factory configs) in their own config/workflows/.
+#
 # Usage:
-#   cli workflow run office2pdf_documents/rainbow --dry-run
-#   cli workflow run full_kg_pipeline/rainbow --dry-run
+#   cli workflow run markdownize_documents --set sources=./docs --set md_output_dir=./md
+#   cli workflow run document_to_kg --dry-run
 #   cli workflow list
 # ---------------------------------------------------------------------------
 
@@ -14,73 +22,51 @@ workflows:
     run: genai_tk.workflow.prefect.flows.office2pdf_flow.office2pdf_flow
     defaults:
       batch_size: 5
+      cache_dir: null
     params:
-      base_dir: {required: true}
-      output_dir: {required: true}
-    presets:
-      rainbow:
-        base_dir: '${paths.rainbow_ppt}'
-        output_dir: '${paths.rainbow_pdf}'
-        pathspecs: ['**/*.pptx', '**/*.ppt', '**/*.odp', '**/*.xlsx', '**/*.xls']
-        batch_size: 5
+      sources: {required: true}
+      pdf_output_dir: {required: true}
 
   markdownize_documents:
-    description: "Convert documents to Markdown format"
-    run: genai_tk.workflow.prefect.flows.markdownize_flow.markdownize_flow
+    description: "Convert directories/zips/files (raw docs or pre-existing Markdown) to Markdown"
+    run: genai_tk.workflow.markdownize.markdownize_flow
     defaults:
       batch_size: 5
+      cache_dir: null
+      profile: default
     params:
-      base_dir: {required: true}
-      output_dir: {required: true}
-    presets:
-      rainbow:
-        base_dir: '${paths.rainbow_pdf}'
-        output_dir: '${paths.rainbow_md}'
-        pathspecs: ['**/*.pdf']
-        batch_size: 5
-        profile: fast
-      rfq:
-        base_dir: '${paths.rfq_pdf}'
-        output_dir: '${paths.rfq_md}'
-        pathspecs: ['**/*.pdf']
-        batch_size: 5
-        profile: fast
+      sources: {required: true}
+      md_output_dir: {required: true}
 
-  full_kg_pipeline:
-    description: "End-to-end pipeline: PPT to PDF, Markdown, then KG creation"
+  document_to_kg:
+    description: "End-to-end pipeline: documents (zip/dir/files) -> Markdown -> single-factory KG build"
     pipeline:
-      - id: ppt_to_pdf
-        run: office2pdf_documents
-        with:
-          base_dir: '${values.ppt_base_dir}'
-          output_dir: '${values.pdf_output_dir}'
-          pathspecs: ['**/*.pptx', '**/*.ppt', '**/*.odp', '**/*.xlsx', '**/*.xls']
-
       - id: markdownize
         run: markdownize_documents
-        after: [ppt_to_pdf]
         with:
-          base_dir: '${values.pdf_output_dir}'
-          output_dir: '${values.md_output_dir}'
-          pathspecs: ['**/*.pdf']
+          sources: '${values.sources}'
+          md_output_dir: '${values.md_output_dir}'
+          cache_dir: '${values.cache_dir}'
+          profile: '${values.profile}'
+          force_stage: '${values.force_stage}'
 
       - id: create_kg
-        run: rainbow_add_crm
+        run: kg_build
         after: [markdownize]
+        with:
+          graph: '${values.graph}'
+          kg_name: '${values.kg_name}'
+          delete_first: '${values.delete_first}'
+          export_html: '${values.export_html}'
+          force_stage: '${values.force_stage}'
     defaults:
       batch_size: 5
+      cache_dir: null
+      profile: default
+      kg_name: inline
       delete_first: false
       export_html: true
-      force_rebuild: false
-      profile: fast
     params:
-      ppt_base_dir: {required: true}
-      pdf_output_dir: {required: true}
+      sources: {required: true}
       md_output_dir: {required: true}
-    presets:
-      rainbow:
-        ppt_base_dir: '${paths.rainbow_ppt}'
-        pdf_output_dir: '${paths.rainbow_pdf}'
-        md_output_dir: '${paths.rainbow_md}'
-        batch_size: 5
-        profile: fast
+      graph: {required: true}

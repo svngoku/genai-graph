@@ -24,7 +24,7 @@ workflows:
       kg_name: inline
       delete_first: false
       export_html: true
-      force_rebuild: false
+      force_stage: null
     params:
       graph: {required: true}
       kg_name: {}
@@ -84,7 +84,7 @@ workflows:
   # Optional params: include    — glob patterns  (default: ['*.md'])
   #                  exclude    — glob patterns to exclude
   #                  recursive  — recurse into sub-directories (default: true)
-  #                  force      — delete stale sections for re-ingested docs
+  #                  force_stage — 'graph'/'embed'/'all' rebuilds sections for re-ingested docs
   #                  delete_first — drop the Section tables before ingesting
   # --------------------------------------------------------------------------
   markdown_tree:
@@ -94,7 +94,7 @@ workflows:
       include: ['*.md']
       exclude: []
       recursive: true
-      force: false
+      force_stage: null
       delete_first: false
     params:
       sources: {required: true}

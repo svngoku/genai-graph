@@ -231,12 +231,18 @@ def _delete_markdown_content(backend: KgBackend, markdown_hash: str) -> None:
 
 
 def drop_markdown_tree(backend: KgBackend, *, drop_documents: bool = False) -> None:
-    """Drop the Markdown Knowledge Tree tables (sections, chunks + their relationships).
+    """Drop the Markdown Knowledge Tree structure tables (sections, chunks + their relationships).
+
+    By default only drops Section/Chunk tables and their relationships, leaving
+    Repository/Document/MarkdownDocument metadata intact (since they may be shared
+    with other factories). This means `list_documents()` will still return entries.
+    Pass `drop_documents=True` for a full reset.
 
     Args:
         backend: Connected `KgBackend`.
-        drop_documents: Also drop the (shared) Repository/Document/MarkdownDocument
-            tables. Leave `False` when those are shared with other factories.
+        drop_documents: Also drop Repository/Document/MarkdownDocument tables.
+            Leave `False` when those are shared with other factories; set `True`
+            for a complete knowledge tree reset.
     """
     for rel in (HAS_CHUNK.name, HAS_SUBSECTION.name, HAS_SECTION.name, NEXT_CHUNK.name):
         backend.drop_table(rel)

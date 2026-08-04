@@ -1831,7 +1831,7 @@ requires-dist = [
     { name = "chonkie", specifier = ">=1.5.2" },
     { name = "devtools", specifier = ">=0.12.2" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.115.6" },
-    { name = "genai-tk", git = "https://github.com/tclatos/genai-tk?rev=orchestrator%2Ftesting-ci-config" },
+    { name = "genai-tk", git = "https://github.com/tclatos/genai-tk?branch=main" },
     { name = "ladybug", specifier = "==0.16.1" },
     { name = "langchain-classic", specifier = ">=1.0.0" },
     { name = "langchain-litellm", specifier = ">=0.3.2" },
@@ -1887,7 +1887,7 @@ ui = [
 [[package]]
 name = "genai-tk"
 version = "0.1.0"
-source = { git = "https://github.com/tclatos/genai-tk?rev=orchestrator%2Ftesting-ci-config#2df4d50ecb019c86612eed8ccd8f2bb3547f80bb" }
+source = { git = "https://github.com/tclatos/genai-tk?branch=main#1c8b22873592ef01b9de801711ce863ee2a27b51" }
 dependencies = [
     { name = "abbreviations" },
     { name = "bcrypt" },
@@ -1920,8 +1920,9 @@ dependencies = [
     { name = "langgraph-checkpoint-sqlite" },
     { name = "litellm" },
     { name = "loguru" },
-    { name = "markitdown", extra = ["docx", "pdf", "pptx"] },
+    { name = "markitdown", extra = ["docx", "pdf", "pptx", "xlsx"] },
     { name = "mcp", extra = ["cli"] },
+    { name = "md-spreadsheet-parser" },
     { name = "mistralai" },
     { name = "omegaconf" },
     { name = "openai" },
@@ -3383,6 +3384,10 @@ pdf = [
 pptx = [
     { name = "python-pptx" },
 ]
+xlsx = [
+    { name = "openpyxl" },
+    { name = "pandas" },
+]
 
 [[package]]
 name = "markupsafe"
@@ -3542,6 +3547,15 @@ wheels = [
 cli = [
     { name = "python-dotenv" },
     { name = "typer" },
+]
+
+[[package]]
+name = "md-spreadsheet-parser"
+version = "1.4.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c6/4a/c62f5fc4359d6cb3f286837dcd5f4a9bce02a4f9c6318be5afff05f796e7/md_spreadsheet_parser-1.4.3.tar.gz", hash = "sha256:a5e820dd9865000fd4720a670f889dc89d9bea235e039af2499d46f3eaa546e9", size = 243215, upload-time = "2026-03-05T06:42:56.442Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d0/17/52da14957ff3be95ea3bcde0b578194d5a86e765a40297a2fa2ffa23d136/md_spreadsheet_parser-1.4.3-py3-none-any.whl", hash = "sha256:b6fd7eb8c259194b7cb71223ecc190c89e0ba63f79c3e837584202dcbeb1b460", size = 46519, upload-time = "2026-03-05T06:42:54.901Z" },
 ]
 
 [[package]]

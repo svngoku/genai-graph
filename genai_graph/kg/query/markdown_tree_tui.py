@@ -26,7 +26,7 @@ from genai_graph.kg.query.markdown_tree_tools import (
     reconstruct_document,
 )
 
-# Written by genai_tk.workflow.prefect.flows.markdownize_flow as the first line of
+# Written by genai_tk.workflow.markdownize.markdownize_flow as the first line of
 # every converted Markdown file — records the original document it came from.
 _ORIGIN_COMMENT_RE = re.compile(r"<!--\s*source:\s*(.+?)\s*-->")
 

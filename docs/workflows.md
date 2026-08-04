@@ -1,136 +1,181 @@
 # Workflows in genai-graph: Knowledge Graph Orchestration
 
-The **Workflow Engine** (from genai-tk) is used in genai-graph to orchestrate knowledge graph
-creation pipelines. KG build definitions live in `config/ekg_workflows.yaml` using the standard
-workflow DSL — the same DSL used for RAG ingestion, anonymization, and pre-processing pipelines.
+The **Workflow Engine** (from genai-tk) orchestrates knowledge graph creation and
+document pre-processing pipelines. Workflow definitions live in
+`config/workflows/*.yaml` using the standard workflow DSL — the same DSL genai-tk
+uses for RAG ingestion, anonymization, and BAML extraction.
 
-**Key benefits over the old `ekg.yaml` + `kg_configs` approach:**
+genai-graph itself only ships **domain-agnostic** workflows (document conversion, a
+generic single-factory KG build primitive, generic Document/Markdown-tree graphs).
+Domain-specific workflows (data paths, concrete graph factories) belong to the
+project that imports genai-graph — see `ekg-atos/config/workflows/` for a worked
+example (rainbow/RFQ presets, multi-factory KG builds).
+
+> **Note:** genai-graph does not ship `config/workflows/*.yaml` as installed package
+> data — it's dev-only config, discovered only when running `cli` from inside the
+> genai-graph repo itself. A downstream project (ekg-atos, rfq_pricing) that depends
+> on genai-graph as a package must define its own full workflow entries (`run:` /
+> `defaults:` / `params:`) for `office2pdf_documents` / `markdownize_documents`, not
+> just presets — see `ekg-atos/config/workflows/data_injection.yaml` for the pattern.
+
+**Key benefits:**
 - Single CLI entry point: `cli workflow run` for all pipelines
 - `--dry-run` to see the full step plan before executing
 - `--set KEY=VAL` to override any parameter inline
-- Sub-workflow composition via `invoke: {kind: workflow}` (replaces `import:` in ekg.yaml)
-- Step templates eliminate repetition across similar KG configs
-- KG configs readable by anyone familiar with the workflow DSL
+- Sub-workflow composition: a pipeline step's `run:` can reference another
+  workflow name — it's inlined automatically (step IDs prefixed `{step_id}.`)
+- A single ordered `--force <stage>` replaces ad-hoc `force` / `force_rebuild` /
+  `--remarkdownize` booleans (see [Force stages](#force-stages) below)
 
 ---
 
 ## Quick Start
 
-### List Available KG Workflows
+### List available workflows
 
 ```bash
 uv run cli workflow list
-# Profiles include: kg_one_rainbow, kg_rainbow_add_crm, kg_stratnav_subset,
-#                   kg_stratnav_subset_rainbow_crm, kg_learned,
-#                   office2pdf_rainbow, markdownize_rainbow, full_rainbow_pipeline
+# genai-graph itself (generic): document_graph, document_to_kg, markdown_tree,
+#                                markdownize_documents, office2pdf_documents
+# A downstream project (e.g. ekg-atos) additionally defines: one_rainbow,
+#                                rainbow_add_crm, stratnav_subset, full_kg_pipeline, ...
 ```
 
-### Run a KG Creation Workflow
+### Run a workflow
 
 ```bash
 # Dry-run: resolve the workflow, show the plan
-uv run cli workflow run kg_one_rainbow --dry-run
+uv run cli workflow run document_to_kg --dry-run
 
-# Execute: create the knowledge graph
-uv run cli workflow run kg_one_rainbow
-
-# Composite: rainbow + CRM + StratNav
-uv run cli workflow run kg_stratnav_subset_rainbow_crm --dry-run
+# Markdownize a directory, zip archive, or file — always one call, no separate
+# unzip / office2pdf step (markdownize_flow does that internally)
+uv run cli workflow run markdownize_documents --set sources=./RFQ.zip --set md_output_dir=./out/md
 
 # Override values inline
-uv run cli workflow run kg_one_rainbow --set delete_first=true
-uv run cli workflow run kg_one_rainbow --set force_rebuild=true --set export_html=false
-
-# Full pre-processing + KG pipeline
-uv run cli workflow run full_rainbow_pipeline --dry-run
+uv run cli workflow run document_to_kg --set sources=./docs --set md_output_dir=./md --set graph='{...}'
 ```
 
-### Or use the `cli kg create` shorthand
+### Or use `cli doctree build` / `cli kg create` (high-level shorthands)
 
 ```bash
-# Equivalent to: cli workflow run kg_one_rainbow --set delete_first=true
+# Markdownizes ./RFQ.zip (or a plain folder) then ingests into the Markdown Knowledge Tree
+cli doctree build ./RFQ.zip --db ./data/kg/tree.db --profile fast
+
+# Re-run just the Markdown conversion (and everything downstream of it)
+cli doctree build ./RFQ.zip --db ./data/kg/tree.db --force md
+
+# Build a KG profile (downstream-project-defined, e.g. ekg-atos's one_rainbow)
 cli kg create one_rainbow
 
-# Force-rebuild parquet caches
-cli kg create one_rainbow --force
+# Force rebuild of parquet import caches (and downstream graph/embed stages)
+cli kg create one_rainbow --force parquet
 
-# Dry-run
-cli kg create one_rainbow --dry-run
+# Full clean rebuild, dropping the destination database first
+cli kg create one_rainbow --force all
+```
 
-# Skip HTML export (faster)
-cli kg create one_rainbow --no-export-html
+---
 
-# Override any value
-cli kg create one_rainbow --set force_rebuild=true
+## Force stages
+
+A single ordered `--force <stage>` replaces the old collection of ad-hoc booleans
+(`force`, `force_rebuild`, `--remarkdownize`). **Forcing a stage re-runs it and
+everything downstream of it**, since downstream caches are derived from upstream
+outputs. Defined in `genai_tk.workflow.force.ForceStage`:
+
+| Stage     | Effect                                                              | Relevant commands |
+|-----------|----------------------------------------------------------------------|--------------------|
+| `unzip`   | Re-extract `.zip` archives even if already cached                    | `markdownize_documents`, `doctree build` |
+| `pdf`     | Re-run Office → PDF conversion                                       | `markdownize_documents`, `doctree build` |
+| `md`      | Re-run document → Markdown conversion                                | `markdownize_documents`, `doctree build` |
+| `parquet` | Rebuild JSON → parquet import caches                                 | `kg create`, `kg_build` |
+| `graph`   | Re-ingest into the graph database (drops the destination store)      | `doctree build`, `kg create`, `kg_build` |
+| `embed`   | Recompute embeddings                                                 | `doctree build`, `kg create` |
+| `all`     | Force every stage, including dropping the destination store          | all of the above |
+
+`--delete-first` remains a separate, explicit DB-lifecycle flag (independent of
+`--force`) — use it when you want a clean database without forcing any upstream
+cache to be recomputed.
+
+```bash
+# Old (removed): --set delete_first=true / --set force_rebuild=true
+# New:
+cli kg create one_rainbow --delete-first          # drop DB, reuse all upstream caches
+cli kg create one_rainbow --force parquet          # rebuild import caches (implies graph rebuild)
+cli kg create one_rainbow --force all              # full clean rebuild
+uv run cli workflow run <kg-profile> --force graph # equivalent via the low-level command
 ```
 
 ---
 
 ## Architecture
 
-### Two Config Files
+### Config files (genai-graph itself)
 
 | File | Purpose |
 |------|---------|
-| `config/ekg_workflows.yaml` | KG build workflows — step templates, workflows, profiles |
-| `config/workflows.yaml` | Pre-processing workflows — office2pdf, markdownize, full pipeline |
+| `config/workflows/generic_workflows.yaml` | `kg_build` (single-factory primitive, hidden), `document_graph`, `markdown_tree` |
+| `config/workflows/data_injection.yaml` | `office2pdf_documents`, `markdownize_documents`, `document_to_kg` (generic doc→KG pipeline) |
 
-Both are merged into the global config via `:merge:` in `app_conf.yaml`, so all workflows
-are available from a single `cli workflow` command.
+All are merged into the global config via `:merge:` in `app_conf.yaml`, so all
+workflows are available from a single `cli workflow` command.
 
-### The `kg_build_step` Function
+### The `kg_build_step` function
 
-All KG workflows call `genai_graph.orchestration.workflow_steps.kg_build_step`, which:
+The generic `kg_build` workflow calls `genai_graph.orchestration.workflow_steps.kg_build_step`, which:
 
-1. Accepts `graphs` (inline list of factory configs) + `kg_name` (database identity)
-2. Registers the inline graph config in the KgManager singleton
+1. Accepts a single `graph` factory config (dict with a `factory` key) + `kg_name`
+2. Registers it as a temporary profile in the `KgManager` singleton
 3. Clears factory caches (prevents cross-contamination)
 4. Runs the full `create_kg_flow()` Prefect pipeline
-5. Returns `{kg_name, total_processed, total_failed, warnings_count, db_path}`
+5. Returns `{config_name, total_processed, total_failed, warnings_count, db_path}`
 
-Graph factory configurations are defined inline in the workflow YAML `with:` block — no
-separate `config_name` reference required.
+For multi-factory graphs (several JSON sources merged into one KG), a downstream
+project typically calls `kg_create_step` with a `config_name` that resolves to a
+richer `KgProfileConfig` (see ekg-atos's `graph_construction.yaml` — `rainbow_add_crm`
+combines three factories in one workflow).
 
 ---
 
 ## Workflow Definitions
 
-### Simple KG Workflows (single factory)
+### Generic document → Markdown → KG pipeline
 
 ```yaml
-step_templates:
-  kg_build:
-    invoke:
-      kind: callable
-      target: genai_graph.orchestration.workflow_steps.kg_build_step
-    with:
-      kg_name: "${values.kg_name}"
-      delete_first: "${values.delete_first}"
-      export_html: "${values.export_html}"
-      force_rebuild: "${values.force_rebuild}"
-
 workflows:
-  one_rainbow:
-    description: "Single CNES TMA VENUS rainbow review"
-    defaults:
-      delete_first: false
-      export_html: true
-      force_rebuild: false
-    steps:
-      - id: build
-        ref: kg_build
+  document_to_kg:
+    description: "End-to-end pipeline: documents (zip/dir/files) -> Markdown -> single-factory KG build"
+    pipeline:
+      - id: markdownize
+        run: markdownize_documents
         with:
-          graphs:
-            - factory: ekg_atos.schema.rainbow_review.ReviewedOpportunityGraph
-              data_root: '${paths.rainbow_json}'
-              include: ['*CNES*TMA*VENUS*']
-              exclude: [fake/*]
-              recursive: true
+          sources: "${values.sources}"
+          md_output_dir: "${values.md_output_dir}"
+          cache_dir: "${values.cache_dir}"
+          profile: "${values.profile}"
+          force_stage: "${values.force_stage}"
+      - id: create_kg
+        run: kg_build
+        after: [markdownize]
+        with:
+          graph: "${values.graph}"
+          kg_name: "${values.kg_name}"
+          force_stage: "${values.force_stage}"
+    params:
+      sources: {required: true}
+      md_output_dir: {required: true}
+      graph: {required: true}
 ```
 
-### Multi-Factory Workflows (multiple data sources in one graph)
+`markdownize_documents` handles directories, `.zip` archives, and individual files —
+raw Office/PDF/image documents *or* pre-existing Markdown (copied through
+unchanged) — in one step. There is no separate Office→PDF step in the generic
+pipeline; `markdownize_flow` converts Office → PDF → Markdown internally.
+
+### Domain-specific multi-factory workflows (example: ekg-atos)
 
 ```yaml
+# ekg-atos/config/workflows/graph_construction.yaml
 workflows:
   rainbow_add_crm:
     description: "Rainbow reviews + architecture docs + CRM export"
@@ -142,118 +187,37 @@ workflows:
             - factory: ekg_atos.schema.rainbow_review.ReviewedOpportunityGraph
               data_root: '${paths.rainbow_json}'
               include: ['*CNES*']
-              recursive: true
             - factory: ekg_atos.schema.architecture_doc.ArchitectureDocumentGraph
               data_root: '${paths.add_json}'
-              include: ['*CNES*']
-              recursive: true
             - factory: ekg_atos.schema.crm_export.CrmExtractGraph
               files: ['${paths.ekg_data}/crm_export/report.xlsx']
-              filter_by_existing:
-                node_label: Opportunity
-                property: opportunity_id
 ```
 
-### Composite Workflows using `invoke: {kind: workflow}`
+### Sub-workflow composition
 
-The `invoke: {kind: workflow, target: <name>}` step type replaces the old `import:` mechanism
-in `ekg.yaml`.  Each referenced workflow is expanded in place — its steps are prefixed with
-`{step_id}.`:
+A pipeline step's `run:` can reference another workflow name directly — it is
+expanded in place, with its steps prefixed `{step_id}.`:
 
 ```yaml
 workflows:
-  # Old ekg.yaml: stratnav_subset_rainbow_crm: { import: [rainbow_add_crm, stratnav_subset] }
-  # New workflow DSL:
-  stratnav_subset_rainbow_crm:
-    description: "Rainbow + CRM + StratNav combined graph"
-    steps:
-      - id: rainbow_crm
-        invoke:
-          kind: workflow
-          target: rainbow_add_crm       # Expands to: rainbow_crm.build
-
-      - id: stratnav
-        invoke:
-          kind: workflow
-          target: stratnav_subset       # Expands to: stratnav.build
-        wait_for: [rainbow_crm]         # Automatically resolves to terminal step: rainbow_crm.build
+  full_kg_pipeline:
+    pipeline:
+      - id: markdownize
+        run: markdownize_documents
+        with: {...}
+      - id: create_kg
+        run: rainbow_add_crm      # another workflow, expands to create_kg.build
+        after: [markdownize]
 ```
 
-**Dry-run shows the expanded steps:**
-
-```
-cli workflow run kg_stratnav_subset_rainbow_crm --dry-run
+```bash
+cli workflow run full_kg_pipeline/rainbow --dry-run
 
    Id                  │ Invoke              │ Wait For
 ───────────────────────┼─────────────────────┼──────────────────
-   rainbow_crm.build   │ ...kg_build_step    │ -
-   stratnav.build      │ ...kg_build_step    │ rainbow_crm.build
+   markdownize.run      │ ...markdownize_flow │ -
+   create_kg.build      │ ...kg_build_step    │ markdownize.run
 ```
-
-Both steps write to the **same database** (`kg_name` from profile) — sequential, additive ingestion.
-
-### Deep Composition (transitive `invoke: {kind: workflow}`)
-
-```yaml
-workflows:
-  learned_stratnav_subset_rainbow_crm:
-    description: "StratNav + Rainbow + CRM with learned similarity relationships"
-    steps:
-      - id: base
-        invoke:
-          kind: workflow
-          target: stratnav_subset_rainbow_crm  # Expands transitively:
-                                               # base.rainbow_crm.build → base.stratnav.build
-
-      - id: similarities
-        ref: kg_build
-        wait_for: [base]                       # Resolved to: base.stratnav.build (terminal)
-        with:
-          graphs:
-            - factory: ekg_atos.schema.learned_graph.L3TechApproachMatcher
-              similarities:
-                - relationship: POSSIBLE_OFFERING
-                  from: TechnicalApproach.architecture
-                  to: L3.description
-                  threshold: 0.8
-                  top_k: 5
-```
-
-**Dry-run output:**
-
-```
-   Id                      │ Wait For
-───────────────────────────┼────────────────────
-   base.rainbow_crm.build  │ -
-   base.stratnav.build     │ base.rainbow_crm.build
-   similarities            │ base.stratnav.build
-```
-
----
-
-## Profiles
-
-Profiles bind workflows to a `kg_name` and any parameter overrides:
-
-```yaml
-workflow_profiles:
-  kg_one_rainbow:
-    workflow: one_rainbow
-    values:
-      kg_name: one_rainbow            # Database name in kg_outputs/
-
-  kg_stratnav_subset_rainbow_crm:
-    workflow: stratnav_subset_rainbow_crm
-    values:
-      kg_name: stratnav_subset_rainbow_crm
-
-  kg_learned:
-    workflow: learned_stratnav_subset_rainbow_crm
-    values:
-      kg_name: learned_stratnav_subset_rainbow_crm
-```
-
-The `kg_name` determines the output directory: `${paths.kg_outputs}/{kg_name}/{kg_name}-{tag}.db`.
 
 ---
 
@@ -262,109 +226,65 @@ The `kg_name` determines the output directory: `${paths.kg_outputs}/{kg_name}/{k
 ### `cli workflow run` (low-level, full control)
 
 ```bash
-# Dry-run any workflow
-uv run cli workflow run kg_one_rainbow --dry-run
-uv run cli workflow run kg_learned --dry-run
-uv run cli workflow run full_rainbow_pipeline --dry-run
-
-# Execute
-uv run cli workflow run kg_one_rainbow
-uv run cli workflow run kg_rainbow_add_crm
-uv run cli workflow run kg_stratnav_subset_rainbow_crm
-
-# Override parameters
-uv run cli workflow run kg_one_rainbow --set force_rebuild=true
-uv run cli workflow run kg_one_rainbow --set delete_first=true --set force_rebuild=true
-uv run cli workflow run kg_one_rainbow --set export_html=false
+uv run cli workflow run document_to_kg --dry-run
+uv run cli workflow run document_to_kg
+uv run cli workflow run document_to_kg --force md
+uv run cli workflow run document_to_kg --set export_html=false
 ```
 
 ### `cli kg create` (high-level shorthand)
 
-The `cli kg create` command wraps `cli workflow run kg_{name}` with convenient boolean flags.
-CLI flag values **always override** workflow YAML defaults.
+`cli kg create` wraps `cli workflow run <profile>` with convenient flags. CLI flag
+values **always override** workflow YAML defaults.
 
 ```bash
-# Create with delete_first=true (default), export_html=true (default)
-cli kg create one_rainbow
-
-# Force rebuild of parquet caches
-cli kg create one_rainbow --force
-
-# Skip HTML export (faster iteration)
-cli kg create one_rainbow --no-export-html
-
-# Keep existing database (merge/upsert instead of recreate)
-cli kg create one_rainbow --no-delete-first
-
-# Dry-run shows the resolved plan including effective flag values
-cli kg create one_rainbow --dry-run
-
-# Combine with raw --set overrides
-cli kg create one_rainbow --set force_rebuild=true --no-export-html
-
-# Run all kg_* profiles
-cli kg create --all
+cli kg create one_rainbow                       # build (or update) the KG
+cli kg create one_rainbow --force parquet       # force rebuild of import caches
+cli kg create one_rainbow --force all           # full clean rebuild
+cli kg create one_rainbow --no-export-html      # skip HTML export (faster)
+cli kg create one_rainbow --no-delete-first     # keep existing database (merge/upsert)
+cli kg create one_rainbow --dry-run             # resolve the plan only
+cli kg create one_rainbow --set export_html=false
+cli kg create --all                             # run every kg_* profile
 ```
 
----
+### `cli doctree build` (Markdown Knowledge Tree)
 
-## Full Pre-Processing + KG Pipeline
-
-The `full_kg_pipeline` workflow chains document preparation with KG creation:
-
-```
-PPT files → ppt_to_pdf → markdownize → create_kg (rainbow_add_crm sub-workflow)
-```
+Always markdownizes its sources first, then ingests into the tree database:
 
 ```bash
-# See the complete 3-step plan
-uv run cli workflow run full_rainbow_pipeline --dry-run
-
-# Execute all steps
-uv run cli workflow run full_rainbow_pipeline
+cli doctree build ./docs --db ./data/kg/tree.db
+cli doctree build ./RFQ.zip --db ./data/kg/tree.db --profile fast
+cli doctree build ./RFQ.zip --db ./data/kg/tree.db --md-output-dir ./out/md --cache-dir ./out/.cache
+cli doctree build ./RFQ.zip --db ./data/kg/tree.db --force md      # re-run markdown conversion
+cli doctree build ./RFQ.zip --db ./data/kg/tree.db --force graph   # re-ingest, reuse markdown cache
+cli doctree build ./RFQ.zip --db ./data/kg/tree.db --delete-first  # drop Section/Chunk tables first
 ```
-
-The `create_kg` step uses `invoke: {kind: workflow, target: rainbow_add_crm}` — it expands
-and runs all the rainbow + CRM graph factories in the same database.
 
 ---
 
 ## Adding a New KG Config
 
-Add a workflow and optionally a profile to `config/ekg_workflows.yaml`:
+Add a workflow to your project's `config/workflows/*.yaml`:
 
 ```yaml
 workflows:
   my_new_kg:
     description: "My new knowledge graph"
+    run: genai_graph.orchestration.workflow_steps.kg_create_step
     defaults:
+      config_name: my_new_kg
       delete_first: false
       export_html: true
-      force_rebuild: false
-    steps:
-      - id: build
-        ref: kg_build
-        with:
-          graphs:
-            - factory: ekg_atos.schema.my_schema.MyGraph
-              data_root: '${paths.ekg_data}/my_data/'
-              include: ['*.json']
-              recursive: true
-
-workflow_profiles:
-  kg_my_new:
-    workflow: my_new_kg
-    values:
-      kg_name: my_new_kg
 ```
 
 Then run:
 
 ```bash
-uv run cli workflow run kg_my_new --dry-run
-uv run cli workflow run kg_my_new
+uv run cli workflow run my_new_kg --dry-run
+uv run cli workflow run my_new_kg
 # or:
-cli kg create my_new
+cli kg create my_new_kg
 ```
 
 ---
@@ -377,23 +297,20 @@ cli kg create my_new
 WARNING | json_factory.py - Data root directory not found: /path/to/data
 ```
 
-The path in the graph config (`data_root`) doesn't exist. Check that `paths.ekg_data` in
-your config points to the correct location and the data subdirectory exists.
+The path in the graph config (`data_root`) doesn't exist. Check that the relevant
+`paths.*` entry in your config points to the correct location and the data
+subdirectory exists.
 
 ### Database already exists
 
-Use `--set delete_first=true` (or `cli kg create` which defaults to `delete_first=true`):
-
 ```bash
-uv run cli workflow run kg_one_rainbow --set delete_first=true
-cli kg create one_rainbow   # delete_first=true by default
+cli kg create one_rainbow --delete-first
 ```
 
 ### Force rebuild of parquet cache
 
 ```bash
-uv run cli workflow run kg_one_rainbow --set force_rebuild=true
-cli kg create one_rainbow --force
+cli kg create one_rainbow --force parquet
 ```
 
 ### Vector index error during merge
@@ -402,11 +319,11 @@ cli kg create one_rainbow --force
 Ladybug (Kuzu) limitation: HNSW vector-indexed properties cannot be updated in
 place via `MERGE … SET`.
 
-**This is handled automatically.** The flow now calls `drop_vector_indexes_task`
-before the ingestion phase and `create_vector_indexes_task` after.  If you still
-see the error, use `delete_first=true` (or `--delete-first`) to start from a
-completely clean database:
+**This is handled automatically.** The flow calls `drop_vector_indexes_task` before
+the ingestion phase and `create_vector_indexes_task` after. If you still see the
+error, use `--delete-first` to start from a completely clean database:
 
 ```bash
 cli kg create one_rainbow --delete-first
 ```
+

@@ -37,7 +37,7 @@ def kg_create_step(
     config_name: str,
     delete_first: bool = False,
     export_html: bool = True,
-    force_rebuild: bool = False,
+    force_stage: str | None = None,
 ) -> dict[str, Any]:
     """Execute the KG creation flow for a given config profile.
 
@@ -45,8 +45,18 @@ def kg_create_step(
     - Clearing factory caches (prevents cross-contamination)
     - Running the full create_kg_flow
 
+    Args:
+        config_name: KG profile name to build.
+        delete_first: Whether to delete the existing database before building.
+        export_html: Whether to export an HTML visualization.
+        force_stage: One of `parquet`/`graph`/`embed`/`all` (see
+            `genai_tk.workflow.force`). `parquet` (and above) rebuilds import
+            caches; `graph` (and above) also drops the destination database.
+
     Returns a summary dict suitable for workflow engine result tracking.
     """
+    from genai_tk.workflow.force import ForceStage, stage_active
+
     from genai_graph.orchestration.flows import create_kg_flow
 
     _clear_factory_caches()
@@ -54,9 +64,9 @@ def kg_create_step(
 
     result = create_kg_flow(
         config_name=config_name,
-        delete_first=delete_first,
+        delete_first=delete_first or stage_active(force_stage, ForceStage.graph),
         export_html=export_html,
-        force_rebuild=force_rebuild,
+        force_rebuild=stage_active(force_stage, ForceStage.parquet),
     )
 
     return _result_dict(config_name, result)
@@ -69,8 +79,7 @@ def kg_build_step(
     kg_name: str = "inline",
     delete_first: bool = False,
     export_html: bool = True,
-    force_rebuild: bool = False,
-    force: bool = False,
+    force_stage: str | None = None,
 ) -> dict[str, Any]:
     """Execute the KG creation flow with a single inline graph configuration.
 
@@ -80,20 +89,21 @@ def kg_build_step(
 
     Args:
         graph: Graph factory configuration (a dict with a ``factory`` key,
-            same format as entries in ``ekg_workflows.yaml``).
+            same format as entries in workflow YAML).
         kg_name: Name used for the database directory and profile identity.
         delete_first: Whether to delete existing database before building.
         export_html: Whether to export an HTML visualization.
-        force_rebuild: Whether to force rebuild of import caches.
-        force: Alias for force_rebuild (set by --force CLI flag).
+        force_stage: One of `parquet`/`graph`/`embed`/`all` (see
+            `genai_tk.workflow.force`). `parquet` (and above) rebuilds import
+            caches; `graph` (and above) also drops the destination database.
     """
+    from genai_tk.workflow.force import ForceStage, stage_active
+
     from genai_graph.kg.manager import KgGraphConfig, KgProfileConfig, get_kg_manager
     from genai_graph.orchestration.flows import create_kg_flow
 
-    # --force is an alias for force_rebuild; either implies delete_first.
-    if force:
-        force_rebuild = True
-    if force_rebuild:
+    force_rebuild = stage_active(force_stage, ForceStage.parquet)
+    if stage_active(force_stage, ForceStage.graph):
         delete_first = True
 
     _clear_factory_caches()

@@ -217,7 +217,7 @@ workflows:
           output_dir: "${profile.pdf_dir}"
 
       - id: to_markdown
-        uses: genai_tk.extra.markdownize_prefect_flow.markdownize_flow
+        uses: genai_tk.workflow.markdownize.markdownize_flow
         needs: [ppt_to_pdf]
         inputs:
           root_dir: "${profile.pdf_dir}"

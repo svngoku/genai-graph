@@ -25,7 +25,7 @@ def markdown_tree_flow(
     include: list[str] | None = None,
     exclude: list[str] | None = None,
     recursive: bool = True,
-    force: bool = False,
+    force_stage: str | None = None,
     delete_first: bool = False,
     embed_chunks: bool = False,
     embeddings_model: str | None = None,
@@ -38,8 +38,9 @@ def markdown_tree_flow(
         include: Glob patterns to include (default `["*.md"]`).
         exclude: Glob patterns to exclude.
         recursive: Recurse into sub-directories.
-        force: Rebuild sections/chunks for documents already in the graph
-            (handles heading/line-number drift on file edits).
+        force_stage: One of `graph`/`embed`/`all` (see `genai_tk.workflow.force`).
+            `graph` (and above) rebuilds sections/chunks for documents already in
+            the graph (handles heading/line-number drift on file edits).
         delete_first: Drop the Section/Chunk tables before ingesting (full reset
             of the Markdown tree; the shared Document table is preserved).
         embed_chunks: Compute embeddings for newly-ingested chunks.
@@ -50,6 +51,8 @@ def markdown_tree_flow(
         `documents_failed`, `sections_created`, `chunks_created`,
         `relationships_created`, `warnings`.
     """
+    from genai_tk.workflow.force import ForceStage, stage_active
+
     from genai_graph.kg.backend import KuzuBackend
     from genai_graph.kg.factories.markdown_tree_factory import MarkdownTreeFactory
     from genai_graph.kg.markdown.ingest import drop_markdown_tree, ingest_markdown_tree
@@ -70,7 +73,7 @@ def markdown_tree_flow(
         embeddings_model=embeddings_model,
     )
 
-    result = ingest_markdown_tree(backend, factory, force=force)
+    result = ingest_markdown_tree(backend, factory, force=stage_active(force_stage, ForceStage.graph))
 
     return {
         "db_path": db_path,
@@ -92,7 +95,7 @@ def markdown_tree_build_step(
     include: list[str] | None = None,
     exclude: list[str] | None = None,
     recursive: bool = True,
-    force: bool = False,
+    force_stage: str | None = None,
     delete_first: bool = False,
     embed_chunks: bool = False,
     embeddings_model: str | None = None,
@@ -104,7 +107,7 @@ def markdown_tree_build_step(
         include=include,
         exclude=exclude,
         recursive=recursive,
-        force=force,
+        force_stage=force_stage,
         delete_first=delete_first,
         embed_chunks=embed_chunks,
         embeddings_model=embeddings_model,
