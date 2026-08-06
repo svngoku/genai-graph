@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
 
 from genai_graph.kg.factories.document_mixin import DocumentMixin, _mtime_iso
 from genai_graph.kg.nodes.document import Document, DocumentNode
@@ -73,19 +72,20 @@ class TestDocumentNode:
 class TestDocumentMixin:
     def test_create_document_node_populates_fields(self, tmp_path: Path) -> None:
         """create_document_node should read file attributes and return a Document."""
+        from genai_tk.utils.hashing import file_digest
+
         test_file = tmp_path / "sample.json"
         test_file.write_text('{"hello": "world"}')
 
         mixin = DocumentMixin()
-
-        with patch("genai_tk.utils.hashing.file_digest", return_value="deadbeef"):
-            doc = mixin.create_document_node(Path(test_file))
+        doc = mixin.create_document_node(Path(test_file))
 
         assert doc.path == str(test_file)
         assert doc.filename == "sample.json"
         assert doc.file_size == test_file.stat().st_size
         assert doc.mime_type == "application/json"
-        assert doc.content_hash == "deadbeef"
+        # Real content hash — deterministic for fixed content
+        assert doc.content_hash == file_digest(test_file)
         assert doc.modified_at is not None
 
     def test_create_document_node_handles_stat_error(self, tmp_path: Path) -> None:

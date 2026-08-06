@@ -283,6 +283,7 @@ cli neo4j query "MATCH (n) RETURN labels(n), count(*)" --db path/to/ladybug_db
 | [docs/cache_management.md](docs/cache_management.md) | Parquet cache invalidation |
 | [Agents.md](Agents.md) | Agent coding guidelines and architecture invariants |
 | [Agents_Skills.md](Agents_Skills.md) | Step-by-step procedures for common codebase tasks |
+| [skills/genai-graph/README.md](skills/genai-graph/README.md) | Agent `kg-*` skill bundle for working on genai-graph — skill map and runtime `skill_directories` wiring |
 
 For BAML fundamentals see [genai-tk BAML docs](https://github.com/tclatos/genai-tk/blob/main/docs/baml.md).
 

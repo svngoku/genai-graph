@@ -5,7 +5,7 @@ and creating the graph schema and nodes/relationships in the database.
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, NamedTuple, Union
 
 from genai_tk.config_mgmt.config_mngr import global_config
@@ -653,7 +653,7 @@ def extract_graph_data(
                     pass
 
                 # Add timestamps
-                now = datetime.utcnow().isoformat() + "Z"
+                now = datetime.now(timezone.utc).isoformat()
                 item_data["_created_at"] = now
                 item_data["_updated_at"] = now
 

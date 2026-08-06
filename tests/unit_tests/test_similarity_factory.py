@@ -1,38 +1,35 @@
-"""Unit tests for the SimilarityFactory and L3TechApproachMatcher."""
+"""Unit tests for the SimilarityFactory and SimilaritySpec (pure logic, no database).
+
+The end-to-end behaviour of ``compute_similarities`` against a real Ladybug
+database is covered in ``tests/integration_tests/test_similarity_flow.py``.
+"""
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 import pytest
+from pydantic import BaseModel
 
 from genai_graph.kg.factories.similarity import (
     SimilarityFactory,
-    SimilarityResult,
     SimilaritySpec,
 )
-
-# ---------------------------------------------------------------------------
-# Minimal concrete subclass for testing
-# ---------------------------------------------------------------------------
+from genai_graph.kg.schema.core import GraphNode, GraphRelation, GraphSchema
 
 
-class _MockMatcher(SimilarityFactory):
+class NodeA(BaseModel):
+    code: str
+    description: str
+
+
+class NodeB(BaseModel):
+    id: str
+    architecture: str
+
+
+class _TestMatcher(SimilarityFactory):
     """Minimal concrete SimilarityFactory for unit tests."""
 
-    def build_schema(self):
-        from pydantic import BaseModel
-
-        from genai_graph.kg.schema.core import GraphNode, GraphRelation, GraphSchema
-
-        class NodeA(BaseModel):
-            code: str
-            description: str
-
-        class NodeB(BaseModel):
-            id: str
-            architecture: str
-
+    def build_schema(self) -> GraphSchema:
         node_a = GraphNode(node_class=NodeA, name_from="description", key_from="code")
         node_b = GraphNode(node_class=NodeB, name_from="architecture", key_from="AUTO_ID")
         relation = GraphRelation(
@@ -44,14 +41,14 @@ class _MockMatcher(SimilarityFactory):
         return GraphSchema(root_model_class=None, nodes=[node_b, node_a], relations=[relation])
 
 
-def _make_matcher(threshold: float = 0.8, top_k: int = 5) -> _MockMatcher:
-    return _MockMatcher(
+def _make_matcher(threshold: float = 0.8, top_k: int = 5, iterate_over: str = "from") -> _TestMatcher:
+    return _TestMatcher(
         similarities=[
             SimilaritySpec(
                 relationship="SIMILAR_TO",
                 from_node="NodeB.architecture",
                 to_node="NodeA.description",
-                iterate_over="from",
+                iterate_over=iterate_over,  # type: ignore[arg-type]
                 threshold=threshold,
                 top_k=top_k,
             )
@@ -130,156 +127,21 @@ class TestPkFieldFor:
 
 
 # ---------------------------------------------------------------------------
-# compute_similarities — happy path
+# compute_similarities — backend type guard
 # ---------------------------------------------------------------------------
 
 
-class TestComputeSimilarities:
-    def test_creates_relationship_above_threshold(self) -> None:
-        """Relationships are inserted for pairs with similarity ≥ threshold."""
-        from genai_graph.kg.backend import KuzuBackend
-
-        matcher = _make_matcher(threshold=0.8)
-        backend = MagicMock(spec=KuzuBackend)
-        backend.ensure_vector_extension.return_value = None
-
-        fake_embedding = [0.1] * 4
-        # Source: one NodeB row (id, embedding)
-        # Vector result: one NodeA row with cosine distance 0.1 → similarity 0.9
-        # Third call: the CREATE relationship execute (returns None)
-        backend.execute.side_effect = [
-            [("ta-uuid-1", fake_embedding)],  # MATCH NodeB (iterate over from)
-            [("L3-CODE-A", 0.1)],  # QUERY_VECTOR_INDEX → sim=0.9
-            None,  # CREATE relationship
-        ]
-
-        result = matcher.compute_similarities(backend)
-
-        assert result.relationships_created == 1
-        assert result.pairs_evaluated == 1
-
-        # The last execute call must contain a CREATE cypher with similarity_score
-        create_call_args = backend.execute.call_args_list[-1][0][0]
-        assert "CREATE" in create_call_args
-        assert "SIMILAR_TO" in create_call_args
-        assert "similarity_score" in create_call_args
-
-    def test_skips_pairs_below_threshold(self) -> None:
-        """Relationships are NOT inserted when similarity < threshold."""
-        from genai_graph.kg.backend import KuzuBackend
-
-        matcher = _make_matcher(threshold=0.9)
-        backend = MagicMock(spec=KuzuBackend)
-        backend.ensure_vector_extension.return_value = None
-
-        fake_embedding = [0.1] * 4
-        # cosine distance 0.2 → similarity 0.8, below threshold=0.9
-        backend.execute.side_effect = [
-            [("ta-uuid-1", fake_embedding)],
-            [("L3-CODE-A", 0.2)],
-        ]
-
-        result = matcher.compute_similarities(backend)
-
-        assert result.relationships_created == 0
-        assert result.pairs_evaluated == 1
-
-    def test_skips_null_embeddings(self) -> None:
-        """Source rows with None embeddings are silently ignored."""
-        from genai_graph.kg.backend import KuzuBackend
-
-        matcher = _make_matcher()
-        backend = MagicMock(spec=KuzuBackend)
-        backend.ensure_vector_extension.return_value = None
-        # embedding is None for this row
-        backend.execute.side_effect = [[("ta-uuid-1", None)]]
-
-        result = matcher.compute_similarities(backend)
-
-        assert result.relationships_created == 0
-        assert result.pairs_evaluated == 0
-
+class TestComputeSimilaritiesGuard:
     def test_non_kuzu_backend_returns_empty_result(self) -> None:
-        """Non-KuzuBackend backends are skipped with a warning."""
-        from genai_graph.kg.backend import KgBackend
+        """Non-KuzuBackend backends are skipped with a warning (real Neo4jBackend, no mock)."""
+        from genai_graph.kg.backend import Neo4jBackend
 
         matcher = _make_matcher()
-        backend = MagicMock(spec=KgBackend)
-
-        result = matcher.compute_similarities(backend)
+        result = matcher.compute_similarities(Neo4jBackend())
 
         assert result.relationships_created == 0
         assert result.pairs_evaluated == 0
-        backend.execute.assert_not_called()
-
-    def test_multiple_source_nodes_multiple_results(self) -> None:
-        """All source nodes are iterated and relationships are cumulative."""
-        from genai_graph.kg.backend import KuzuBackend
-
-        matcher = _make_matcher(threshold=0.8, top_k=3)
-        backend = MagicMock(spec=KuzuBackend)
-        backend.ensure_vector_extension.return_value = None
-
-        emb = [0.1] * 4
-        backend.execute.side_effect = [
-            # Two NodeB rows
-            [("ta-1", emb), ("ta-2", emb)],
-            # Vector results for ta-1: one match (sim 0.9)
-            [("CODE-1", 0.1)],
-            # CREATE for ta-1/CODE-1
-            None,
-            # Vector results for ta-2: two matches (sim 0.85, 0.75)
-            [("CODE-2", 0.15), ("CODE-3", 0.25)],
-            # CREATE for ta-2/CODE-2 (passes threshold)
-            None,
-            # CODE-3 doesn't pass threshold, no CREATE
-        ]
-
-        result = matcher.compute_similarities(backend)
-
-        assert result.pairs_evaluated == 2
-        # Only 2 relationships pass (0.9 ≥ 0.8, 0.85 ≥ 0.8; 0.75 < 0.8)
-        assert result.relationships_created == 2
-
-    def test_iterate_over_to_swaps_iteration_side(self) -> None:
-        """When iterate_over='to', the to-side nodes are iterated and from-side is indexed."""
-        from genai_graph.kg.backend import KuzuBackend
-
-        matcher = _MockMatcher(
-            similarities=[
-                SimilaritySpec(
-                    relationship="SIMILAR_TO",
-                    from_node="NodeB.architecture",
-                    to_node="NodeA.description",
-                    iterate_over="to",
-                    threshold=0.8,
-                    top_k=3,
-                )
-            ],
-        )
-        backend = MagicMock(spec=KuzuBackend)
-        backend.ensure_vector_extension.return_value = None
-
-        emb = [0.1] * 4
-        backend.execute.side_effect = [
-            # Fetch NodeA rows (iterate over to-side)
-            [("CODE-X", emb)],
-            # Vector index on NodeB.architecture_index: match above threshold
-            [("ta-uuid-99", 0.05)],  # sim=0.95
-            # CREATE
-            None,
-        ]
-        result = matcher.compute_similarities(backend)
-
-        assert result.relationships_created == 1
-        # Verify that the MATCH cypher targets NodeA (the to-side)
-        first_execute_args = backend.execute.call_args_list[0][0][0]
-        assert "NodeA" in first_execute_args
-        # Verify the CREATE cypher still has (from=NodeB, to=NodeA) direction
-        create_args = backend.execute.call_args_list[-1][0][0]
-        assert "NodeB" in create_args
-        assert "NodeA" in create_args
-        assert "SIMILAR_TO" in create_args
+        assert result.factory_name == matcher.name
 
 
 # ---------------------------------------------------------------------------
@@ -311,19 +173,15 @@ class TestSimilaritySpec:
 
 
 # ---------------------------------------------------------------------------
-# Generic SimilarityFactory schema test
+# Schema construction
 # ---------------------------------------------------------------------------
 
 
 class TestSimilarityFactorySchema:
     """Test SimilarityFactory schema construction with generic domain models."""
 
-    def _make_matcher(self):
+    def _make_matcher(self) -> SimilarityFactory:
         """Build a minimal SimilarityFactory that links Concept → Topic by description."""
-        from pydantic import BaseModel
-
-        from genai_graph.kg.factories.similarity import SimilarityFactory
-        from genai_graph.kg.schema import GraphNode, GraphRelation, GraphSchema
 
         class Concept(BaseModel):
             name: str
@@ -390,44 +248,3 @@ class TestSimilarityFactorySchema:
     def test_get_struct_data_by_key_returns_none(self) -> None:
         matcher = self._make_matcher()
         assert matcher.get_struct_data_by_key("any-key") is None
-
-
-# ---------------------------------------------------------------------------
-# compute_similarities_task
-# ---------------------------------------------------------------------------
-
-
-class TestComputeSimilaritiesTask:
-    def test_skips_non_similarity_bundles(self) -> None:
-        """Non-SimilarityFactory bundles are ignored."""
-        from genai_graph.kg.backend import KuzuBackend
-        from genai_graph.kg.factories import JsonFileBackedFactory
-        from genai_graph.orchestration.models import GraphBundle
-        from genai_graph.orchestration.tasks import compute_similarities_task
-
-        non_sim_bundle = MagicMock(spec=GraphBundle)
-        non_sim_bundle.factory = MagicMock(spec=JsonFileBackedFactory)
-
-        backend = MagicMock(spec=KuzuBackend)
-        results = compute_similarities_task.fn([non_sim_bundle], backend)
-        assert results == []
-
-    def test_calls_compute_similarities_for_each_sim_bundle(self) -> None:
-        """compute_similarities is called once per SimilarityFactory bundle."""
-        from genai_graph.kg.backend import KuzuBackend
-        from genai_graph.orchestration.models import GraphBundle
-        from genai_graph.orchestration.tasks import compute_similarities_task
-
-        sim_bundle = MagicMock(spec=GraphBundle)
-        sim_bundle.factory = MagicMock(spec=SimilarityFactory)
-        sim_bundle.factory.name = "TestMatcher"
-        fake_result = SimilarityResult(factory_name="TestMatcher", relationships_created=3, pairs_evaluated=5)
-        sim_bundle.factory.compute_similarities.return_value = fake_result
-        sim_bundle.config = {"factory": "test:TestMatcher"}
-
-        backend = MagicMock(spec=KuzuBackend)
-        results = compute_similarities_task.fn([sim_bundle], backend)
-
-        sim_bundle.factory.compute_similarities.assert_called_once_with(backend)
-        assert len(results) == 1
-        assert results[0].relationships_created == 3

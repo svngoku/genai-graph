@@ -320,37 +320,58 @@ class KuzuBackend(KgBackend):
         """
         self.execute(match_sql)
 
+    def _primary_key_field(self, table_name: str) -> str:
+        """Return the primary key field of a node table (defaults to 'id')."""
+        try:
+            for row in self.execute(f"CALL table_info('{table_name}') RETURN *"):
+                # Row layout: [column_id, name, type, default, is_primary_key]
+                if row[4]:
+                    return str(row[1])
+        except Exception:  # noqa: BLE001 - fall back to convention
+            pass
+        return "id"
+
     def merge_node(
         self, node_type: str, node_data: dict[str, Any], schema_config: Any | None = None
     ) -> tuple[bool, str]:
         """Merge a node into the graph database using MERGE semantics.
 
-        Performs a simple MERGE operation using the 'name' field as the key.
+        Merges on the table's primary key (introspected via ``table_info``),
+        falling back to the 'name' field when the PK cannot be determined.
         Returns a tuple indicating whether the node was created and its identifier.
 
         Args:
             node_type: Node label/type
-            node_data: Node properties dictionary (should include 'name' field)
+            node_data: Node properties dictionary (should include the primary key field)
             schema_config: Optional schema configuration (unused for basic merge)
 
         Returns:
             Tuple of (was_created: bool, node_id: str)
         """
-        # Use 'name' as the merge key if available, otherwise use first available key
-        merge_key = "name" if "name" in node_data else next(iter(node_data.keys()))
+        merge_key = self._primary_key_field(node_type)
+        if merge_key not in node_data:
+            # Fall back to 'name' or the first available key
+            merge_key = "name" if "name" in node_data else next(iter(node_data.keys()))
         merge_value = node_data[merge_key]
 
-        # Escape the merge value for Cypher
-        escaped_value = str(merge_value).replace("'", "\\'")
+        # The primary key cannot appear in SET clauses — Ladybug rejects updates
+        # to primary key properties ("Cannot set property ... used as primary key").
+        settable = {k: v for k, v in node_data.items() if k != merge_key}
 
-        # Build property assignments for ON CREATE SET
-        props = ", ".join([f"n.{k} = '{str(v).replace(chr(39), chr(92) + chr(39))}' " for k, v in node_data.items()])
+        def _literal(value: Any) -> str:
+            if value is None:
+                return "NULL"
+            if isinstance(value, str):
+                return "'" + value.replace("'", "\\'") + "'"
+            return str(value)
 
-        # Execute MERGE query
-        merge_query = f"MERGE (n:{node_type} {{{merge_key}: '{escaped_value}'}}) ON CREATE SET {props}"
+        props = ", ".join([f"n.{k} = {_literal(v)}" for k, v in settable.items()])
+
+        merge_query = f"MERGE (n:{node_type} {{{merge_key}: {_literal(merge_value)}}})"
+        if props:
+            merge_query += f" ON CREATE SET {props}"
         self.execute(merge_query)
 
-        # Return tuple of (was_created, node_id)
         # Note: Simplified return - actual was_created status would require checking result
         return (True, str(merge_value))
 

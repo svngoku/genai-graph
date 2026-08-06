@@ -1,10 +1,9 @@
 """Test improved error reporting for common KG creation issues."""
 
-from unittest.mock import MagicMock
-
 import pytest
 from pydantic import BaseModel
 
+from genai_graph.kg.backend import KuzuBackend
 from genai_graph.kg.schema import GraphNode
 
 
@@ -100,7 +99,7 @@ def test_computed_key_empty_error():
 
 
 # ---------------------------------------------------------------------------
-# merge_nodes_batch error-enhancement path
+# merge_nodes_batch error-enhancement path (real Ladybug backend, no mocks)
 # ---------------------------------------------------------------------------
 
 
@@ -108,73 +107,59 @@ class _SchemaNode(BaseModel):
     id: str
     name: str
     score: float
+    bad_field: str | None = None
 
 
 class TestMergeNodesBatchErrorHandler:
-    """Cover the 'Cannot find property' error-enhancement branch in merge_nodes_batch.
+    """Cover the error-enhancement branch in merge_nodes_batch using a real database.
 
-    This branch reads config.field_names; a regression would raise AttributeError
-    instead of the expected RuntimeError from the DB call.
+    The 'Cannot find property' error is triggered for real by merging nodes whose
+    Pydantic model declares a column that the actual DB table does not have.
     """
 
-    def _make_conn(self, side_effect: Exception) -> MagicMock:
-        """Build a mock KgBackend whose inner .conn.execute raises side_effect."""
-        inner = MagicMock()
-        inner.execute.side_effect = side_effect
-        conn = MagicMock()
-        conn.conn = inner
-        return conn
+    def _registry_for(self, node_type: str = "_SchemaNode"):
+        from genai_graph.kg.ingest.merge import NodeTypeConfig, NodeTypeRegistry, _build_node_arrow_schema
 
-    def test_cannot_find_property_logs_schema_fields(self):
+        schema = _build_node_arrow_schema(_SchemaNode, primary_key_field="id")
+        config = NodeTypeConfig(node_type=node_type, primary_key_field="id", arrow_schema=schema)
+        registry = NodeTypeRegistry()
+        registry.register(config)
+        return registry
+
+    def _nodes(self, node_type: str = "_SchemaNode"):
+        from genai_graph.kg.ingest.merge import NodeDataCollection
+
+        nodes = NodeDataCollection()
+        nodes.add(node_type, {"id": "n1", "name": "A", "score": 1.0, "bad_field": "x"})
+        return nodes
+
+    def test_cannot_find_property_logs_schema_fields(self, graph_backend: KuzuBackend):
         """Error-enhancement path must not raise AttributeError on config.field_names.
 
         Regression test: before the fix, the except block accessed config.field_types
         (removed attribute) and raised AttributeError, masking the real DB error.
         """
-        from genai_graph.kg.ingest.merge import (
-            NodeDataCollection,
-            NodeTypeConfig,
-            NodeTypeRegistry,
-            _build_node_arrow_schema,
-            merge_nodes_batch,
+        from genai_graph.kg.ingest.merge import merge_nodes_batch
+
+        # Real table WITHOUT the bad_field column declared in the Pydantic model
+        graph_backend.execute(
+            "CREATE NODE TABLE _SchemaNode(id STRING, name STRING, score DOUBLE, PRIMARY KEY(id))"
         )
 
-        schema = _build_node_arrow_schema(_SchemaNode, primary_key_field="id")
-        config = NodeTypeConfig(node_type="_SchemaNode", primary_key_field="id", arrow_schema=schema)
-        registry = NodeTypeRegistry()
-        registry.register(config)
-
-        nodes = NodeDataCollection()
-        nodes.add("_SchemaNode", {"id": "n1", "name": "A", "score": 1.0})
-
-        conn = self._make_conn(RuntimeError("Cannot find property bad_field in node _SchemaNode"))
-
-        # Must re-raise the original RuntimeError, NOT an AttributeError
+        # Must raise the real DB error (Cannot find property bad_field), NOT an AttributeError
         with pytest.raises(RuntimeError, match="Cannot find property"):
-            merge_nodes_batch(conn, nodes, registry)
+            merge_nodes_batch(graph_backend, self._nodes(), self._registry_for())
 
-    def test_generic_error_logged_without_attribute_error(self):
+    def test_generic_error_logged_without_attribute_error(self, graph_backend: KuzuBackend):
         """Generic (non-property) errors must propagate without AttributeError."""
-        from genai_graph.kg.ingest.merge import (
-            NodeDataCollection,
-            NodeTypeConfig,
-            NodeTypeRegistry,
-            merge_nodes_batch,
-        )
+        from genai_graph.kg.ingest.merge import merge_nodes_batch
 
-        config = NodeTypeConfig(node_type="_SchemaNode", primary_key_field="id")
-        registry = NodeTypeRegistry()
-        registry.register(config)
+        # Table does not exist at all -> generic binder error, not 'Cannot find property'
+        with pytest.raises(RuntimeError) as exc_info:
+            merge_nodes_batch(graph_backend, self._nodes(), self._registry_for())
+        assert "Cannot find property" not in str(exc_info.value)
 
-        nodes = NodeDataCollection()
-        nodes.add("_SchemaNode", {"id": "n1", "name": "A", "score": 1.0})
-
-        conn = self._make_conn(RuntimeError("Some unrelated DB failure"))
-
-        with pytest.raises(RuntimeError, match="Some unrelated DB failure"):
-            merge_nodes_batch(conn, nodes, registry)
-
-    def test_broken_formatter_does_not_mask_original_error(self):
+    def test_broken_formatter_does_not_mask_original_error(self, graph_backend: KuzuBackend):
         """A bug in the error-formatter must NEVER replace the original exception.
 
         This is the root cause of the original issue: the except block accessed
@@ -184,24 +169,13 @@ class TestMergeNodesBatchErrorHandler:
         """
         from unittest.mock import patch
 
-        from genai_graph.kg.ingest.merge import (
-            NodeDataCollection,
-            NodeTypeConfig,
-            NodeTypeRegistry,
-            _build_node_arrow_schema,
-            merge_nodes_batch,
+        from genai_graph.kg.ingest.merge import merge_nodes_batch
+
+        graph_backend.execute(
+            "CREATE NODE TABLE _SchemaNode(id STRING, name STRING, score DOUBLE, PRIMARY KEY(id))"
         )
-
-        schema = _build_node_arrow_schema(_SchemaNode, primary_key_field="id")
-        config = NodeTypeConfig(node_type="_SchemaNode", primary_key_field="id", arrow_schema=schema)
-        registry = NodeTypeRegistry()
-        registry.register(config)
-
-        nodes = NodeDataCollection()
-        nodes.add("_SchemaNode", {"id": "n1", "name": "A", "score": 1.0})
-
-        # DB raises the real error
-        conn = self._make_conn(RuntimeError("Cannot find property broken_col in _SchemaNode"))
+        registry = self._registry_for()
+        config = registry.get("_SchemaNode")
 
         # Simulate a future regression: field_names is deleted/broken
         with patch.object(
@@ -211,4 +185,4 @@ class TestMergeNodesBatchErrorHandler:
         ):
             # The ORIGINAL RuntimeError must still propagate, NOT AttributeError from formatter
             with pytest.raises(RuntimeError, match="Cannot find property"):
-                merge_nodes_batch(conn, nodes, registry)
+                merge_nodes_batch(graph_backend, self._nodes(), registry)
