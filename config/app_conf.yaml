@@ -105,6 +105,12 @@ paths:
   ekg_data: ${paths.data_root}/OneDrive/KORTEX_EKG/proto/input_data
   kg_outputs: ${oc.env:HOME}/kg_outputs
 
+# Graph Database Configuration - Ladybug databases
+graph_db:
+  default: ${paths.kg_outputs}/genai_graph.lbdb
+  # Users can define additional databases (e.g., test, staging, prod)
+  # Example: test: ${paths.kg_outputs}/genai_graph_test.lbdb
+
 #### 
 # User Interface Configuration : list of Streamlit pages, authentication, ... 
 ####    

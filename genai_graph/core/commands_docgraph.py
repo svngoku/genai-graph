@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import typer
+from genai_tk.config_mgmt.config_mngr import global_config
 from genai_tk.main.cli import CliTopCommand
 from genai_tk.workflow.force import ForceStage
 from loguru import logger
@@ -26,6 +27,33 @@ from rich.panel import Panel
 from rich.table import Table
 
 console = Console()
+
+
+def _resolve_db_path(db_path: str | None = None) -> str:
+    """Resolve database path from parameter or config default.
+
+    Args:
+        db_path: Explicit database path. If provided, use it.
+
+    Returns:
+        Resolved database path.
+
+    Raises:
+        typer.Exit: If no path provided and no config default found.
+    """
+    if db_path:
+        return db_path
+
+    # Try to get default from config
+    default_db = global_config().get("graph_db.default", None)
+    if default_db:
+        return str(default_db)
+
+    console.print(
+        "[red]Error: No database path provided and no graph_db.default configured.[/red]\n"
+        "  Use --db <path> or add graph_db.default to your config file."
+    )
+    raise typer.Exit(1)
 
 
 def _validate_force(force: str | None) -> None:
@@ -127,9 +155,9 @@ class DocGraphCommands(CliTopCommand):
                 typer.Argument(help="Directories, files, or .zip archives to ingest (raw docs or Markdown)."),
             ],
             db_path: Annotated[
-                str,
-                typer.Option("--db", help="Path to the Ladybug database file."),
-            ],
+                str | None,
+                typer.Option("--db", help="Path to the Ladybug database file. Uses graph_db.default from config if omitted."),
+            ] = None,
             md_output_dir: Annotated[
                 str | None,
                 typer.Option(
@@ -167,8 +195,10 @@ class DocGraphCommands(CliTopCommand):
             Examples:
                 cli docgraph build ./docs --db ./data/kg/tree.db
                 cli docgraph build ./Alko.zip --db ./data/kg/tree.db --force md
+                cli docgraph build ./docs (uses graph_db.default from config)
             """
             _validate_force(force)
+            db_path = _resolve_db_path(db_path)
 
             from genai_tk.workflow.markdownize import markdownize_flow
 
@@ -208,9 +238,12 @@ class DocGraphCommands(CliTopCommand):
 
         @cli_app.command("list")
         def list_docs(
-            db_path: Annotated[str, typer.Option("--db", help="Path to the Ladybug database file.")],
+            db_path: Annotated[
+                str | None, typer.Option("--db", help="Path to the Ladybug database file. Uses graph_db.default from config if omitted.")
+            ] = None,
         ) -> None:
             """List every ingested document."""
+            db_path = _resolve_db_path(db_path)
             from genai_graph.kg.backend import KuzuBackend
             from genai_graph.kg.query.document_graph_tools import list_documents
 
@@ -233,9 +266,12 @@ class DocGraphCommands(CliTopCommand):
         @cli_app.command("toc")
         def toc(
             document: Annotated[str, typer.Argument(help="Document hash (or prefix) or filename.")],
-            db_path: Annotated[str, typer.Option("--db", help="Path to the Ladybug database file.")],
+            db_path: Annotated[
+                str | None, typer.Option("--db", help="Path to the Ladybug database file. Uses graph_db.default from config if omitted.")
+            ] = None,
         ) -> None:
             """Show the table of contents (heading tree) for one document."""
+            db_path = _resolve_db_path(db_path)
             from genai_graph.kg.backend import KuzuBackend
             from genai_graph.kg.query.document_graph_tools import get_document_toc
 
@@ -252,9 +288,12 @@ class DocGraphCommands(CliTopCommand):
         @cli_app.command("cat")
         def cat(
             document: Annotated[str, typer.Argument(help="Document hash (or prefix) or filename.")],
-            db_path: Annotated[str, typer.Option("--db", help="Path to the Ladybug database file.")],
+            db_path: Annotated[
+                str | None, typer.Option("--db", help="Path to the Ladybug database file. Uses graph_db.default from config if omitted.")
+            ] = None,
         ) -> None:
             """Reconstruct and print a document's full Markdown text from its sections."""
+            db_path = _resolve_db_path(db_path)
             from genai_graph.kg.backend import KuzuBackend
             from genai_graph.kg.query.document_graph_tools import reconstruct_document
 
@@ -269,10 +308,13 @@ class DocGraphCommands(CliTopCommand):
         @cli_app.command("search")
         def search(
             keyword: Annotated[str, typer.Argument(help="Keyword to search for in section titles/text.")],
-            db_path: Annotated[str, typer.Option("--db", help="Path to the Ladybug database file.")],
+            db_path: Annotated[
+                str | None, typer.Option("--db", help="Path to the Ladybug database file. Uses graph_db.default from config if omitted.")
+            ] = None,
             limit: Annotated[int, typer.Option("--limit", help="Max number of matches.")] = 20,
         ) -> None:
             """Search section titles and text across all ingested documents."""
+            db_path = _resolve_db_path(db_path)
             from genai_graph.kg.backend import KuzuBackend
             from genai_graph.kg.query.document_graph_tools import search_sections
 
@@ -287,9 +329,12 @@ class DocGraphCommands(CliTopCommand):
 
         @cli_app.command("tui")
         def tui(
-            db_path: Annotated[str, typer.Option("--db", help="Path to the Ladybug database file.")],
+            db_path: Annotated[
+                str | None, typer.Option("--db", help="Path to the Ladybug database file. Uses graph_db.default from config if omitted.")
+            ] = None,
         ) -> None:
             """Launch an interactive Textual TUI to browse the Document Graph."""
+            db_path = _resolve_db_path(db_path)
             from genai_graph.kg.query.document_graph_tui import run_document_graph_tui
 
             run_document_graph_tui(db_path)

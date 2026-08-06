@@ -358,7 +358,10 @@ class Neo4jCommands(CliTopCommand):
 
             # Get default db path from config if not specified
             if db_path is None:
-                db_path = str(global_config().get_dir_path("paths.data_root") / "neo4j_import" / "kuzu_db")
+                # Try graph_db.default first, then fall back to neo4j_import path for backward compatibility
+                db_path = global_config().get("graph_db.default", None)
+                if db_path is None:
+                    db_path = str(global_config().get_dir_path("paths.data_root") / "neo4j_import" / "kuzu_db")
 
             resolved_db_path = resolve_config_path(db_path)
             db_path_obj = Path(resolved_db_path)
@@ -455,7 +458,10 @@ class Neo4jCommands(CliTopCommand):
 
             # Get default db path from config if not specified
             if db_path is None:
-                db_path = str(global_config().get_dir_path("paths.data_root") / "neo4j_import" / "kuzu_db")
+                # Try graph_db.default first, then fall back to neo4j_import path for backward compatibility
+                db_path = global_config().get("graph_db.default", None)
+                if db_path is None:
+                    db_path = str(global_config().get_dir_path("paths.data_root") / "neo4j_import" / "kuzu_db")
 
             resolved_db_path = resolve_config_path(db_path)
             db_path_obj = Path(resolved_db_path)
@@ -532,7 +538,10 @@ class Neo4jCommands(CliTopCommand):
 
             # Get default db path from config if not specified
             if db_path is None:
-                db_path = str(global_config().get_dir_path("paths.data_root") / "neo4j_import" / "kuzu_db")
+                # Try graph_db.default first, then fall back to neo4j_import path for backward compatibility
+                db_path = global_config().get("graph_db.default", None)
+                if db_path is None:
+                    db_path = str(global_config().get_dir_path("paths.data_root") / "neo4j_import" / "kuzu_db")
 
             resolved_db_path = resolve_config_path(db_path)
             db_path_obj = Path(resolved_db_path)
