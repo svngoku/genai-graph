@@ -583,6 +583,17 @@ def create_backend(backend_type: str = "kuzu") -> KgBackend:
     return backend_class()
 
 
+def _normalize_db_config(db_config: Any) -> dict[str, Any]:
+    """Normalize a ``graph_db.<key>`` entry to a ``{type, path}`` dict.
+
+    Supports the shorthand form (a bare path string, defaulting to the Kuzu/Ladybug
+    backend) alongside the explicit ``{type: ..., path: ...}`` mapping form.
+    """
+    if isinstance(db_config, str):
+        return {"type": "kuzu", "path": db_config}
+    return dict(db_config)
+
+
 def create_in_memory_backend() -> KgBackend:
     """Create an in-memory graph backend for temporary graphs/tests.
 
@@ -615,7 +626,7 @@ def create_backend_from_config(config_key: str = "default", kg_config_name: str 
     if config_key not in graph_db_config:
         raise ValueError(f"Graph database config '{config_key}' not found. Available: {list(graph_db_config.keys())}")
 
-    db_config = graph_db_config[config_key]
+    db_config = _normalize_db_config(graph_db_config[config_key])
     backend_type = db_config.get("type")
     connection_path = db_config.get("path")
 
@@ -689,7 +700,7 @@ def get_backend_storage_path_from_config(config_key: str = "default", kg_config_
     if config_key not in graph_db_config:
         raise ValueError(f"Graph database config '{config_key}' not found. Available: {list(graph_db_config.keys())}")
 
-    db_config = graph_db_config[config_key]
+    db_config = _normalize_db_config(graph_db_config[config_key])
     backend_type = db_config.get("type", "")
 
     # Use KgManager-derived path if kg_config_name is provided for Kuzu backend
