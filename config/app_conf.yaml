@@ -82,16 +82,11 @@ profile: ${oc.env:BLUEPRINT_CONFIG,ekg_local}
         type: key_value.aio.stores.filetree.FileTreeStore
         args:
           data_directory: ${paths.data_root}/kv_store
+    # Graph Database Configuration - Ladybug databases
     graph_db:
-      kuzu_local: &kuzu_local
-        type: kuzu
-        path: ${paths.kg_outputs}/default/kuzu/ekg_database.db
-      neo4j_local:
-        type: neo4j
-        path: neo4j://localhost
-        username: tcl
-        password: ${oc.env:NEO4_PASSWORD,null}
-      default: *kuzu_local
+      default: ${paths.kg_outputs}/genai_graph.lbdb
+      # Users can define additional databases (e.g., test, staging, prod)
+      # Example: test: ${paths.kg_outputs}/genai_graph_test.lbdb
 
 paths:
   data_root: ${oc.env:HOME}
@@ -104,12 +99,6 @@ paths:
   datasets: ${paths.project}/use_case_data
   ekg_data: ${paths.data_root}/OneDrive/KORTEX_EKG/proto/input_data
   kg_outputs: ${oc.env:HOME}/kg_outputs
-
-# Graph Database Configuration - Ladybug databases
-graph_db:
-  default: ${paths.kg_outputs}/genai_graph.lbdb
-  # Users can define additional databases (e.g., test, staging, prod)
-  # Example: test: ${paths.kg_outputs}/genai_graph_test.lbdb
 
 #### 
 # User Interface Configuration : list of Streamlit pages, authentication, ... 
