@@ -156,7 +156,9 @@ class DocGraphCommands(CliTopCommand):
             ],
             db_path: Annotated[
                 str | None,
-                typer.Option("--db", help="Path to the Ladybug database file. Uses graph_db.default from config if omitted."),
+                typer.Option(
+                    "--db", help="Path to the Ladybug database file. Uses graph_db.default from config if omitted."
+                ),
             ] = None,
             md_output_dir: Annotated[
                 str | None,
@@ -239,7 +241,10 @@ class DocGraphCommands(CliTopCommand):
         @cli_app.command("list")
         def list_docs(
             db_path: Annotated[
-                str | None, typer.Option("--db", help="Path to the Ladybug database file. Uses graph_db.default from config if omitted.")
+                str | None,
+                typer.Option(
+                    "--db", help="Path to the Ladybug database file. Uses graph_db.default from config if omitted."
+                ),
             ] = None,
         ) -> None:
             """List every ingested document."""
@@ -267,7 +272,10 @@ class DocGraphCommands(CliTopCommand):
         def toc(
             document: Annotated[str, typer.Argument(help="Document hash (or prefix) or filename.")],
             db_path: Annotated[
-                str | None, typer.Option("--db", help="Path to the Ladybug database file. Uses graph_db.default from config if omitted.")
+                str | None,
+                typer.Option(
+                    "--db", help="Path to the Ladybug database file. Uses graph_db.default from config if omitted."
+                ),
             ] = None,
         ) -> None:
             """Show the table of contents (heading tree) for one document."""
@@ -287,29 +295,63 @@ class DocGraphCommands(CliTopCommand):
 
         @cli_app.command("cat")
         def cat(
-            document: Annotated[str, typer.Argument(help="Document hash (or prefix) or filename.")],
+            document: Annotated[
+                str,
+                typer.Argument(
+                    help="Document hash (or prefix), filename, or a section id "
+                    "(e.g. 'd9387cdaf256734a::1') to show just that section and its subsections."
+                ),
+            ],
             db_path: Annotated[
-                str | None, typer.Option("--db", help="Path to the Ladybug database file. Uses graph_db.default from config if omitted.")
+                str | None,
+                typer.Option(
+                    "--db", help="Path to the Ladybug database file. Uses graph_db.default from config if omitted."
+                ),
             ] = None,
+            cypher: Annotated[
+                bool,
+                typer.Option("--cypher", help="Print the Cypher query used to fetch the content."),
+            ] = False,
+            raw: Annotated[
+                bool,
+                typer.Option("--raw", help="Print raw Markdown text instead of rendering it."),
+            ] = False,
         ) -> None:
-            """Reconstruct and print a document's full Markdown text from its sections."""
+            """Reconstruct and print a document's (or one section's) Markdown text from its sections."""
             db_path = _resolve_db_path(db_path)
             from genai_graph.kg.backend import KuzuBackend
-            from genai_graph.kg.query.document_graph_tools import reconstruct_document
+            from genai_graph.kg.query.document_graph_tools import reconstruct_document, reconstruct_section
 
             backend = KuzuBackend()
             backend.connect(db_path)
-            text = reconstruct_document(backend, document)
+
+            if "::" in document:
+                text, query = reconstruct_section(backend, document, return_query=True)
+            else:
+                text, query = reconstruct_document(backend, document, return_query=True)
+
+            if cypher:
+                console.print(Panel(query, title="Cypher", border_style="cyan"))
+
             if text is None:
-                console.print(f"[red]No document found matching: {document}[/red]")
+                console.print(f"[red]No document or section found matching: {document}[/red]")
                 raise typer.Exit(1)
-            console.print(text)
+
+            if raw:
+                console.print(text)
+            else:
+                from rich.markdown import Markdown as RichMarkdown
+
+                console.print(RichMarkdown(text))
 
         @cli_app.command("search")
         def search(
             keyword: Annotated[str, typer.Argument(help="Keyword to search for in section titles/text.")],
             db_path: Annotated[
-                str | None, typer.Option("--db", help="Path to the Ladybug database file. Uses graph_db.default from config if omitted.")
+                str | None,
+                typer.Option(
+                    "--db", help="Path to the Ladybug database file. Uses graph_db.default from config if omitted."
+                ),
             ] = None,
             limit: Annotated[int, typer.Option("--limit", help="Max number of matches.")] = 20,
         ) -> None:
@@ -330,7 +372,10 @@ class DocGraphCommands(CliTopCommand):
         @cli_app.command("tui")
         def tui(
             db_path: Annotated[
-                str | None, typer.Option("--db", help="Path to the Ladybug database file. Uses graph_db.default from config if omitted.")
+                str | None,
+                typer.Option(
+                    "--db", help="Path to the Ladybug database file. Uses graph_db.default from config if omitted."
+                ),
             ] = None,
         ) -> None:
             """Launch an interactive Textual TUI to browse the Document Graph."""

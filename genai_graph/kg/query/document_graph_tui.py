@@ -24,6 +24,7 @@ from genai_graph.kg.query.document_graph_tools import (
     get_section_content,
     list_documents,
     reconstruct_document,
+    reconstruct_section,
 )
 
 # Written by genai_tk.workflow.markdownize.markdownize_flow as the first line of
@@ -251,7 +252,7 @@ class DocumentGraphApp(App[None]):
                 f"level: {data.level}   sequence: {row.get('sequence', '?')}\n"
                 f"lines: {row.get('line_start', data.line_start)}–{row.get('line_end', '?')}"
             )
-            content.update(row.get("text", ""))
+            content.update(reconstruct_section(self.backend, data.section_id or "") or "")
 
     def _path_for_markdown_hash(self, markdown_hash: str | None) -> str | None:
         """Look up a document's converted-Markdown path by its content hash."""

@@ -21,10 +21,12 @@ from genai_graph.kg.export.artifacts import (
     export_warnings,
     validate_parquet_cache,
 )
+from genai_graph.kg.export.dag_html import generate_dag_html
 from genai_graph.kg.export.html import generate_html
 
 __all__ = [
     "generate_html",
+    "generate_dag_html",
     "export_html",
     "export_schema",
     "export_schema_json",

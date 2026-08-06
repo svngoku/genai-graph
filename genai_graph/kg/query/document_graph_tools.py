@@ -139,6 +139,50 @@ def reconstruct_document(
     return (text, query) if return_query else text
 
 
+def _collect_subtree_section_ids(toc_rows: list[dict[str, Any]], root_section_id: str) -> list[str]:
+    """Return *root_section_id* plus every descendant section_id (any depth)."""
+    by_parent: dict[str | None, list[dict[str, Any]]] = {}
+    for row in toc_rows:
+        by_parent.setdefault(row["parent_section_id"], []).append(row)
+
+    ids = [root_section_id]
+
+    def collect(parent_id: str) -> None:
+        for row in by_parent.get(parent_id, []):
+            ids.append(row["section_id"])
+            collect(row["section_id"])
+
+    collect(root_section_id)
+    return ids
+
+
+def reconstruct_section(
+    backend: KgBackend, section_id: str, return_query: bool = False
+) -> str | None | tuple[str | None, str]:
+    """Rebuild the Markdown text of one section plus all of its nested subsections.
+
+    Accepts a full ``section_id`` (``{markdown_hash}::{sequence}``) or a prefix of one.
+    """
+    query = (
+        f"MATCH (s:{_SECTION_LABEL}) WHERE s.section_id = $id OR s.section_id STARTS WITH $id "
+        "RETURN s.section_id AS section_id, s.markdown_hash AS markdown_hash LIMIT 1"
+    )
+    rows, _ = _query_rows(backend, query, {"id": section_id})
+    if not rows:
+        return (None, query) if return_query else None
+
+    resolved_id = rows[0]["section_id"]
+    markdown_hash = rows[0]["markdown_hash"]
+
+    toc = get_document_toc(backend, markdown_hash)
+    subtree_ids = _collect_subtree_section_ids(toc, resolved_id)  # type: ignore[arg-type]
+
+    content_rows = get_section_content(backend, subtree_ids)
+    content_rows.sort(key=lambda r: r["sequence"])  # type: ignore[union-attr]
+    text = "\n".join(r["text"] for r in content_rows)  # type: ignore[union-attr]
+    return (text, query) if return_query else text
+
+
 def search_sections(
     backend: KgBackend, keyword: str, limit: int = 20, return_query: bool = False
 ) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], str]:
