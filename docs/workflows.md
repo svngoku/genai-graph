@@ -6,10 +6,12 @@ document pre-processing pipelines. Workflow definitions live in
 uses for RAG ingestion, anonymization, and BAML extraction.
 
 genai-graph itself only ships **domain-agnostic** workflows (document conversion, a
-generic single-factory KG build primitive, generic Document/Markdown-tree graphs).
-Domain-specific workflows (data paths, concrete graph factories) belong to the
-project that imports genai-graph — see `ekg-atos/config/workflows/` for a worked
-example (rainbow/RFQ presets, multi-factory KG builds).
+generic single-factory KG build primitive, generic document graphs). Domain-specific
+workflows (data paths, concrete graph factories) belong to the project that imports
+genai-graph — see `ekg-atos/config/workflows/` for a worked example (rainbow/RFQ
+presets, multi-factory KG builds). For the Document Graph schema and factories
+themselves (as opposed to the workflow layer covered here), see
+[docs/document-graph.md](document-graph.md).
 
 > **Note:** genai-graph does not ship `config/workflows/*.yaml` as installed package
 > data — it's dev-only config, discovered only when running `cli` from inside the
@@ -35,7 +37,7 @@ example (rainbow/RFQ presets, multi-factory KG builds).
 
 ```bash
 uv run cli workflow list
-# genai-graph itself (generic): document_graph, document_to_kg, markdown_tree,
+# genai-graph itself (generic): document_nodes, document_graph,
 #                                markdownize_documents, office2pdf_documents
 # A downstream project (e.g. ekg-atos) additionally defines: one_rainbow,
 #                                rainbow_add_crm, stratnav_subset, full_kg_pipeline, ...
@@ -55,14 +57,14 @@ uv run cli workflow run markdownize_documents --set sources=./RFQ.zip --set md_o
 uv run cli workflow run document_to_kg --set sources=./docs --set md_output_dir=./md --set graph='{...}'
 ```
 
-### Or use `cli doctree build` / `cli kg create` (high-level shorthands)
+### Or use `cli docgraph build` / `cli kg create` (high-level shorthands)
 
 ```bash
-# Markdownizes ./RFQ.zip (or a plain folder) then ingests into the Markdown Knowledge Tree
-cli doctree build ./RFQ.zip --db ./data/kg/tree.db --profile fast
+# Markdownizes ./RFQ.zip (or a plain folder) then ingests into the Document Graph
+cli docgraph build ./RFQ.zip --db ./data/kg/tree.db --profile fast
 
 # Re-run just the Markdown conversion (and everything downstream of it)
-cli doctree build ./RFQ.zip --db ./data/kg/tree.db --force md
+cli docgraph build ./RFQ.zip --db ./data/kg/tree.db --force md
 
 # Build a KG profile (downstream-project-defined, e.g. ekg-atos's one_rainbow)
 cli kg create one_rainbow
@@ -85,12 +87,12 @@ outputs. Defined in `genai_tk.workflow.force.ForceStage`:
 
 | Stage     | Effect                                                              | Relevant commands |
 |-----------|----------------------------------------------------------------------|--------------------|
-| `unzip`   | Re-extract `.zip` archives even if already cached                    | `markdownize_documents`, `doctree build` |
-| `pdf`     | Re-run Office → PDF conversion                                       | `markdownize_documents`, `doctree build` |
-| `md`      | Re-run document → Markdown conversion                                | `markdownize_documents`, `doctree build` |
+| `unzip`   | Re-extract `.zip` archives even if already cached                    | `markdownize_documents`, `docgraph build` |
+| `pdf`     | Re-run Office → PDF conversion                                       | `markdownize_documents`, `docgraph build` |
+| `md`      | Re-run document → Markdown conversion                                | `markdownize_documents`, `docgraph build` |
 | `parquet` | Rebuild JSON → parquet import caches                                 | `kg create`, `kg_build` |
-| `graph`   | Re-ingest into the graph database (drops the destination store)      | `doctree build`, `kg create`, `kg_build` |
-| `embed`   | Recompute embeddings                                                 | `doctree build`, `kg create` |
+| `graph`   | Re-ingest into the graph database (drops the destination store)      | `docgraph build`, `kg create`, `kg_build` |
+| `embed`   | Recompute embeddings                                                 | `docgraph build`, `kg create` |
 | `all`     | Force every stage, including dropping the destination store          | all of the above |
 
 `--delete-first` remains a separate, explicit DB-lifecycle flag (independent of
@@ -114,7 +116,7 @@ uv run cli workflow run <kg-profile> --force graph # equivalent via the low-leve
 
 | File | Purpose |
 |------|---------|
-| `config/workflows/generic_workflows.yaml` | `kg_build` (single-factory primitive, hidden), `document_graph`, `markdown_tree` |
+| `config/workflows/generic_workflows.yaml` | `kg_build` (single-factory primitive, hidden), `document_nodes`, `document_graph` |
 | `config/workflows/data_injection.yaml` | `office2pdf_documents`, `markdownize_documents`, `document_to_kg` (generic doc→KG pipeline) |
 
 All are merged into the global config via `:merge:` in `app_conf.yaml`, so all
@@ -131,9 +133,60 @@ The generic `kg_build` workflow calls `genai_graph.orchestration.workflow_steps.
 5. Returns `{config_name, total_processed, total_failed, warnings_count, db_path}`
 
 For multi-factory graphs (several JSON sources merged into one KG), a downstream
-project typically calls `kg_create_step` with a `config_name` that resolves to a
-richer `KgProfileConfig` (see ekg-atos's `graph_construction.yaml` — `rainbow_add_crm`
-combines three factories in one workflow).
+project chains several `kg_build`-based pipeline steps with `after:` — each targeting
+the same `kg_name` — so all factories MERGE into one database (see ekg-atos's
+`graph_construction.yaml` — `rainbow_add_crm` combines three factories this way).
+
+### The `docgraph_build_step` function
+
+`genai_graph.orchestration.workflow_steps.docgraph_build_step` is the building block
+for document-driven KGs — markdownize sources, run entity-extraction factories, and
+build the [Document Graph](document-graph.md) into one database:
+
+1. Optionally markdownizes `sources` (raw docs *or* pre-existing Markdown) into
+   `md_output_dir` when `markdownize_profile` is set.
+2. Runs each configured entity `factories` (e.g. a `MarkdownBamlFactory` subclass)
+   into a single KG named `kg_name`.
+3. Optionally ingests the `Folder → Document → MarkdownSection` graph over the same
+   Markdown into the *same* database (`build_document_graph`, default `true`) —
+   Document nodes MERGE by content hash with the ones the entity factories create.
+
+A project wires this up as its own workflow (like `kg_build`, it isn't a YAML
+workflow shipped by genai-graph itself):
+
+```yaml
+# a project's config/workflows/*.yaml
+workflows:
+  docgraph_build:
+    run: genai_graph.orchestration.workflow_steps.docgraph_build_step
+    hidden: true
+    defaults:
+      markdownize_profile: fast
+      build_document_graph: true
+      delete_first: false
+      export_html: true
+    params:
+      kg_name: {required: true}
+      sources: {required: true}
+      md_output_dir: {required: true}
+      factories: {required: true}
+
+  rainbow_extract:
+    description: "Rainbow: PPT/PDF/Markdown -> opportunity entities + document graph"
+    pipeline:
+      - id: build
+        run: docgraph_build
+        with:
+          kg_name: rainbow_extract
+          sources: '${values.sources}'
+          md_output_dir: '${paths.rainbow_md}'
+          factories:
+            - factory: myproject.schema.rainbow_review.ReviewedOpportunityGraph
+              md_root: '${paths.rainbow_md}'
+              json_cache_root: '${paths.rainbow_json}'
+    defaults:
+      sources: '${paths.rainbow_ppt}'
+```
 
 ---
 
@@ -174,23 +227,42 @@ pipeline; `markdownize_flow` converts Office → PDF → Markdown internally.
 
 ### Domain-specific multi-factory workflows (example: ekg-atos)
 
+Each pipeline step targets the same `kg_name` via `kg_build`, so every factory's
+nodes/relations MERGE into one database:
+
 ```yaml
 # ekg-atos/config/workflows/graph_construction.yaml
 workflows:
   rainbow_add_crm:
     description: "Rainbow reviews + architecture docs + CRM export"
-    steps:
-      - id: build
-        ref: kg_build
+    pipeline:
+      - id: rainbow
+        run: kg_build
         with:
-          graphs:
-            - factory: ekg_atos.schema.rainbow_review.ReviewedOpportunityGraph
-              data_root: '${paths.rainbow_json}'
-              include: ['*CNES*']
-            - factory: ekg_atos.schema.architecture_doc.ArchitectureDocumentGraph
-              data_root: '${paths.add_json}'
-            - factory: ekg_atos.schema.crm_export.CrmExtractGraph
-              files: ['${paths.ekg_data}/crm_export/report.xlsx']
+          kg_name: rainbow_add_crm
+          graph:
+            factory: ekg_atos.schema.rainbow_review.ReviewedOpportunityGraph
+            md_root: '${paths.rainbow_md}'
+            json_cache_root: '${paths.rainbow_json}'
+            include: ['*CNES*']
+      - id: arch_doc
+        run: kg_build
+        after: [rainbow]
+        with:
+          kg_name: rainbow_add_crm
+          delete_first: false
+          graph:
+            factory: ekg_atos.schema.architecture_doc.ArchitectureDocumentGraph
+            data_root: '${paths.add_json}'
+      - id: crm
+        run: kg_build
+        after: [arch_doc]
+        with:
+          kg_name: rainbow_add_crm
+          delete_first: false
+          graph:
+            factory: ekg_atos.schema.crm_export.CrmExtractGraph
+            files: ['${paths.ekg_data}/crm_export/report.xlsx']
 ```
 
 ### Sub-workflow composition
@@ -248,17 +320,35 @@ cli kg create one_rainbow --set export_html=false
 cli kg create --all                             # run every kg_* profile
 ```
 
-### `cli doctree build` (Markdown Knowledge Tree)
+### `cli docgraph run` (ad-hoc sources, project-defined workflow)
 
-Always markdownizes its sources first, then ingests into the tree database:
+Runs a project's `docgraph_build`-based workflow (e.g. `rainbow_extract`) against
+either its configured default sources or ad-hoc ones passed with `-s`:
 
 ```bash
-cli doctree build ./docs --db ./data/kg/tree.db
-cli doctree build ./RFQ.zip --db ./data/kg/tree.db --profile fast
-cli doctree build ./RFQ.zip --db ./data/kg/tree.db --md-output-dir ./out/md --cache-dir ./out/.cache
-cli doctree build ./RFQ.zip --db ./data/kg/tree.db --force md      # re-run markdown conversion
-cli doctree build ./RFQ.zip --db ./data/kg/tree.db --force graph   # re-ingest, reuse markdown cache
-cli doctree build ./RFQ.zip --db ./data/kg/tree.db --delete-first  # drop Section/Chunk tables first
+cli docgraph run --workflow rainbow_extract                         # configured default sources
+cli docgraph run -w rainbow_extract -s ./some_file.pptx              # ad-hoc source override
+cli docgraph run -w rainbow_extract -s ./ppt --force md              # re-run markdown conversion
+cli docgraph run -w rainbow_extract --dry-run                        # resolve the plan only
+cli docgraph run -w rainbow_extract --set export_html=false
+```
+
+`cli kg create <name>` and `cli docgraph run --workflow <name>` both resolve through
+`resolve_workflow_invocation` + `execute_workflow` — use `kg create` for a named,
+predefined document set, and `docgraph run` when you want to point at a file/folder
+ad hoc.
+
+### `cli docgraph build` (Document Graph only, no entity extraction)
+
+Always markdownizes its sources first, then ingests into the graph database:
+
+```bash
+cli docgraph build ./docs --db ./data/kg/tree.db
+cli docgraph build ./RFQ.zip --db ./data/kg/tree.db --profile fast
+cli docgraph build ./RFQ.zip --db ./data/kg/tree.db --md-output-dir ./out/md --cache-dir ./out/.cache
+cli docgraph build ./RFQ.zip --db ./data/kg/tree.db --force md      # re-run markdown conversion
+cli docgraph build ./RFQ.zip --db ./data/kg/tree.db --force graph   # re-ingest, reuse markdown cache
+cli docgraph build ./RFQ.zip --db ./data/kg/tree.db --delete-first  # drop Section tables first
 ```
 
 ---

@@ -1,21 +1,21 @@
-"""Graph node model for the Markdown Knowledge Tree.
+"""Graph node model for Document Graph sections.
 
 A ``MarkdownSection`` represents one heading-delimited section of a
-:class:`~genai_graph.kg.nodes.document.MarkdownDocument`. Sections are stored as
-a flat node table (not a nested Pydantic structure) with an explicit
-``parent_section_id`` — the hierarchy is materialised entirely as
+:class:`~genai_graph.kg.nodes.document.Document`'s Markdown rendering. Sections
+are stored as a flat node table (not a nested Pydantic structure) with an
+explicit ``parent_section_id`` — the hierarchy is materialised entirely as
 ``HAS_SUBSECTION`` graph edges, which lets an agent navigate the tree with
 ordinary Cypher traversals.
 
 A section's ``text`` is its **own** content (heading line plus body up to the
 next heading of any level), so the sections of a document partition its lines
 without overlap and the original document can be reconstructed by concatenating
-them in ``sequence`` order. Every Markdown document has at least one section
-(a synthetic root section captures any preamble or a heading-less document).
+them in ``sequence`` order. Every document has at least one section (a synthetic
+root section captures any preamble or a heading-less document).
 
 These node/relation singletons are ingested directly via
-:func:`genai_graph.kg.markdown.ingest.ingest_markdown_tree`, which bypasses the
-generic Pydantic-nesting extraction (``extract_graph_data``) — the section
+:func:`genai_graph.kg.document_graph.ingest.ingest_document_graph`, which bypasses
+the generic Pydantic-nesting extraction (``extract_graph_data``) — the section
 hierarchy is a self-referential structure that doesn't map cleanly onto that
 mechanism — and instead builds nodes/relationships explicitly, then merges them
 with the same Arrow/Ladybug primitives (`merge_nodes_batch`,
@@ -26,15 +26,15 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from genai_graph.kg.nodes.document import ChunkNode, MarkdownDocumentNode
+from genai_graph.kg.nodes.document import DocumentNode
 from genai_graph.kg.schema.core import GraphNode, GraphRelation
 
 
 class MarkdownSection(BaseModel):
-    """A single heading-delimited section of a Markdown document."""
+    """A single heading-delimited section of a document's Markdown rendering."""
 
     section_id: str = Field(..., description="Primary key: f'{markdown_hash}::{sequence}'")
-    markdown_hash: str = Field(..., description="content_hash of the owning MarkdownDocument (foreign key)")
+    markdown_hash: str = Field(..., description="markdown_hash of the owning Document (foreign key)")
     parent_section_id: str | None = Field(
         default=None, description="section_id of the parent section, or None for a top-level (root) section"
     )
@@ -53,22 +53,22 @@ class MarkdownSection(BaseModel):
 #
 # `field_paths` are set explicitly to a no-op sentinel because the section
 # hierarchy is self-referential and is populated by the direct ingestion path
-# in `genai_graph.kg.markdown.ingest`, not by the generic
+# in `genai_graph.kg.document_graph.ingest`, not by the generic
 # Pydantic-nesting-based `extract_graph_data()` extraction.
 
 SectionNode: GraphNode = GraphNode(
     node_class=MarkdownSection,
     name_from="title",
     key_from="section_id",
-    description="A heading-delimited section of a Markdown document",
+    description="A heading-delimited section of a document's Markdown rendering",
     explicitly_defined=True,
 )
 
 HAS_SECTION: GraphRelation = GraphRelation(
     name="HAS_SECTION",
-    from_node=MarkdownDocumentNode,
+    from_node=DocumentNode,
     to_node=SectionNode,
-    description="Markdown document has a top-level (root) section",
+    description="Document has a top-level (root) Markdown section",
     field_paths=[("", "")],
 )
 
@@ -77,13 +77,5 @@ HAS_SUBSECTION: GraphRelation = GraphRelation(
     from_node=SectionNode,
     to_node=SectionNode,
     description="Parent section contains a nested child section",
-    field_paths=[("", "")],
-)
-
-HAS_CHUNK: GraphRelation = GraphRelation(
-    name="HAS_CHUNK",
-    from_node=SectionNode,
-    to_node=ChunkNode,
-    description="Section contains an (optionally embedded) text chunk",
     field_paths=[("", "")],
 )

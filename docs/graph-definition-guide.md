@@ -77,36 +77,68 @@ schema = GraphSchema(
 `GraphSchema` validates the schema at construction time. Any label collisions or orphaned nodes
 produce `UserWarning` messages so you can catch problems early.
 
-## 5. Create a Factory
+## 5. Create a Factory (for persistent, file-backed ingestion)
 
-Wrap the schema in a `JsonFileBackedFactory` (or another factory) that handles ingestion.
+For a one-off in-memory model, skip straight to [step 6](#6-ingest-data). To ingest a
+directory of JSON files (e.g. produced by `cli baml extract`), subclass
+`JsonFileBackedFactory` and implement `build_schema()`:
 
 ```python
 from genai_graph.kg.factories import JsonFileBackedFactory
+from pydantic import BaseModel
 
-class ProjectGraph(JsonFileBackedFactory):
-    schema = GraphSchema(
-        root_model_class=Project,
-        nodes=[project_node, company_node, person_node],
-        relations=[client_rel, lead_rel],
-    )
-    source_model = Project
+class ProjectGraph(JsonFileBackedFactory, BaseModel):
+    data_root: str = "data/projects"   # directory of {ModelName}/*.json files
+
+    def build_schema(self) -> GraphSchema:
+        return GraphSchema(
+            root_model_class=Project,
+            nodes=[project_node, company_node, person_node],
+            relations=[client_rel, lead_rel],
+        )
 ```
+
+`get_keys()` (file discovery) and `get_struct_data_by_key()` (JSON → `Project`) are
+provided by the base class. See [Graph Authoring Patterns](graph-authoring-patterns.md)
+for the other factory types (tables, Neo4j exports, Markdown documents, inline BAML
+extraction).
 
 ## 6. Ingest Data
 
+For a single in-memory model, call `create_graph()` directly — it creates the schema
+tables and MERGEs the data in one call:
+
 ```python
-from pathlib import Path
 from genai_graph.kg.backend import create_backend_from_config
+from genai_graph.kg.ingest import create_graph
 
 backend = create_backend_from_config("my_graph")
-graph = ProjectGraph(backend=backend)
 
-projects = [
-    Project(title="Alpha", client=Company(name="Acme", sector="Tech"), lead=Person(name="Alice")),
-    Project(title="Beta",  client=Company(name="Acme"), lead=None),
-]
-graph.ingest(projects)
+project = Project(
+    title="Alpha", client=Company(name="Acme", sector="Tech"), team=[Person(name="Alice", title="Lead")]
+)
+create_graph(backend, project, schema)
+```
+
+For a factory that reads many files (Step 5), wire it into a workflow instead of
+calling it directly — the workflow engine handles schema creation, caching, and the
+HTML/warnings exports:
+
+```yaml
+# config/workflows/my_graph.yaml
+workflows:
+  my_project_kg:
+    run: genai_graph.orchestration.workflow_steps.kg_build_step
+    defaults:
+      kg_name: my_project_kg
+    params:
+      graph: {required: true}
+```
+
+```bash
+cli workflow run my_project_kg --set graph='{factory: myapp.schema.ProjectGraph, data_root: data/projects}'
+# or, once the profile is registered:
+cli kg create my_project_kg
 ```
 
 ## 7. Query the Graph
@@ -142,4 +174,6 @@ resolved.to_html_file("schema.html")  # interactive D3 graph
 ## Next Steps
 
 - [Graph Authoring Patterns](graph-authoring-patterns.md) — JSON files, CRM tables, Neo4j exports, document ingestion
+- [Document Graph](document-graph.md) — the `Folder`/`Document`/`MarkdownSection` schema, inline BAML extraction, `cli docgraph`
+- [Workflows](workflows.md) — running factories through the workflow engine, `cli kg create`
 - [Schema Compilation Reference](schema-compilation.md) — field-path deduction rules, `table_name`, exclusion mechanics

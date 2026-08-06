@@ -42,13 +42,13 @@ not automatically invalidate `graph_A`'s cache. Both must be cleared.
 
 ```bash
 # Clear all caches (recommended when BAML schema changes)
-cli kg create --kg my_kg --clear-all-caches
+cli kg create my_kg --clear-all-caches
 
 # Force rebuild of imported dependencies even if fingerprints match
-cli kg create --kg my_kg --force
+cli kg create my_kg --force parquet
 
 # Target KG + all its imports, fully fresh
-cli kg create --kg my_kg --clear-all-caches --force
+cli kg create my_kg --clear-all-caches --force parquet
 ```
 
 `--clear-all-caches` recursively deletes all `parquet/` subdirectories under `~/kg_outputs/`

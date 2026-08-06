@@ -155,7 +155,7 @@ cli:
     - genai_tk.workflow.rag.commands_rag.RagCommands
     - genai_tk.agents.commands_agents.AgentCommands
     - genai_tk.extra.structured.commands_baml.BamlCommands
-    - genai_graph.core.commands_tree.TreeCommands
+    - genai_graph.core.commands_docgraph.DocGraphCommands
     - genai_tk.main.cli.register_commands
 
 test:

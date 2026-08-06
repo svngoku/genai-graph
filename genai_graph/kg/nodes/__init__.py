@@ -7,20 +7,12 @@ the downstream project that imports genai-graph.
 
 from genai_graph.kg.nodes.document import (
     CONTAINS_DOC,
-    HAS_DOCUMENT,
-    MARKDOWNIZED_AS,
-    NEXT_CHUNK,
-    Chunk,
-    ChunkNode,
     Document,
     DocumentNode,
-    MarkdownDocument,
-    MarkdownDocumentNode,
-    Repository,
-    RepositoryNode,
+    Folder,
+    FolderNode,
 )
-from genai_graph.kg.nodes.markdown_tree import (
-    HAS_CHUNK,
+from genai_graph.kg.nodes.document_section import (
     HAS_SECTION,
     HAS_SUBSECTION,
     MarkdownSection,
@@ -29,20 +21,12 @@ from genai_graph.kg.nodes.markdown_tree import (
 
 __all__ = [
     "Document",
-    "Chunk",
-    "Repository",
-    "MarkdownDocument",
+    "Folder",
     "DocumentNode",
-    "ChunkNode",
-    "RepositoryNode",
-    "MarkdownDocumentNode",
+    "FolderNode",
     "CONTAINS_DOC",
-    "NEXT_CHUNK",
-    "HAS_DOCUMENT",
-    "MARKDOWNIZED_AS",
     "MarkdownSection",
     "SectionNode",
     "HAS_SECTION",
     "HAS_SUBSECTION",
-    "HAS_CHUNK",
 ]

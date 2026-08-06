@@ -1,4 +1,4 @@
-"""Markdown Knowledge Tree — parse Markdown text into a flat, ordered list of sections.
+"""Document Graph — parse Markdown text into a flat, ordered list of sections.
 
 Uses ``markdown-it-py`` (a real CommonMark parser) instead of regex so that
 headings inside fenced code blocks, inline code, or blockquotes are handled

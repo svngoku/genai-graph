@@ -43,7 +43,7 @@ The KG Explorer is a Streamlit page that provides an interactive interface for e
 
 1. Make sure you have a Knowledge Graph database set up:
    ```bash
-   cli kg create --kg <your-kg-name>
+   cli kg create <your-kg-name>
    ```
 
 2. Launch the Streamlit app:

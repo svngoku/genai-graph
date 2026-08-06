@@ -88,25 +88,78 @@ backend.import_neo4j_json("neo4j_nodes.json", "neo4j_rels.json")
 
 ## Pattern 4 — Document / Markdown Ingestion
 
-Use `DocumentDirectoryFactory` to ingest text documents with auto-extracted metadata.
+Use `DocumentGraphFactory` to ingest a Markdown corpus as a navigable
+`Folder → Document → MarkdownSection` graph (heading hierarchy, no chunking or
+embeddings):
+
+```python
+from genai_graph.kg.backend import KuzuBackend
+from genai_graph.kg.document_graph.ingest import ingest_document_graph
+from genai_graph.kg.factories.document_graph_factory import DocumentGraphFactory
+
+backend = KuzuBackend()
+backend.connect("./data/kg/tree.db")
+
+factory = DocumentGraphFactory(sources=["data/reports"], include=["*.md"])
+ingest_document_graph(backend, factory)
+```
+
+Each file becomes a `Document` node (keyed by content hash) with one `MarkdownSection`
+per heading. See [Document Graph](document-graph.md) for the full schema and CLI
+(`cli docgraph build`/`run`).
+
+If you only need file-level provenance (no sections), use
+`DocumentDirectoryFactory` instead — it produces plain `Document` nodes:
 
 ```python
 from genai_graph.kg.factories import DocumentDirectoryFactory
 from genai_graph.kg.nodes.document import DocumentNode
 
 class ReportGraph(DocumentDirectoryFactory):
-    schema = GraphSchema(
-        root_model_class=None,
-        nodes=[DocumentNode],
-        relations=[],
-    )
-    source_dir = "data/reports"
-    glob = "**/*.md"
+    def build_schema(self) -> GraphSchema:
+        return GraphSchema(root_model_class=None, nodes=[DocumentNode], relations=[])
 ```
 
-Each document becomes a `Document` node with `title`, `content`, `path`, and optional embeddings.
+**When to use**: technical documentation, research papers, internal wiki pages;
+`DocumentGraphFactory` when you want table-of-contents navigation, `DocumentDirectoryFactory`
+for simple file-provenance tracking.
 
-**When to use**: technical documentation, research papers, internal wiki pages.
+## Pattern 4b — Inline BAML Entity Extraction over Markdown
+
+Use `MarkdownBamlFactory` to extract structured entities from Markdown files via a
+BAML function, without a separate `cli baml extract` step — the extraction result is
+cached as JSON automatically:
+
+```python
+from genai_graph.kg.factories import MarkdownBamlFactory
+from genai_graph.kg.schema import GraphSchema
+from pydantic import BaseModel
+
+class ReviewedOpportunityGraph(MarkdownBamlFactory):
+    def build_schema(self) -> GraphSchema:
+        nodes, relations = self.get_document_schema_elements(ReviewedOpportunityNode)
+        return GraphSchema(
+            root_model_class=ReviewedOpportunity,
+            nodes=[ReviewedOpportunityNode, *nodes],
+            relations=relations,
+        )
+
+    def extract_from_markdown(self, md_text: str) -> BaseModel:
+        from genai_tk.extra.structured.baml_processor import BamlStructuredProcessor
+
+        processor = BamlStructuredProcessor(
+            model_cls=ReviewedOpportunity, function_name="ExtractRainbow", kvstore_id=""
+        )
+        return processor.analyze_document("doc", md_text)
+```
+
+Because `get_document_schema_elements()` adds the same `Document` node type as
+`DocumentGraphFactory`, running both factories against the same Markdown produces one
+shared `Document` node carrying provenance *and* extracted entities — see
+`genai_graph.orchestration.workflow_steps.docgraph_build_step`.
+
+**When to use**: LLM-extracted entities (opportunities, risks, requirements, …) that
+should live in the same KG as the document provenance graph.
 
 ## Pattern 5 — Similarity / Embedding Nodes
 
@@ -204,6 +257,7 @@ Each factory's nodes and relations are merged. Nodes with the same `label` are d
 | JSON export / API output | JSON Files (1) |
 | Excel / CSV spreadsheet | CRM Tables (2) |
 | Existing Neo4j graph | Neo4j Import (3) |
-| Markdown / text files | Document Ingestion (4) |
+| Markdown / text files (navigable TOC) | Document Ingestion (4) |
+| LLM entity extraction from Markdown (inline) | Inline BAML Extraction (4b) |
 | Semantic search use case | Similarity Nodes (5) |
 | Multiple sources, shared entities | Canonical Reuse (6) + Registry (7) |

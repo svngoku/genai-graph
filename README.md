@@ -11,18 +11,19 @@ then exposes the graph through a Streamlit webapp, a CLI, and Cypher-aware agent
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                              Data Sources                                    │
+┌────────────────────────────────────────────────────────────────────────────┐
+│                              Data Sources                                  │
 │  Neo4j export (JSONL)   Excel / CSV tables   Documents (PDF, PPTX, MD)      │
-└─────────────┬──────────────────┬────────────────────────┬────────────────────┘
+└─────────────┬──────────────────┬────────────────────────┬─────────────────┘
               │                  │                        │
               ▼                  ▼                        ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                           Factory Layer                                      │
-│  Neo4jImportFactory   TableBackedFactory   JsonFileBackedFactory            │
-│                                             DocumentDirectoryFactory         │
-│                                             (BAML extraction → JSON)         │
-└─────────────────────────────────────┬───────────────────────────────────────┘
+│                           Factory Layer                                     │
+│  Neo4jImportFactory   TableBackedFactory   DocumentGraphFactory              │
+│                                            (Folder→Document→MarkdownSection) │
+│                                            MarkdownBamlFactory (inline BAML) │
+│                                            JsonFileBackedFactory (JSON→graph)│
+└─────────────────────────────────────┬────────────────────────────────────────┘
                                       │  DataFrames of typed Pydantic nodes
                                       ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -39,9 +40,9 @@ then exposes the graph through a Streamlit webapp, a CLI, and Cypher-aware agent
 │  Node tables  ·  Relationship tables  ·  Vector embeddings (optional)        │
 └──────────────────────┬──────────────────────────────────────────────────────┘
                        │
-          ┌────────────┼────────────────┐
-          ▼            ▼                ▼
-    CLI (kg/neo4j) Streamlit webapp  Cypher agents
+          ┌────────────┼─────────────────┐
+          ▼            ▼                 ▼
+    CLI (kg/docgraph/neo4j)  Streamlit webapp  Cypher agents
 ```
 
 ### Key design decisions
@@ -64,9 +65,9 @@ GenAI Graph extends genai-tk's **three domains**:
 
 | Domain | GenAI Graph adds |
 |--------|-----------------|
-| **🧠 Core GenAI** | BAML schemas for structured extraction; `DocumentDirectoryFactory` |
-| **🤖 Agents** | Cypher tool integration; `KGQueryAgent`; graph-aware system prompts |
-| **⚙️ Workflows** | `kg_create_step`, multi-source KG pipeline profiles |
+| **🧠 Core GenAI** | BAML schemas for structured extraction; Document Graph factories (`DocumentGraphFactory`, `MarkdownBamlFactory`, `DocumentDirectoryFactory`) |
+| **🤖 Agents** | Cypher tool integration; `KGQueryAgent`; Document Graph navigation tools; graph-aware system prompts |
+| **⚙️ Workflows** | `kg_build_step`, `docgraph_build_step`, multi-source KG pipeline profiles |
 
 For the toolkit foundation see [genai-tk](https://github.com/tclatos/genai-tk).
 
@@ -78,8 +79,8 @@ For the toolkit foundation see [genai-tk](https://github.com/tclatos/genai-tk).
 # Install
 uv sync
 
-# Build a knowledge graph (define your own — see below)
-just kg my_graph
+# Build a knowledge graph (define your own factory — see below)
+cli kg create my_graph
 
 # Launch Streamlit webapp
 just webapp
@@ -167,52 +168,64 @@ resolved.to_html("schema.html") # interactive D3 diagram
 
 ```python
 from genai_graph.kg.factories import JsonFileBackedFactory
+from pydantic import BaseModel
 
-class ProjectGraph(JsonFileBackedFactory):
-    schema = GraphSchema(root_model_class=Project, nodes=[...], relations=[...])
-    source_model = Project
-    source_dir = "data/projects"   # directory of *.json files
+class ProjectGraph(JsonFileBackedFactory, BaseModel):
+    data_root: str = "data/projects"   # directory of {ModelName}/*.json files
+
+    def build_schema(self) -> GraphSchema:
+        return GraphSchema(root_model_class=Project, nodes=[...], relations=[...])
 ```
 
 ### 6. Wire up a workflow profile
 
 ```yaml
-# config/workflows/graph_construction.yaml
+# config/workflows/my_graph.yaml
 workflows:
-  kg_build:
-    steps:
-      - id: build
-        uses: genai_graph.orchestration.workflow_steps.kg_create_step
-        inputs:
-          config_name: my_graph
+  my_project_kg:
+    run: genai_graph.orchestration.workflow_steps.kg_build_step
+    defaults:
+      kg_name: my_project_kg
+    params:
+      graph: {required: true}
 ```
 
 ```bash
-cli workflow run kg_build --dry-run   # preview
-cli workflow run kg_build             # build
+cli workflow run my_project_kg --set graph='{factory: myapp.schema.ProjectGraph, data_root: data/projects}' --dry-run   # preview
+cli workflow run my_project_kg --set graph='{factory: myapp.schema.ProjectGraph, data_root: data/projects}'             # build
 ```
 
 ---
 
 ## Document Pipeline
 
-End-to-end: raw documents → queryable knowledge graph
+End-to-end: raw documents → queryable Document Graph (+ extracted entities)
 
 ```bash
-# 1. Convert PPT/PDF to Markdown
-just office2pdf   # or: cli workflow run office2pdf_documents
-just markdownize
+# One call: markdownize sources (PPT/PDF/... or pre-existing Markdown), then build
+# the Folder → Document → MarkdownSection graph
+cli docgraph build ./docs --db ./data/kg/tree.db
 
-# 2. Extract structured data with BAML (LLM)
-cli baml extract '${paths.docs_md}' '${paths.docs_json}' \
-  --function ExtractMyEntities --include "*.md" --recursive
+# Browse it
+cli docgraph list --db ./data/kg/tree.db
+cli docgraph toc <filename-or-hash> --db ./data/kg/tree.db
+cli docgraph search "keyword" --db ./data/kg/tree.db
+```
 
-# 3. Build the knowledge graph
-just kg my_graph   # or: cli kg create my_graph
+To also extract structured entities (Opportunity, Risk, Person, …) from the same
+documents — via a project-defined workflow chaining a `MarkdownBamlFactory` subclass
+and the document graph into one database:
 
-# 4. View in browser
+```bash
+cli docgraph run --workflow rainbow_extract -s ./some_file.pptx
+# or, for a predefined set of documents:
+cli kg create one_rainbow
+
+# View in browser
 cli kg view
 ```
+
+See [Document Graph](docs/document-graph.md) for the full schema, factories, and CLI reference.
 
 ---
 
@@ -258,11 +271,12 @@ cli neo4j query "MATCH (n) RETURN labels(n), count(*)" --db path/to/ladybug_db
 | Doc | Topic |
 |-----|-------|
 | [docs/graph-definition-guide.md](docs/graph-definition-guide.md) | **Start here** — 5-minute guide: models → schema → ingest → query |
-| [docs/graph-authoring-patterns.md](docs/graph-authoring-patterns.md) | Pattern catalog: JSON, tables, Neo4j, documents, similarity, canonical reuse |
+| [docs/document-graph.md](docs/document-graph.md) | The Document Graph: `Folder`/`Document`/`MarkdownSection` schema, factories, inline BAML extraction, `cli docgraph` |
+| [docs/graph-authoring-patterns.md](docs/graph-authoring-patterns.md) | Pattern catalog: JSON, tables, Neo4j, documents, inline BAML extraction, similarity, canonical reuse |
 | [docs/schema-compilation.md](docs/schema-compilation.md) | Field-path deduction, `table_name`, exclusion mechanics, compiler functions |
 | [docs/graph_construction.md](docs/graph_construction.md) | Factories, canonical types, schema merging, CLI reference |
-| [docs/workflows.md](docs/workflows.md) | Workflow DSL for KG pipelines; `kg_create_step`; profiles |
-| [docs/baml_extraction_guide.md](docs/baml_extraction_guide.md) | BAML schema → JSON → graph factory patterns |
+| [docs/workflows.md](docs/workflows.md) | Workflow DSL for KG pipelines; `kg_build`/`docgraph_build`; `cli kg create`/`cli docgraph run` |
+| [docs/baml_extraction_guide.md](docs/baml_extraction_guide.md) | BAML schema → JSON/inline → graph factory patterns |
 | [docs/primary_key_implementation.md](docs/primary_key_implementation.md) | `key_from` options: field, AUTO_ID, lambda, None-skip |
 | [docs/prefect_dag_pipeline.md](docs/prefect_dag_pipeline.md) | Prefect DAG internals, concurrency model |
 | [docs/kg_explorer.md](docs/kg_explorer.md) | Streamlit KG Explorer (Cypher UI, Text-to-Cypher) |
@@ -282,7 +296,7 @@ Interactive examples in `notebooks/`:
 |----------|---------------|
 | [01_define_graph_from_scratch.ipynb](notebooks/01_define_graph_from_scratch.ipynb) | Full pipeline: models → schema → ingest → Cypher → HTML viz |
 | [cypher_examples.ipynb](notebooks/cypher_examples.ipynb) | Cypher patterns: basic, traversal, aggregation, filtering |
-| [document_graph_demo.ipynb](notebooks/document_graph_demo.ipynb) | Document+Chunk ingestion from a markdown directory |
+| [document_graph_demo.ipynb](notebooks/document_graph_demo.ipynb) | Document Graph ingestion (`Folder`/`Document`/`MarkdownSection`) from a markdown directory |
 | [cypher_query_development.ipynb](notebooks/cypher_query_development.ipynb) | Interactive Cypher development helper |
 
 ```bash

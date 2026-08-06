@@ -47,17 +47,28 @@ The KG construction pipeline combines data from multiple sources (Neo4j exports,
 
 ## Graph Factories
 
-Factories convert source data into graph nodes and relationships. Three main types:
+Factories convert source data into graph nodes and relationships. Four main types:
 
 ### 1. JsonFileBackedFactory
 
-**Use case**: Process BAML-extracted JSON files from text documents  
+**Use case**: Process BAML-extracted JSON files from text documents (a prior `cli baml extract` run already produced the JSON)
 **Documentation**: See [BAML Extraction Guide](baml_extraction_guide.md) for complete details
 
 ```python
 class ReviewedOpportunityGraph(JsonFileBackedFactory, BaseModel):
     def get_model_class(self) -> type[BaseModel]:
         return ReviewedOpportunity
+```
+
+### 1b. MarkdownBamlFactory
+
+**Use case**: Extract entities from Markdown via a BAML function **inline** (no separate JSON-extraction step) — the JSON result is cached automatically.
+**Documentation**: See [Document Graph](document-graph.md#markdownbamlfactory-inline-baml-entity-extraction)
+
+```python
+class ReviewedOpportunityGraph(MarkdownBamlFactory):
+    def extract_from_markdown(self, md_text: str) -> BaseModel:
+        ...  # call your BAML function
 ```
 
 ### 2. Neo4jImportFactory
@@ -262,17 +273,7 @@ Relationships are unique by (from_node, to_node, rel_type). Edge properties
 
 ## Import/Export via Parquet
 
-KG configurations can import from other configurations via parquet cache, enabling incremental builds.
-
-```yaml
-# config/ekg.yaml
-stratnav_subset_rainbow_crm:
-  import:
-    - rainbow_add_crm         # Imports nodes/rels from parquet
-    - stratnav_subset
-  graphs:
-    - factory: ekg_atos.schema.my_factory.MyGraph
-```
+KG configurations can import from other configurations via parquet cache, enabling incremental builds. `KgProfileConfig.imports` (a list of KG names, aliased `import` in YAML) is the underlying field; a project populates it inside a `graph:`/`graphs:` block of one of its own workflow pipeline steps (see [Configuration](#configuration) below) rather than a separate config file.
 
 **Import process**:
 1. **Recursively creates schemas** from imported KG configurations
@@ -285,40 +286,51 @@ stratnav_subset_rainbow_crm:
 - **Modular composition**: Combine pre-built graphs
 - **Schema evolution**: Handles backward compatibility automatically
 
-**Cache location**: `/home/tcl/kg_outputs/{kg_name}/parquet/`
+**Cache location**: `~/kg_outputs/{kg_name}/parquet/`
 
 ## Configuration
 
-KG configurations are defined in `config/ekg.yaml`:
+There is no standalone KG-config file. `KgManager.from_global_config()` derives
+`kg_configs` (a `dict[str, KgProfileConfig]`) by scanning **every workflow's**
+`pipeline`/`steps` for a `with.kg_name` + `with.graph`/`with.graphs` entry — see
+[docs/workflows.md](workflows.md). A project defines its KGs as workflow pipeline
+steps in its own `config/workflows/*.yaml`:
 
 ```yaml
-paths:
-  rainbow_md: ${paths.ekg_data}/rainbow/md/
-  rainbow_json: ${paths.ekg_data}/rainbow/json/
-
-kg_configs:
+# a project's config/workflows/graph_construction.yaml
+workflows:
   one_rainbow_with_db:
-    import:
-      - crm_export              # Import CRM data first
-    graphs:
-      - factory: "ekg_atos.schema.rainbow_review.ReviewedOpportunityGraph"
-        data_root: ${paths.rainbow_json}
-        include: 
-          - "*CNES*TMA*VENUS*"
-        exclude:
-          - "fake/*"
-        recursive: true
-        file_embedding:
-          metadata: ["Opportunity.opportunity_id", "Customer.name"]
+    pipeline:
+      - id: rainbow
+        run: kg_build
+        with:
+          kg_name: one_rainbow_with_db
+          graph:
+            factory: ekg_atos.schema.rainbow_review.ReviewedOpportunityGraph
+            md_root: '${paths.rainbow_md}'
+            json_cache_root: '${paths.rainbow_json}'
+            include: ['*CNES*TMA*VENUS*']
+            exclude: ['fake/*']
+      - id: crm
+        run: kg_build
+        after: [rainbow]
+        with:
+          kg_name: one_rainbow_with_db
+          delete_first: false
+          graph:
+            factory: ekg_atos.schema.crm_export.CrmExtractGraph
+            files: ['${paths.ekg_data}/crm_export/report.xlsx']
 ```
 
-**Configuration fields**:
-- `import`: List of KG names to import (processed first)
-- `data_root`: Base directory for data files
-- `include`: Glob patterns for files to include
-- `exclude`: Glob patterns for files to exclude
-- `recursive`: Search subdirectories
-- `file_embedding`: Fields to include in document metadata
+**`graph:` fields** (factory-specific; the ones shown are common to the Markdown-backed
+factories):
+- `factory`: dotted path to the factory class
+- `md_root` / `data_root`: base directory the factory reads from
+- `include` / `exclude`: glob patterns
+- `recursive`: search subdirectories
+
+See [docs/workflows.md](workflows.md) for the full DSL (`pipeline:`, `run:`, `with:`,
+`after:`, presets, `--set` overrides).
 
 ## CLI Commands
 
@@ -327,23 +339,25 @@ kg_configs:
 cli kg create
 
 # Create one or more specific KGs
-cli kg create --kg stratnav_subset_rainbow_crm
-cli kg create --kg rainbow_add_crm --kg stratnav_subset_rainbow_crm
+cli kg create stratnav_subset_rainbow_crm
+cli kg create rainbow_add_crm
+cli kg create stratnav_subset_rainbow_crm
 
-# Create all KGs defined in ekg.yaml
-cli kg create --all-graphs
+# Create all KGs defined as kg_* workflow profiles
+cli kg create --all
 
 # force: re-ingest even if parquet fingerprints match
-cli kg create --kg my_kg --force
+cli kg create my_kg --force parquet
 
 # Clear all parquet caches (fixes struct field-order mismatches)
-cli kg create --kg my_kg --clear-all-caches
+cli kg create my_kg --clear-all-caches
 
 # View schema (reads the auto-generated schema artifact)
 cli kg schema
 
-# Execute Cypher queries
+# Execute Cypher queries (against the active KG profile)
 cli kg cypher "MATCH (c:Customer) RETURN c.name LIMIT 10"
+cli kg cypher "MATCH ()-[r]->() RETURN type(r), count(r)"
 
 # Natural-language query (Text-to-Cypher)
 cli kg query "Which customers have the most opportunities?"
@@ -473,7 +487,7 @@ Embedded field 'financials' on class ReviewedOpportunity has incompatible type l
 **Cause**: Schema mismatch between parquet data and current schema definition.  
 **Solution**: Clear parquet caches and rebuild source graphs:
 ```bash
-cli kg create --kg target_graph --clear-all-caches
+cli kg create target_graph --clear-all-caches
 ```
 See [Cache Management](cache_management.md) for details.
 
@@ -511,14 +525,14 @@ Critical errors (schema mismatches, import failures) raise exceptions and must b
 1. Define data sources (Neo4j exports, databases, BAML extractions)
 2. Create factory classes for each source
 3. Define canonical types in `common_nodes.py`
-4. Configure in `ekg.yaml`
+4. Wire the factory into a `kg_build` pipeline step in `config/workflows/*.yaml`
 5. Build and validate
 
 ### Adding New Data Source
 1. Create factory class (extends appropriate base factory)
-2. Implement required methods (`get_model_class()`, `build_schema()`)
+2. Implement required methods (`build_schema()`, `get_struct_data_by_key()`/`get_keys()`)
 3. Import canonical types from `common_nodes.py`
-4. Add to `ekg.yaml` configuration
+4. Add a pipeline step for it in `config/workflows/*.yaml`
 5. Test with sample data
 6. Build full graph
 
@@ -529,17 +543,20 @@ Critical errors (schema mismatches, import failures) raise exceptions and must b
 
 ### Debugging
 ```bash
+# Activate the profile, then inspect it
+cli kg create my_kg --dry-run   # or a prior 'cli kg create my_kg' run
+
 # Check schema
-cli kg schema --kg my_kg
+cli kg schema
 
 # Query node counts
-cli kg cypher --kg my_kg "MATCH (n) RETURN labels(n)[0], count(n)"
+cli kg cypher "MATCH (n) RETURN labels(n)[0], count(n)"
 
 # Inspect relationships
-cli kg cypher --kg my_kg "MATCH ()-[r]->() RETURN type(r), count(r)"
+cli kg cypher "MATCH ()-[r]->() RETURN type(r), count(r)"
 
 # View in browser
-open /home/tcl/kg_outputs/my_kg/my_kg-dev.html
+cli kg view
 ```
 
 ## Performance Considerations

@@ -11,9 +11,9 @@ types, configuring the LLM client, and running `cli baml extract`), see the
 |------|----------------|---------|
 | Add/modify extracted fields | `ekg_atos/ekg_atos/baml_src/schema/*.baml` | `cd ekg_atos/ && baml-cli generate` |
 | Update graph schema | `ekg_atos/ekg_atos/schema/*_review.py` | N/A |
-| Configure KG | `config/ekg.yaml` | N/A |
+| Configure KG | `config/workflows/*.yaml` (a `kg_build` pipeline step) | N/A |
 | Extract from documents | N/A | `cli baml extract <root_dir> <output_dir> --function ExtractRainbow` |
-| Build knowledge graph | N/A | `cli kg create --kg <name>` |
+| Build knowledge graph | N/A | `cli kg create <name>` |
 
 ## Architecture Overview
 
@@ -357,21 +357,27 @@ Fields prefixed with `p_` and suffixed with `_` are:
 
 ## Step 3: Configure KG Creation
 
-**Location**: `config/ekg.yaml`
+**Location**: `config/workflows/*.yaml` (a `kg_build` pipeline step — `kg_configs` is
+derived automatically by scanning every workflow's `with.kg_name` + `with.graph`,
+there is no separate KG-config file; see [docs/workflows.md](workflows.md))
 
 ```yaml
-kg_configs:
+workflows:
   my_kg:
-    graphs:
-      - factory: ekg_atos.schema.rainbow_review.ReviewedOpportunityGraph
-        data_root: ${paths.rainbow_json}
-        include: 
-          - "*CNES*TMA*VENUS*"  # File glob pattern
-        exclude: 
-          - "fake/*"            # Exclude test/fake data
-        recursive: true         # Search subdirectories
-        file_embedding:
-          metadata: ["Opportunity.opportunity_id", "Customer.name"]
+    pipeline:
+      - id: build
+        run: kg_build
+        with:
+          kg_name: my_kg
+          graph:
+            factory: ekg_atos.schema.rainbow_review.ReviewedOpportunityGraph
+            md_root: ${paths.rainbow_md}
+            json_cache_root: ${paths.rainbow_json}
+            include:
+              - "*CNES*TMA*VENUS*"  # File glob pattern
+            exclude:
+              - "fake/*"            # Exclude test/fake data
+            recursive: true         # Search subdirectories
 ```
 
 ### File Pattern Matching
@@ -395,17 +401,33 @@ directory. Set `recursive: true` when files are in subdirectories.
 
 ### Import from Other KGs
 
+Chain another `kg_build` pipeline step targeting the same `kg_name`, or set
+`KgGraphConfig`'s `import`/`imports` field on the `graph:` block, to reuse another
+KG's parquet cache:
+
 ```yaml
-kg_configs:
+workflows:
   combined_kg:
-    import:
-      - crm_export           # Import nodes/rels from another KG config
-    graphs:
-      - factory: ekg_atos.schema.my_factory.MyGraph
-        data_root: ${paths.my_data}
-        include: ["*CNES*"]
-        exclude: ["fake/*"]
-        recursive: true
+    pipeline:
+      - id: crm
+        run: kg_build
+        with:
+          kg_name: combined_kg
+          graph:
+            factory: ekg_atos.schema.crm_export.CrmExtractGraph
+            files: ['${paths.ekg_data}/crm_export/report.xlsx']
+      - id: my_graph
+        run: kg_build
+        after: [crm]
+        with:
+          kg_name: combined_kg
+          delete_first: false
+          graph:
+            factory: ekg_atos.schema.my_factory.MyGraph
+            data_root: ${paths.my_data}
+            include: ["*CNES*"]
+            exclude: ["fake/*"]
+            recursive: true
 ```
 
 Imported KG data is loaded from parquet cache — the imported KG must have
@@ -428,10 +450,10 @@ This runs LLM extraction on markdown files and generates one JSON file per docum
 
 ```bash
 # Build a specific KG
-cli kg create --kg my_kg
+cli kg create my_kg
 
-# Build all KGs defined in ekg.yaml
-cli kg create --all-graphs
+# Build all KGs defined as kg_* workflow profiles
+cli kg create --all
 
 # Open HTML visualization in browser
 cli kg view
@@ -620,7 +642,7 @@ created and no relationship endpoints reference them.
 1. Define BAML schema (`*.baml`)
 2. Run `baml-cli generate`
 3. Create factory class in `ekg/schema/`
-4. Configure in `ekg.yaml`
+4. Configure in `config/workflows/*.yaml` (a `kg_build` pipeline step)
 
 ### Iteration
 1. **Modify extraction**: Edit BAML → regenerate → re-extract with `--force`
@@ -630,11 +652,11 @@ created and no relationship endpoints reference them.
 ### Testing
 ```bash
 # Build and view a test KG
-cli kg create --kg my_kg
+cli kg create my_kg
 cli kg view
 
 # Regression: build all KGs
-cli kg create --all-graphs
+cli kg create --all
 ```
 
 ## Troubleshooting
@@ -655,7 +677,7 @@ cli kg create --all-graphs
 **Cause**: Schema evolved but old parquet caches exist  
 **Solution**: Clear parquet caches and rebuild:
 ```bash
-cli kg create --all-graphs --clear-all-caches
+cli kg create --all --clear-all-caches
 ```
 See [Cache Management](cache_management.md) for details.
 
@@ -712,12 +734,12 @@ are defined on the **target** node class of the relationship (the `to_node`).
 2. **Use canonical types** from `common_nodes.py` for entities shared across
    factories (Customer, Opportunity, Person, Geo).
 3. **Use `p_*_` prefix** for fields that belong on the relationship, not the node.
-4. **Add `exclude: ["fake/*"]`** in `ekg.yaml` to skip test data.
+4. **Add `exclude: ["fake/*"]`** to the `graph:` block in your workflow YAML to skip test data.
 5. **Start small**: Extract a few fields, verify, then expand.
 6. **Use descriptions**: Help LLM understand what to extract.
 7. **Specify `field_paths`** on relationships when the same target type appears
    under multiple parents.
-8. **Run `cli kg create --all-graphs`** after any schema change as a regression
+8. **Run `cli kg create --all`** after any schema change as a regression
    test.
 9. **Check warnings**: The warnings report (displayed in CLI output and saved
    to `*-warnings.md`) highlights schema issues.
@@ -732,8 +754,8 @@ cd ekg_atos/ && baml-cli generate
 cli baml extract SOURCE DEST --function ExtractRainbow --force
 
 # Build graphs
-export KG_CONFIG=my_kg && cli kg create
-cli kg create --all-graphs
+cli kg create my_kg
+cli kg create --all
 
 # View graph
 cli kg view
@@ -742,5 +764,5 @@ cli kg view
 cli kg cypher "MATCH (n:Customer) RETURN n.name LIMIT 10"
 
 # Rebuild from scratch
-cli kg create --kg my_kg --delete-first
+cli kg create my_kg --delete-first
 ```

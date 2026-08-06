@@ -14,9 +14,15 @@ from loguru import logger
 
 
 def _clear_factory_caches() -> None:
-    from genai_graph.kg.factories import JsonFileBackedFactory, Neo4jFactory, TableBackedFactory
+    from genai_graph.kg.factories import (
+        JsonFileBackedFactory,
+        MarkdownBamlFactory,
+        Neo4jFactory,
+        TableBackedFactory,
+    )
 
     JsonFileBackedFactory.clear_cache()
+    MarkdownBamlFactory.clear_cache()
     TableBackedFactory.clear_cache()
     Neo4jFactory.clear_cache()
 
@@ -125,3 +131,124 @@ def kg_build_step(
     )
 
     return _result_dict(kg_name, result)
+
+
+@workflow(
+    name="docgraph_build",
+    description="Markdownize documents, then build a document graph + entity sub-graphs into one KG",
+    hidden=True,
+)
+def docgraph_build_step(
+    *,
+    kg_name: str,
+    sources: list[str] | str,
+    factories: list[dict[str, Any]] | None = None,
+    markdownize_profile: str | None = None,
+    md_output_dir: str | None = None,
+    cache_dir: str | None = None,
+    build_document_graph: bool = True,
+    include: list[str] | None = None,
+    exclude: list[str] | None = None,
+    delete_first: bool = False,
+    export_html: bool = True,
+    force_stage: str | None = None,
+) -> dict[str, Any]:
+    """Build a Document Graph + entity sub-graphs from a set of documents.
+
+    Pipeline:
+    1. Optionally markdownize *sources* (PPT/PDF/… or pre-existing Markdown) into
+       *md_output_dir* (already-Markdown files are copied through).
+    2. Run each entity *factory* (e.g. a `MarkdownBamlFactory` subclass) into a
+       single KG named *kg_name* via the standard extraction flow.
+    3. Optionally ingest the Folder → Document → Section document graph over the
+       Markdown into the *same* database (Document nodes MERGE by content hash).
+
+    Args:
+        kg_name: Name used for the database directory and profile identity.
+        sources: Directories/files/zip archives to ingest.
+        factories: Entity factory configs (dicts with a ``factory`` key).
+        markdownize_profile: When set, markdownize *sources* first with this profile.
+        md_output_dir: Where converted Markdown is written (required when
+            markdownizing or building the document graph).
+        cache_dir: Markdownize intermediates directory.
+        build_document_graph: Ingest the Folder/Document/Section graph.
+        include: Glob patterns for document-graph ingestion (default ``['*.md']``).
+        exclude: Glob patterns to exclude.
+        delete_first: Delete the existing database before building.
+        export_html: Export an HTML visualization after entity extraction.
+        force_stage: Cache-invalidation stage (see `genai_tk.workflow.force`).
+    """
+    from genai_tk.workflow.force import ForceStage, stage_active
+
+    from genai_graph.kg.manager import KgGraphConfig, KgProfileConfig, get_kg_manager
+    from genai_graph.orchestration.flows import create_kg_flow
+
+    source_list = [sources] if isinstance(sources, str) else list(sources)
+    _clear_factory_caches()
+
+    if stage_active(force_stage, ForceStage.graph):
+        delete_first = True
+
+    md_dir = md_output_dir
+    if markdownize_profile:
+        if not md_output_dir:
+            raise ValueError("docgraph_build_step: md_output_dir is required when markdownize_profile is set")
+        from genai_tk.workflow.markdownize import markdownize_flow
+
+        logger.info("Markdownizing {} source(s) -> {}", len(source_list), md_output_dir)
+        markdownize_flow(
+            sources=source_list,
+            md_output_dir=md_output_dir,
+            cache_dir=cache_dir,
+            profile=markdownize_profile,
+            force_stage=force_stage,
+        )
+        md_dir = md_output_dir
+
+    # --- entity sub-graphs (single KG profile) ---------------------------
+    entity_result: Any = None
+    if factories:
+        manager = get_kg_manager()
+        profile_cfg = KgProfileConfig(graphs=[KgGraphConfig(**f) for f in factories])
+        manager.ekg_config.kg_configs[kg_name] = profile_cfg
+        manager.profile = kg_name
+        manager.reset_cached_paths()
+        logger.info("Running entity extraction for '{}' ({} factory/ies)", kg_name, len(factories))
+        entity_result = create_kg_flow(
+            config_name=kg_name,
+            delete_first=delete_first,
+            export_html=export_html,
+            force_rebuild=stage_active(force_stage, ForceStage.parquet),
+        )
+        delete_first = False  # already applied
+
+    # --- document graph (same DB) ----------------------------------------
+    doc_result: dict[str, Any] | None = None
+    if build_document_graph:
+        if not md_dir:
+            raise ValueError("docgraph_build_step: md_output_dir is required to build the document graph")
+        from genai_graph.kg.backend import KuzuBackend
+        from genai_graph.kg.document_graph.ingest import drop_document_graph, ingest_document_graph
+        from genai_graph.kg.factories.document_graph_factory import DocumentGraphFactory
+        from genai_graph.kg.manager import get_kg_manager
+
+        db_path = str(get_kg_manager().get_db_path_for(kg_name))
+        backend = KuzuBackend()
+        backend.connect(db_path)
+        if delete_first:
+            drop_document_graph(backend)
+        factory = DocumentGraphFactory(sources=[md_dir], include=include or ["*.md"], exclude=exclude or [])
+        result = ingest_document_graph(backend, factory, force=stage_active(force_stage, ForceStage.graph))
+        doc_result = {
+            "db_path": db_path,
+            "documents_processed": result.documents_processed,
+            "sections_created": result.sections_created,
+            "relationships_created": result.relationships_created,
+        }
+
+    summary: dict[str, Any] = {"kg_name": kg_name}
+    if entity_result is not None:
+        summary.update(_result_dict(kg_name, entity_result))
+    if doc_result is not None:
+        summary["document_graph"] = doc_result
+    return summary

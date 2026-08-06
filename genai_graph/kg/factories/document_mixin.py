@@ -88,7 +88,7 @@ class DocumentMixin:
         """Return the schema elements required to support Document nodes.
 
         Adds the canonical :data:`DocumentNode` to the node list and a
-        ``CONTAINS`` :class:`GraphRelation` from ``Document`` to *root_node*.
+        ``MENTIONS`` :class:`GraphRelation` from ``Document`` to *root_node*.
 
         Args:
             root_node: The factory's root entity node (e.g. ``ReviewedOpportunityNode``).
@@ -99,13 +99,13 @@ class DocumentMixin:
         from genai_graph.kg.nodes.document import DocumentNode
         from genai_graph.kg.schema.core import GraphRelation
 
-        contains = GraphRelation(
+        mentions = GraphRelation(
             from_node=DocumentNode,
             to_node=root_node,
-            name="CONTAINS",
-            description="Source document that contains this root entity",
+            name="MENTIONS",
+            description="Source document that mentions this root entity",
         )
-        return [DocumentNode], [contains]
+        return [DocumentNode], [mentions]
 
 
 def _mtime_iso(mtime: float) -> str:

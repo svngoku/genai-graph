@@ -1,10 +1,10 @@
-"""Unit tests for the Markdown Knowledge Tree parser."""
+"""Unit tests for the Document Graph Markdown parser."""
 
 from __future__ import annotations
 
 import pytest
 
-from genai_graph.kg.markdown.tree_parser import parse_markdown_tree
+from genai_graph.kg.document_graph.tree_parser import parse_markdown_tree
 
 
 @pytest.mark.unit

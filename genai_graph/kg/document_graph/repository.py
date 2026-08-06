@@ -1,14 +1,14 @@
-"""Repository abstraction for the Markdown Knowledge Tree.
+"""Folder abstraction for the Document Graph.
 
-A :class:`~genai_graph.kg.nodes.document.Repository` is a base location that
+A :class:`~genai_graph.kg.nodes.document.Folder` is a base location that
 source documents are read from. This module resolves a source *spec* (a local
-directory or a ``.zip`` archive) into a Repository node plus the list of files it
-contains, each with a ``relative_path`` relative to the repository base. This
-keeps full absolute paths out of the graph — a Document stores only its
-``repository_id`` and ``relative_path``.
+directory, a single file, or a ``.zip`` archive) into a Folder node plus the list
+of files it contains, each with a ``relative_path`` relative to the folder base.
+This keeps full absolute paths out of the graph — a Document stores only its
+``folder_id`` and ``relative_path``.
 
-SharePoint (or other remote) repositories are intentionally left as a future
-``kind`` — the interface (``repository_node`` + ``iter_files``) is designed so a
+SharePoint (or other remote) folders are intentionally left as a future
+``kind`` — the interface (``folder_node`` + ``iter_files``) is designed so a
 remote backend can be plugged in without touching callers.
 """
 
@@ -20,11 +20,11 @@ from pathlib import Path
 from loguru import logger
 from pydantic import BaseModel
 
-from genai_graph.kg.nodes.document import Repository
+from genai_graph.kg.nodes.document import Folder
 
 
 class ResolvedFile(BaseModel):
-    """A file discovered inside a repository."""
+    """A file discovered inside a folder."""
 
     abs_path: Path
     relative_path: str
@@ -32,31 +32,31 @@ class ResolvedFile(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
 
 
-class SourceRepository:
-    """Resolves a directory or ``.zip`` source into a Repository node + its files."""
+class SourceFolder:
+    """Resolves a directory, single file, or ``.zip`` source into a Folder node + its files."""
 
     def __init__(self, *, uri: str, kind: str, name: str, base_path: Path) -> None:
         self.uri = uri
         self.kind = kind
         self.name = name
         self.base_path = base_path
-        self.repo_id = self._compute_repo_id(uri)
+        self.folder_id = self._compute_folder_id(uri)
 
     @staticmethod
-    def _compute_repo_id(uri: str) -> str:
+    def _compute_folder_id(uri: str) -> str:
         from genai_tk.utils.hashing import buffer_digest
 
-        return f"repo_{buffer_digest(uri.encode('utf-8'))}"
+        return f"folder_{buffer_digest(uri.encode('utf-8'))}"
 
     @classmethod
-    def from_source(cls, source: str, *, cache_dir: str | None = None) -> "SourceRepository":
-        """Build a repository from a directory path or a ``.zip`` archive path.
+    def from_source(cls, source: str, *, cache_dir: str | None = None) -> "SourceFolder":
+        """Build a folder from a directory path or a ``.zip`` archive path.
 
         Args:
             source: Path to a directory or a ``.zip`` file (config placeholders
                 such as ``${paths...}`` are resolved).
             cache_dir: Where to extract ``.zip`` archives (defaults to a sibling
-                ``.markdown_tree_cache`` directory).
+                ``.document_graph_cache`` directory).
         """
         from genai_tk.config_mgmt.file_patterns import resolve_config_path
 
@@ -70,14 +70,14 @@ class SourceRepository:
             base_path = cls._extract_zip(resolved, cache_dir)
             return cls(uri=uri, kind="zip", name=resolved.stem, base_path=base_path)
 
-        # A single file: treat its parent directory as the repository base.
+        # A single file: treat its parent directory as the folder base.
         return cls(uri=str(resolved.parent), kind="directory", name=resolved.parent.name, base_path=resolved.parent)
 
     @staticmethod
     def _extract_zip(zip_path: Path, cache_dir: str | None) -> Path:
         from genai_tk.utils.hashing import buffer_digest
 
-        base_cache = Path(cache_dir) if cache_dir else zip_path.parent / ".markdown_tree_cache"
+        base_cache = Path(cache_dir) if cache_dir else zip_path.parent / ".document_graph_cache"
         digest = buffer_digest(str(zip_path.resolve()).encode("utf-8"))
         extract_dir = base_cache / f"{zip_path.stem}_{digest}"
 
@@ -90,12 +90,12 @@ class SourceRepository:
             zf.extractall(extract_dir)
         return extract_dir
 
-    def repository_node(self) -> Repository:
-        """Return the Repository model for this source."""
-        return Repository(repo_id=self.repo_id, uri=self.uri, kind=self.kind, name=self.name)  # type: ignore[arg-type]
+    def folder_node(self) -> Folder:
+        """Return the Folder model for this source."""
+        return Folder(folder_id=self.folder_id, uri=self.uri, kind=self.kind, name=self.name)  # type: ignore[arg-type]
 
     def relative_path_of(self, abs_path: Path) -> str:
-        """Return *abs_path* relative to the repository base (falls back to the name)."""
+        """Return *abs_path* relative to the folder base (falls back to the name)."""
         try:
             return str(abs_path.resolve().relative_to(self.base_path.resolve()))
         except ValueError:
@@ -109,7 +109,7 @@ class SourceRepository:
         recursive: bool = True,
         single_file: Path | None = None,
     ) -> list[ResolvedFile]:
-        """Discover files under the repository base matching *include*/*exclude*.
+        """Discover files under the folder base matching *include*/*exclude*.
 
         Args:
             include: gitignore-style glob patterns to include (default ``["*.md"]``).

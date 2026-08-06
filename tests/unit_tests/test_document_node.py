@@ -99,8 +99,8 @@ class TestDocumentMixin:
         assert doc.file_size is None
         assert doc.modified_at is None
 
-    def test_get_document_schema_elements_returns_contains_relation(self) -> None:
-        """get_document_schema_elements should return DocumentNode + CONTAINS relation."""
+    def test_get_document_schema_elements_returns_mentions_relation(self) -> None:
+        """get_document_schema_elements should return DocumentNode + MENTIONS relation."""
         from pydantic import BaseModel
 
         from genai_graph.kg.schema.core import GraphNode, GraphRelation
@@ -118,7 +118,7 @@ class TestDocumentMixin:
 
         assert len(relations) == 1
         rel: GraphRelation = relations[0]
-        assert rel.name == "CONTAINS"
+        assert rel.name == "MENTIONS"
         assert rel.from_node is DocumentNode
         assert rel.to_node is root_node
 

@@ -15,8 +15,10 @@ This package provides factories that load data from various sources:
 
 from genai_graph.kg.factories.base import KgFactory
 from genai_graph.kg.factories.document_factory import DocumentDirectoryFactory
+from genai_graph.kg.factories.document_graph_factory import DocumentGraphBundle, DocumentGraphFactory
 from genai_graph.kg.factories.document_mixin import DocumentMixin
 from genai_graph.kg.factories.json_factory import JsonFileBackedFactory
+from genai_graph.kg.factories.markdown_baml_factory import MarkdownBamlFactory
 from genai_graph.kg.factories.neo4j_factory import (
     Neo4jFactory,
     Neo4jImportFactory,
@@ -34,7 +36,10 @@ __all__ = [
     "KgFactory",
     "DocumentMixin",
     "DocumentDirectoryFactory",
+    "DocumentGraphFactory",
+    "DocumentGraphBundle",
     "JsonFileBackedFactory",
+    "MarkdownBamlFactory",
     "TableBackedFactory",
     "Neo4jFactory",
     "Neo4jImportFactory",

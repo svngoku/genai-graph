@@ -1,7 +1,7 @@
-"""Textual TUI for browsing a Markdown Knowledge Tree (``cli doctree tui``).
+"""Textual TUI for browsing a Document Graph (``cli docgraph tui``).
 
 Left panel is a `Tree` of folders → documents → sections, built lazily (on
-expand) from the Ladybug graph via `genai_graph.kg.query.markdown_tree_tools`.
+expand) from the Ladybug graph via `genai_graph.kg.query.document_graph_tools`.
 The right panel shows metadata for the selected node and renders Markdown
 content for documents and sections.
 """
@@ -19,7 +19,7 @@ from textual.widgets import Footer, Header, Markdown, Static, Tree
 from textual.widgets.tree import TreeNode
 
 from genai_graph.kg.backend import KgBackend, KuzuBackend
-from genai_graph.kg.query.markdown_tree_tools import (
+from genai_graph.kg.query.document_graph_tools import (
     get_document_toc,
     get_section_content,
     list_documents,
@@ -60,15 +60,15 @@ class NodeData(BaseModel):
 
 
 def _folder_of(row: dict[str, Any]) -> str:
-    """Parent directory of a document row's path, ``"."`` for the repo root."""
+    """Parent directory of a document row's path, ``"."`` for the folder root."""
     path = row.get("path") or row["filename"]
     return str(PurePosixPath(path).parent)
 
 
 def _dedupe_documents(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Keep one MarkdownDocument per source path — the richest (most sections).
+    """Keep one Document per source path — the richest (most sections).
 
-    Re-markdownizing a source can leave several MarkdownDocument versions (different
+    Re-markdownizing a source can leave several Document versions (different
     content hashes) for the same path in the graph; showing them all clutters the
     tree. Keep the version with the most sections (ties broken by first seen).
     """
@@ -81,8 +81,8 @@ def _dedupe_documents(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(best.values(), key=lambda r: r.get("path") or r["filename"])
 
 
-class MarkdownTreeApp(App[None]):
-    """Browse a Markdown Knowledge Tree: folders → documents → sections."""
+class DocumentGraphApp(App[None]):
+    """Browse a Document Graph: folders → documents → sections."""
 
     CSS = """
     Horizontal {
@@ -122,7 +122,7 @@ class MarkdownTreeApp(App[None]):
     def compose(self) -> ComposeResult:
         yield Header()
         with Horizontal():
-            yield Tree("Repository", id="tree-panel")
+            yield Tree("Folder", id="tree-panel")
             with VerticalScroll(id="info-panel"):
                 yield Static("Select a node to see details.", id="meta")
                 yield Markdown("", id="content")
@@ -223,7 +223,7 @@ class MarkdownTreeApp(App[None]):
         self._current_md_path = None
         self._current_origin_path = None
         if data.kind == "root":
-            meta.update(f"[b]Repository[/b]\n{len(self._doc_rows)} document(s)")
+            meta.update(f"[b]Folder[/b]\n{len(self._doc_rows)} document(s)")
             content.update("")
         elif data.kind == "folder":
             meta.update(f"[b]Folder[/b] {data.path}\n{data.count} document(s)")
@@ -299,6 +299,6 @@ class MarkdownTreeApp(App[None]):
             self.notify(f"Failed to open {what}: {e}", severity="error")
 
 
-def run_markdown_tree_tui(db_path: str) -> None:
-    """Launch the Markdown Knowledge Tree TUI over a Ladybug database."""
-    MarkdownTreeApp(db_path).run()
+def run_document_graph_tui(db_path: str) -> None:
+    """Launch the Document Graph TUI over a Ladybug database."""
+    DocumentGraphApp(db_path).run()

@@ -10,8 +10,9 @@ earlier sequential, recursive approach with a structured flow that supports:
 - **Smart caching** — fingerprint-based validation avoids unnecessary rebuilds
 - **Parallel exports** — export tasks run concurrently via a thread pool
 - **Cross-import warning aggregation** — warnings from all phases (including imported KGs) are collected and reported together
-- **Dual Prefect mode** — runs in-process (ephemeral) by default, or against a deployed
-  Prefect server when `GENAI_PREFECT_API_URL` is set
+- **Managed local Prefect server** — flows run against a local server started on demand
+  (`genai_tk.utils.prefect_server.prefect_server()`), or a remote one when
+  `GENAI_PREFECT_API_URL` is set
 
 ## Architecture
 
@@ -57,21 +58,13 @@ create_kg_flow
 When a KG configuration declares `imports:`, the pipeline resolves the full import tree
 into a flat, topologically sorted execution plan **before** any task runs.
 
-```yaml
-# config/ekg.yaml
-stratnav_subset_rainbow_crm:
-  imports: [rainbow_add_crm]
-  graphs: [...]
-
-rainbow_add_crm:
-  imports: [crm_export]
-  graphs: [...]
-
-crm_export:
-  graphs: [...]
-```
-
-The resolver (`resolve_import_dag()`) produces:
+There is no standalone `ekg.yaml` config file — `KgManager.from_global_config()`
+derives `kg_configs` (a `dict[str, KgProfileConfig]`) by scanning every workflow's
+`pipeline`/`steps` for a `with.kg_name` + `with.graph`/`with.graphs` entry (see
+[docs/workflows.md](workflows.md)). Every pipeline step targeting the same `kg_name`
+contributes its `graph` to that profile, so a multi-factory KG is expressed as several
+`kg_build` pipeline steps chained with `after:` — ekg-atos's `rainbow_add_crm` is a
+worked example. The resolver (`resolve_import_dag()`) then produces:
 
 ```
 execution_order: [crm_export, rainbow_add_crm]
@@ -167,31 +160,31 @@ change detection, not security.
 
 ```bash
 # Create a single KG
-cli kg create --kg one_rainbow
+cli kg create one_rainbow
 
 # Create with import dependencies (auto-resolved)
-cli kg create --kg one_rainbow_with_db --delete-first
+cli kg create one_rainbow_with_db --delete-first
 
 # Create all configured KGs
-cli kg create --all-graphs
+cli kg create --all
 
 # Force rebuild of all imported dependencies (ignore cache)
-cli kg create --kg one_rainbow_with_db --force
+cli kg create one_rainbow_with_db --force parquet
 
 # Clear all parquet caches first
-cli kg create --kg one_rainbow_with_db --clear-all-caches
+cli kg create one_rainbow_with_db --clear-all-caches
 ```
 
 ### Flags
 
 | Flag | Description |
 |------|-------------|
-| `--kg NAME` | Specify KG configuration(s) to build (repeatable) |
-| `--all-graphs` | Build all KGs defined in `ekg.yaml` |
-| `--delete-first` | Delete existing Kuzu DB before creation |
-| `--force` | Rebuild imported KG dependencies even if cache fingerprints match |
+| `NAME` | Positional KG configuration name to build |
+| `--all` / `--all-graphs` | Build all `kg_*` workflow profiles |
+| `--delete-first` / `--no-delete-first` | Delete existing Kuzu DB before creation |
+| `--force <stage>` | Force-invalidate caches from this stage onward: `parquet`/`graph`/`embed`/`all` |
 | `--clear-all-caches` | Clear all parquet output directories before creation |
-| `--no-html` | Skip HTML visualization export |
+| `--export-html` / `--no-export-html` | Toggle HTML visualization export |
 
 ### Terminal Output
 
@@ -213,19 +206,29 @@ When the cache is stale:
 
 ## Prefect Integration
 
-### Ephemeral Mode (Default)
+### Managed Local Server
 
-By default, the flow runs with an **in-process ephemeral Prefect client** — no server,
-no database, no agents required. This is configured via `ephemeral_prefect_settings()`
-from `genai_tk.extra.prefect.runtime`.
+Flows run against a **managed local Prefect server** — a singleton
+`genai_tk.utils.prefect_server.PrefectServer`, started on demand via
+`prefect_server().ensure_running()` and pointed at by `configure_api_url()`. There is
+no separate ephemeral/in-process mode; the same managed server backs `cli kg create`,
+`cli docgraph run`/`build`, and any other workflow-engine invocation. It stays up
+between runs (tracked via a PID file) so repeated `cli kg create` calls don't pay
+server-startup cost each time.
 
-### Deployed Server Mode
+```bash
+cli prefect start      # start the managed server explicitly (auto-starts otherwise)
+cli prefect status
+cli prefect stop
+```
 
-Set the environment variable `GENAI_PREFECT_API_URL` to connect to a running Prefect server:
+### Remote Server Mode
+
+Set `GENAI_PREFECT_API_URL` to point at a different (e.g. shared/remote) Prefect server instead:
 
 ```bash
 export GENAI_PREFECT_API_URL=http://localhost:4200/api
-cli kg create --kg one_rainbow_with_db
+cli kg create one_rainbow_with_db
 ```
 
 In this mode, flows and tasks are visible in the Prefect UI with full DAG visualization,
