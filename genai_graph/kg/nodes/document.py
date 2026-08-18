@@ -16,7 +16,8 @@ separate MarkdownDocument node.
 
 Relationships
 -------------
-- CONTAINS : Folder → Document  (a folder holds source files)
+- CONTAINS      : Folder → Document  (a folder holds source files)
+- HAS_SUBFOLDER : Folder → Folder    (a folder holds a nested subfolder)
 """
 
 from __future__ import annotations
@@ -35,7 +36,8 @@ from genai_graph.kg.schema.core import GraphNode, GraphRelation
 class Folder(BaseModel):
     """A base location that source Documents are read from."""
 
-    folder_id: str = Field(..., description="Primary key: stable identifier for the folder")
+    folder_id: str = Field(..., description="Primary key: content-hash (Merkle) identifier for the folder")
+    parent_folder_id: str | None = Field(default=None, description="folder_id of the parent folder, or None if root")
     uri: str = Field(..., description="Base URI/path of the folder (directory, .zip, or remote site)")
     kind: Literal["directory", "zip", "file", "sharepoint"] = Field(
         default="directory", description="Folder backend kind"
@@ -100,4 +102,12 @@ CONTAINS_DOC: GraphRelation = GraphRelation(
     from_node=FolderNode,
     to_node=DocumentNode,
     description="Folder holds a source document",
+)
+
+HAS_SUBFOLDER: GraphRelation = GraphRelation(
+    name="HAS_SUBFOLDER",
+    from_node=FolderNode,
+    to_node=FolderNode,
+    description="Parent folder contains a nested child folder",
+    field_paths=[("", "")],
 )

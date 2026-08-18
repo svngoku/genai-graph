@@ -929,9 +929,15 @@ def merge_relationships_batch(
                         "to_id": [row["to_id"] for row in row_data],
                     }
                 )
+                # Both endpoints must be matched in separate stages: a single
+                # comma-separated MATCH plans as a CROSS_PRODUCT of the two node
+                # tables (|from| x |to| tuples), which exhausts the buffer pool
+                # on self-referential relations over large tables.
                 merge_rel_query = f"""
                     LOAD FROM arrow_rel_table
-                    MATCH (from:{from_type} {{{from_key_field}: from_id}}), (to:{to_type} {{{to_key_field}: to_id}})
+                    MATCH (from:{from_type}) WHERE from.{from_key_field} = from_id
+                    WITH from, to_id
+                    MATCH (to:{to_type}) WHERE to.{to_key_field} = to_id
                     MERGE (from)-[:{rel_name}]->(to)
                 """
                 kuzu_conn.execute(merge_rel_query)

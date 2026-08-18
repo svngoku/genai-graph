@@ -40,7 +40,8 @@ def document_graph_flow(
             `graph` (and above) rebuilds sections for documents already in the
             graph (handles heading/line-number drift on file edits).
         delete_first: Drop the Section tables before ingesting (full reset of the
-            document graph; the shared Document table is preserved).
+            document graph; the shared Document table is preserved). Implies
+            `force_stage="graph"` — sections are rebuilt for every document.
 
     Returns:
         Dict with `db_path`, `documents_processed`, `documents_skipped`,
@@ -67,7 +68,10 @@ def document_graph_flow(
         recursive=recursive,
     )
 
-    result = ingest_document_graph(backend, factory, force=stage_active(force_stage, ForceStage.graph))
+    # Dropping the Section tables leaves the Document nodes behind, so sections must be
+    # rebuilt for them — otherwise the hash-based skip check makes the reset a no-op.
+    force = delete_first or stage_active(force_stage, ForceStage.graph)
+    result = ingest_document_graph(backend, factory, force=force)
 
     return {
         "db_path": db_path,

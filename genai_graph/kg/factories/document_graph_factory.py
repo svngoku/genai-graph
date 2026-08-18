@@ -28,11 +28,12 @@ from pathlib import Path
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from genai_graph.kg.document_graph.repository import SourceFolder
+from genai_graph.kg.document_graph.repository import FolderTree, SourceFolder
 from genai_graph.kg.document_graph.tree_parser import _estimate_token_count, parse_markdown_tree
 from genai_graph.kg.factories.base import KgFactory
 from genai_graph.kg.nodes.document import (
     CONTAINS_DOC,
+    HAS_SUBFOLDER,
     Document,
     DocumentNode,
     Folder,
@@ -48,9 +49,9 @@ from genai_graph.kg.schema.core import GraphSchema
 
 
 class DocumentGraphBundle(BaseModel):
-    """A fully parsed Markdown document: folder, document and sections."""
+    """A fully parsed Markdown document: its folder ancestor chain, document and sections."""
 
-    folder: Folder
+    folders: list[Folder] = Field(..., description="Ancestor Folder chain, root-first, immediate-parent-last")
     document: Document
     sections: list[MarkdownSection] = Field(default_factory=list)
 
@@ -73,7 +74,8 @@ class DocumentGraphFactory(KgFactory):
 
     # Per-instance caches
     _files_cache: list[Path] | None = None
-    _folder_by_file: dict[str, SourceFolder] | None = None
+    _folder_tree_by_file: dict[str, FolderTree] | None = None
+    _content_hash_by_file: dict[str, str] | None = None
 
     # ------------------------------------------------------------------
     # KgFactory protocol
@@ -83,7 +85,7 @@ class DocumentGraphFactory(KgFactory):
         return GraphSchema(
             root_model_class=None,
             nodes=[FolderNode, DocumentNode, SectionNode],
-            relations=[CONTAINS_DOC, HAS_SECTION, HAS_SUBSECTION],
+            relations=[CONTAINS_DOC, HAS_SUBFOLDER, HAS_SECTION, HAS_SUBSECTION],
         )
 
     def get_keys(self) -> list[str]:
@@ -96,8 +98,21 @@ class DocumentGraphFactory(KgFactory):
         if not path.exists():
             logger.warning("DocumentGraphFactory: file not found: {}", key)
             return None
-        folder = self._folder_for(key)
-        return self._build_bundle(path, folder)
+        if self._folder_tree_by_file is None:
+            self._get_files()
+        assert self._folder_tree_by_file is not None and self._content_hash_by_file is not None
+        tree = self._folder_tree_by_file.get(key)
+        content_hash = self._content_hash_by_file.get(key)
+        if tree is None or content_hash is None:
+            # File not discovered through a source (e.g. a direct key) — build a standalone one-file tree.
+            from genai_tk.utils.hashing import file_digest
+
+            folder = SourceFolder.from_source(str(path.parent), cache_dir=self.cache_dir)
+            resolved_files = folder.iter_files(single_file=path)
+            content_hash = file_digest(path)
+            tree = FolderTree(folder)
+            tree.build(resolved_files, {str(path): content_hash})
+        return self._build_bundle(path, tree, content_hash)
 
     # ------------------------------------------------------------------
     # File discovery
@@ -107,11 +122,13 @@ class DocumentGraphFactory(KgFactory):
         if self._files_cache is not None:
             return self._files_cache
 
-        files: list[Path] = []
-        folder_by_file: dict[str, SourceFolder] = {}
-        seen: set[str] = set()
-
         from genai_tk.config_mgmt.file_patterns import resolve_config_path
+        from genai_tk.utils.hashing import file_digest
+
+        files: list[Path] = []
+        folder_tree_by_file: dict[str, FolderTree] = {}
+        content_hash_by_file: dict[str, str] = {}
+        seen: set[str] = set()
 
         for raw_source in self.sources:
             resolved = Path(resolve_config_path(raw_source))
@@ -124,35 +141,34 @@ class DocumentGraphFactory(KgFactory):
             resolved_files = folder.iter_files(
                 include=self.include, exclude=self.exclude, recursive=self.recursive, single_file=single
             )
-            for rf in resolved_files:
-                dedup_key = str(rf.abs_path.resolve())
-                if dedup_key in seen:
-                    continue
-                seen.add(dedup_key)
+
+            new_files = [rf for rf in resolved_files if str(rf.abs_path.resolve()) not in seen]
+            seen.update(str(rf.abs_path.resolve()) for rf in new_files)
+            if not new_files:
+                continue
+
+            content_hashes = {str(rf.abs_path): file_digest(rf.abs_path) for rf in new_files}
+            tree = FolderTree(folder)
+            tree.build(new_files, content_hashes)
+
+            for rf in new_files:
+                key = str(rf.abs_path)
                 files.append(rf.abs_path)
-                folder_by_file[str(rf.abs_path)] = folder
+                folder_tree_by_file[key] = tree
+                content_hash_by_file[key] = content_hashes[key]
 
         self._files_cache = files
-        self._folder_by_file = folder_by_file
+        self._folder_tree_by_file = folder_tree_by_file
+        self._content_hash_by_file = content_hash_by_file
         logger.info("DocumentGraphFactory: discovered {} file(s) from {} source(s)", len(files), len(self.sources))
         return files
-
-    def _folder_for(self, key: str) -> SourceFolder:
-        if self._folder_by_file is None:
-            self._get_files()
-        assert self._folder_by_file is not None
-        folder = self._folder_by_file.get(key)
-        if folder is None:
-            # File not discovered through a source (e.g. direct key) — synthesise a folder.
-            folder = SourceFolder.from_source(str(Path(key).parent), cache_dir=self.cache_dir)
-        return folder
 
     # ------------------------------------------------------------------
     # Bundle construction
     # ------------------------------------------------------------------
 
-    def _build_bundle(self, path: Path, folder: SourceFolder) -> DocumentGraphBundle:
-        from genai_tk.utils.hashing import buffer_digest, file_digest
+    def _build_bundle(self, path: Path, tree: FolderTree, content_hash: str) -> DocumentGraphBundle:
+        from genai_tk.utils.hashing import buffer_digest
 
         text = path.read_text(encoding="utf-8", errors="replace")
 
@@ -165,7 +181,6 @@ class DocumentGraphFactory(KgFactory):
             file_size = None
             modified_at = None
 
-        content_hash = file_digest(path)
         mime_type, _ = mimetypes.guess_type(str(path))
 
         markdown_hash = buffer_digest(text.encode("utf-8"))
@@ -186,12 +201,14 @@ class DocumentGraphFactory(KgFactory):
             for idx, fs in enumerate(flat_sections)
         ]
 
+        chain = tree.chain_for(path)
+
         document = Document(
             content_hash=content_hash,
             markdown_hash=markdown_hash,
             filename=path.name,
-            folder_id=folder.folder_id,
-            relative_path=folder.relative_path_of(path),
+            folder_id=chain[-1],
+            relative_path=tree.source.relative_path_of(path),
             path=str(path),
             file_size=file_size,
             mime_type=mime_type,
@@ -201,7 +218,7 @@ class DocumentGraphFactory(KgFactory):
         )
 
         return DocumentGraphBundle(
-            folder=folder.folder_node(),
+            folders=[tree.folders[fid] for fid in chain],
             document=document,
             sections=sections,
         )

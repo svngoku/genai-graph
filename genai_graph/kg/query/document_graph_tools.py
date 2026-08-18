@@ -15,11 +15,12 @@ from langchain_core.tools import BaseTool, tool
 from loguru import logger
 
 from genai_graph.kg.backend import KgBackend, KuzuBackend
-from genai_graph.kg.nodes.document import DocumentNode
+from genai_graph.kg.nodes.document import DocumentNode, FolderNode
 from genai_graph.kg.nodes.document_section import SectionNode
 
 _DOCUMENT_LABEL = DocumentNode.node_class.__name__
 _SECTION_LABEL = SectionNode.node_class.__name__
+_FOLDER_LABEL = FolderNode.node_class.__name__
 
 
 def _query_rows(
@@ -60,18 +61,99 @@ def _resolve_markdown_hash(backend: KgBackend, document_id: str) -> str | None:
     return None
 
 
-def list_documents(backend: KgBackend) -> list[dict[str, Any]]:
-    """List every ingested document with its section count and hashes.
+def resolve_folder_id(backend: KgBackend, folder_ref: str) -> str | None:
+    """Resolve a folder reference (hash, hash prefix, or name) to a Folder.folder_id."""
+    query = (
+        f"MATCH (f:{_FOLDER_LABEL}) "
+        "WHERE f.folder_id = $id OR f.folder_id STARTS WITH $id OR f.name = $id "
+        "RETURN f.folder_id AS id LIMIT 1"
+    )
+    rows, _ = _query_rows(backend, query, {"id": folder_ref})
+    if rows:
+        return rows[0]["id"]
+    return None
+
+
+def get_folder_path(backend: KgBackend, folder_id: str) -> list[dict[str, Any]]:
+    """Return the ancestor chain (root-first, ``folder_id``-last) for a folder, for breadcrumb display."""
+    chain: list[dict[str, Any]] = []
+    current: str | None = folder_id
+    seen: set[str] = set()
+    while current and current not in seen:
+        seen.add(current)
+        rows, _ = _query_rows(
+            backend,
+            f"MATCH (f:{_FOLDER_LABEL} {{folder_id: $id}}) "
+            "RETURN f.folder_id AS folder_id, f.parent_folder_id AS parent_folder_id, f.name AS name, "
+            "f.kind AS kind, f.uri AS uri",
+            {"id": current},
+        )
+        if not rows:
+            break
+        chain.append(rows[0])
+        current = rows[0]["parent_folder_id"]
+    chain.reverse()
+    return chain
+
+
+def get_folder_tree(backend: KgBackend, root_folder_id: str | None = None) -> list[dict[str, Any]]:
+    """Return the folder hierarchy (subfolders + direct document counts) rooted at *root_folder_id*.
+
+    Each row is `{folder_id, parent_folder_id, name, kind, doc_count}`. When
+    `root_folder_id` is None, returns every top-level source folder (those with
+    no parent) plus their full descendant subtree.
+    """
+    if root_folder_id is None:
+        root_rows, _ = _query_rows(
+            backend, f"MATCH (r:{_FOLDER_LABEL}) WHERE r.parent_folder_id IS NULL RETURN r.folder_id AS folder_id"
+        )
+        root_ids = [r["folder_id"] for r in root_rows]
+    else:
+        root_ids = [root_folder_id]
+
+    by_folder_id: dict[str, dict[str, Any]] = {}
+    for root_id in root_ids:
+        query = f"""
+            MATCH (root:{_FOLDER_LABEL} {{folder_id: $root_id}})-[:HAS_SUBFOLDER*0..30]->(f:{_FOLDER_LABEL})
+            OPTIONAL MATCH (f)-[:CONTAINS]->(d:{_DOCUMENT_LABEL})
+            RETURN f.folder_id AS folder_id, f.parent_folder_id AS parent_folder_id, f.name AS name,
+                   f.kind AS kind, count(d) AS doc_count
+        """
+        rows, _ = _query_rows(backend, query, {"root_id": root_id})
+        for row in rows:
+            row["doc_count"] = int(row.get("doc_count") or 0)
+            by_folder_id[row["folder_id"]] = row
+
+    return sorted(by_folder_id.values(), key=lambda r: r["name"])
+
+
+def list_documents(backend: KgBackend, folder_id: str | None = None) -> list[dict[str, Any]]:
+    """List ingested documents with their section count and hashes.
+
+    Args:
+        folder_id: When given, only return documents under this folder's subtree
+            (the folder itself or any nested subfolder).
 
     Returns:
-        List of `{content_hash, markdown_hash, filename, section_count, path}` dicts.
+        List of `{content_hash, markdown_hash, filename, section_count, path, folder_id}` dicts.
     """
-    rows, _ = _query_rows(
-        backend,
-        f"MATCH (d:{_DOCUMENT_LABEL}) "
-        "RETURN d.content_hash AS content_hash, d.markdown_hash AS markdown_hash, d.filename AS filename, "
-        "d.section_count AS section_count, d.path AS path ORDER BY d.filename",
-    )
+    if folder_id is None:
+        query = (
+            f"MATCH (d:{_DOCUMENT_LABEL}) "
+            "RETURN d.content_hash AS content_hash, d.markdown_hash AS markdown_hash, d.filename AS filename, "
+            "d.section_count AS section_count, d.path AS path, d.folder_id AS folder_id ORDER BY d.filename"
+        )
+        params: dict[str, Any] = {}
+    else:
+        query = f"""
+            MATCH (root:{_FOLDER_LABEL} {{folder_id: $folder_id}})-[:HAS_SUBFOLDER*0..30]->(f:{_FOLDER_LABEL})
+            MATCH (f)-[:CONTAINS]->(d:{_DOCUMENT_LABEL})
+            RETURN d.content_hash AS content_hash, d.markdown_hash AS markdown_hash, d.filename AS filename,
+                   d.section_count AS section_count, d.path AS path, d.folder_id AS folder_id ORDER BY d.filename
+        """
+        params = {"folder_id": folder_id}
+
+    rows, _ = _query_rows(backend, query, params)
     for row in rows:
         row["section_count"] = int(row.get("section_count") or 0)
     return rows
@@ -184,18 +266,36 @@ def reconstruct_section(
 
 
 def search_sections(
-    backend: KgBackend, keyword: str, limit: int = 20, return_query: bool = False
+    backend: KgBackend, keyword: str, limit: int = 20, folder_id: str | None = None, return_query: bool = False
 ) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], str]:
-    """Cross-document keyword search over section titles and body text (no embeddings)."""
-    query = f"""
-        MATCH (s:{_SECTION_LABEL})
-        WHERE s.title CONTAINS $keyword OR s.text CONTAINS $keyword
-        RETURN s.markdown_hash AS markdown_hash, s.section_id AS section_id, s.title AS title,
-               s.level AS level, s.line_start AS line_start
-        ORDER BY s.markdown_hash, s.line_start
-        LIMIT $limit
+    """Cross-document keyword search over section titles and body text (no embeddings).
+
+    Args:
+        folder_id: When given, restrict the search to documents under this folder's subtree.
     """
-    rows, _ = _query_rows(backend, query, {"keyword": keyword, "limit": limit})
+    if folder_id is None:
+        query = f"""
+            MATCH (s:{_SECTION_LABEL})
+            WHERE s.title CONTAINS $keyword OR s.text CONTAINS $keyword
+            RETURN s.markdown_hash AS markdown_hash, s.section_id AS section_id, s.title AS title,
+                   s.level AS level, s.line_start AS line_start
+            ORDER BY s.markdown_hash, s.line_start
+            LIMIT $limit
+        """
+        params: dict[str, Any] = {"keyword": keyword, "limit": limit}
+    else:
+        query = f"""
+            MATCH (root:{_FOLDER_LABEL} {{folder_id: $folder_id}})-[:HAS_SUBFOLDER*0..30]->(f:{_FOLDER_LABEL})
+            MATCH (f)-[:CONTAINS]->(d:{_DOCUMENT_LABEL})
+            MATCH (s:{_SECTION_LABEL} {{markdown_hash: d.markdown_hash}})
+            WHERE s.title CONTAINS $keyword OR s.text CONTAINS $keyword
+            RETURN s.markdown_hash AS markdown_hash, s.section_id AS section_id, s.title AS title,
+                   s.level AS level, s.line_start AS line_start
+            ORDER BY s.markdown_hash, s.line_start
+            LIMIT $limit
+        """
+        params = {"keyword": keyword, "limit": limit, "folder_id": folder_id}
+    rows, _ = _query_rows(backend, query, params)
     return (rows, query) if return_query else rows
 
 

@@ -6,6 +6,7 @@ Provides:
                engine. Sources can be overridden ad-hoc with ``-s``.
 - ``build``  : quick document-graph-only build (markdownize sources, then ingest
                the Folder → Document → Section structure) directly on a Ladybug DB.
+- ``delete`` : delete all documents, folders, and sections from the graph.
 - ``list`` / ``toc`` / ``cat`` / ``search`` / ``tui`` : navigate an ingested graph.
 
 ``run`` and ``kg create`` share the same workflow engine; ``run`` targets ad-hoc
@@ -14,7 +15,7 @@ sources while ``kg create`` targets a predefined, named set of documents.
 
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Annotated, Any
 
 import typer
@@ -25,6 +26,7 @@ from loguru import logger
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+from rich.tree import Tree
 
 console = Console()
 
@@ -65,6 +67,19 @@ def _validate_force(force: str | None) -> None:
         stages = ", ".join(s.value for s in ForceStage)
         console.print(f"[red]Invalid --force stage '{force}'. Choose one of: {stages}[/red]")
         raise typer.Exit(1) from exc
+
+
+def _resolve_folder_ref_or_exit(backend: Any, folder_ref: str | None) -> str | None:
+    """Resolve a `--folder` option value to a `folder_id`, or exit with an error message."""
+    if folder_ref is None:
+        return None
+    from genai_graph.kg.query.document_graph_tools import resolve_folder_id
+
+    folder_id = resolve_folder_id(backend, folder_ref)
+    if folder_id is None:
+        console.print(f"[red]No folder found matching: {folder_ref}[/red]")
+        raise typer.Exit(1)
+    return folder_id
 
 
 class DocGraphCommands(CliTopCommand):
@@ -189,7 +204,7 @@ class DocGraphCommands(CliTopCommand):
             ] = None,
             delete_first: Annotated[
                 bool,
-                typer.Option("--delete-first", help="Drop existing Section tables before ingesting."),
+                typer.Option("--delete-first", help="Drop existing Section tables and rebuild all sections."),
             ] = False,
         ) -> None:
             """Markdownize sources, then build (or update) a Document Graph.
@@ -202,23 +217,34 @@ class DocGraphCommands(CliTopCommand):
             _validate_force(force)
             db_path = _resolve_db_path(db_path)
 
+            from genai_tk.config_mgmt.file_patterns import resolve_config_path
             from genai_tk.workflow.markdownize import markdownize_flow
 
             from genai_graph.orchestration.document_graph_flow import document_graph_flow
 
             resolved_md_output_dir = md_output_dir or str(Path(db_path).with_suffix("")) + "_markdown"
 
-            console.print(f"[dim]Markdownizing {len(source)} source(s) -> {resolved_md_output_dir}[/dim]")
-            markdownize_flow(
-                sources=source,
-                md_output_dir=resolved_md_output_dir,
-                cache_dir=cache_dir,
-                profile=profile,
-                force_stage=force,
-            )
+            # Markdownize each source into its own subdirectory (named after the source's
+            # stem) so the Document Graph's top-level Folder is named after the original
+            # zip/directory instead of the shared markdownize output directory.
+            per_source_dirs: list[str] = []
+            for src in source:
+                stem = Path(resolve_config_path(src)).stem
+                src_output_dir = str(Path(resolved_md_output_dir) / stem)
+                src_cache_dir = str(Path(cache_dir) / stem) if cache_dir else None
+
+                console.print(f"[dim]Markdownizing {src} -> {src_output_dir}[/dim]")
+                markdownize_flow(
+                    sources=[src],
+                    md_output_dir=src_output_dir,
+                    cache_dir=src_cache_dir,
+                    profile=profile,
+                    force_stage=force,
+                )
+                per_source_dirs.append(src_output_dir)
 
             result_dict = document_graph_flow(
-                sources=[resolved_md_output_dir],
+                sources=per_source_dirs,
                 db_path=db_path,
                 include=include or ["*.md"],
                 exclude=exclude or [],
@@ -238,8 +264,43 @@ class DocGraphCommands(CliTopCommand):
             for w in result_dict["warnings"]:
                 console.print(f"[yellow]⚠ {w}[/yellow]")
 
+        @cli_app.command("delete")
+        def delete_db(
+            db_path: Annotated[
+                str | None,
+                typer.Option(
+                    "--db", help="Path to the Ladybug database file. Uses graph_db.default from config if omitted."
+                ),
+            ] = None,
+            yes: Annotated[
+                bool,
+                typer.Option("--yes", "-y", help="Skip the confirmation prompt."),
+            ] = False,
+        ) -> None:
+            """Delete all documents, folders, and sections from the graph (keeps the database file)."""
+            from genai_graph.kg.backend import KuzuBackend
+            from genai_graph.kg.document_graph.ingest import drop_document_graph
+
+            db_path = _resolve_db_path(db_path)
+            backend = KuzuBackend()
+            backend.connect(db_path)
+
+            if not yes:
+                console.print("[bold red]This will delete all documents, folders, and sections.[/bold red]")
+                if not typer.confirm("Continue?"):
+                    console.print("[yellow]Aborted.[/yellow]")
+                    raise typer.Exit(1)
+
+            drop_document_graph(backend, drop_documents=True)
+            console.print("[green]Deleted all documents, folders, and sections.[/green]")
+
+
         @cli_app.command("list")
         def list_docs(
+            folder: Annotated[
+                str | None,
+                typer.Option("--folder", help="Only show documents under this folder (hash, prefix, or name)."),
+            ] = None,
             db_path: Annotated[
                 str | None,
                 typer.Option(
@@ -247,30 +308,36 @@ class DocGraphCommands(CliTopCommand):
                 ),
             ] = None,
         ) -> None:
-            """List every ingested document."""
+            """List ingested documents, optionally filtered to one folder's subtree."""
             db_path = _resolve_db_path(db_path)
             from genai_graph.kg.backend import KuzuBackend
             from genai_graph.kg.query.document_graph_tools import list_documents
 
             backend = KuzuBackend()
             backend.connect(db_path)
-            rows = list_documents(backend)
+
+            folder_id = _resolve_folder_ref_or_exit(backend, folder)
+            rows = list_documents(backend, folder_id=folder_id)
             if not rows:
                 console.print("[yellow]No documents ingested yet.[/yellow]")
                 return
 
             table = Table(title="Documents")
             table.add_column("Filename", style="cyan")
+            table.add_column("Folder", style="magenta")
             table.add_column("Sections", style="white")
             table.add_column("Markdown Hash", style="dim")
             table.add_column("Path", style="dim")
             for r in rows:
-                table.add_row(str(r["filename"]), str(r["section_count"]), str(r["markdown_hash"]), str(r["path"]))
+                breadcrumb = str(PurePosixPath(r["path"]).parent) if r.get("path") else "."
+                table.add_row(
+                    str(r["filename"]), breadcrumb, str(r["section_count"]), str(r["markdown_hash"]), str(r["path"])
+                )
             console.print(table)
 
         @cli_app.command("toc")
         def toc(
-            document: Annotated[str, typer.Argument(help="Document hash (or prefix) or filename.")],
+            document: Annotated[str, typer.Argument(help="Document hash (or prefix), filename, or folder hash/name.")],
             db_path: Annotated[
                 str | None,
                 typer.Option(
@@ -278,13 +345,32 @@ class DocGraphCommands(CliTopCommand):
                 ),
             ] = None,
         ) -> None:
-            """Show the table of contents (heading tree) for one document."""
+            """Show the table of contents for one document, or list a folder's contents."""
             db_path = _resolve_db_path(db_path)
             from genai_graph.kg.backend import KuzuBackend
-            from genai_graph.kg.query.document_graph_tools import get_document_toc
+            from genai_graph.kg.query.document_graph_tools import (
+                get_document_toc,
+                get_folder_tree,
+                list_documents,
+                resolve_folder_id,
+            )
 
             backend = KuzuBackend()
             backend.connect(db_path)
+
+            folder_id = resolve_folder_id(backend, document)
+            if folder_id is not None:
+                subfolders = [r for r in get_folder_tree(backend, folder_id) if r["parent_folder_id"] == folder_id]
+                docs = [r for r in list_documents(backend, folder_id=folder_id) if r["folder_id"] == folder_id]
+                if not subfolders and not docs:
+                    console.print(f"[yellow]Folder is empty: {document}[/yellow]")
+                    return
+                for f in subfolders:
+                    console.print(f"- \U0001f4c1 {f['name']} ({f['folder_id']}, {f['doc_count']} doc(s))")
+                for d in docs:
+                    console.print(f"- \U0001f4c4 {d['filename']} ({d['markdown_hash']})")
+                return
+
             rows = get_document_toc(backend, document)
             if not rows:
                 console.print(f"[yellow]No sections found for document: {document}[/yellow]")
@@ -320,10 +406,21 @@ class DocGraphCommands(CliTopCommand):
             """Reconstruct and print a document's (or one section's) Markdown text from its sections."""
             db_path = _resolve_db_path(db_path)
             from genai_graph.kg.backend import KuzuBackend
-            from genai_graph.kg.query.document_graph_tools import reconstruct_document, reconstruct_section
+            from genai_graph.kg.query.document_graph_tools import (
+                reconstruct_document,
+                reconstruct_section,
+                resolve_folder_id,
+            )
 
             backend = KuzuBackend()
             backend.connect(db_path)
+
+            if "::" not in document and resolve_folder_id(backend, document) is not None:
+                console.print(
+                    f"[red]'{document}' is a folder, not a document.[/red] Use "
+                    f"[cyan]docgraph list --folder {document}[/cyan] or [cyan]docgraph folders {document}[/cyan]."
+                )
+                raise typer.Exit(1)
 
             if "::" in document:
                 text, query = reconstruct_section(backend, document, return_query=True)
@@ -354,20 +451,70 @@ class DocGraphCommands(CliTopCommand):
                 ),
             ] = None,
             limit: Annotated[int, typer.Option("--limit", help="Max number of matches.")] = 20,
+            folder: Annotated[
+                str | None,
+                typer.Option("--folder", help="Restrict the search to this folder's subtree (hash, prefix, or name)."),
+            ] = None,
         ) -> None:
-            """Search section titles and text across all ingested documents."""
+            """Search section titles and text across ingested documents, optionally within one folder."""
             db_path = _resolve_db_path(db_path)
             from genai_graph.kg.backend import KuzuBackend
             from genai_graph.kg.query.document_graph_tools import search_sections
 
             backend = KuzuBackend()
             backend.connect(db_path)
-            rows = search_sections(backend, keyword, limit)
+            folder_id = _resolve_folder_ref_or_exit(backend, folder)
+            rows = search_sections(backend, keyword, limit, folder_id=folder_id)
             if not rows:
                 console.print(f"[yellow]No sections matched keyword: {keyword!r}[/yellow]")
                 return
             for r in rows:  # type: ignore[union-attr]
                 console.print(f"- [{r['section_id']}] {r['title']} (line {r['line_start']}) — {r['markdown_hash']}")
+
+        @cli_app.command("folders")
+        def folders(
+            ref: Annotated[
+                str | None,
+                typer.Argument(help="Folder hash/name to root the tree at. Shows every source folder if omitted."),
+            ] = None,
+            db_path: Annotated[
+                str | None,
+                typer.Option(
+                    "--db", help="Path to the Ladybug database file. Uses graph_db.default from config if omitted."
+                ),
+            ] = None,
+        ) -> None:
+            """Display the ingested folder hierarchy as a tree."""
+            db_path = _resolve_db_path(db_path)
+            from genai_graph.kg.backend import KuzuBackend
+            from genai_graph.kg.query.document_graph_tools import get_folder_tree
+
+            backend = KuzuBackend()
+            backend.connect(db_path)
+            root_id = _resolve_folder_ref_or_exit(backend, ref)
+
+            rows = get_folder_tree(backend, root_id)
+            if not rows:
+                console.print("[yellow]No folders ingested yet.[/yellow]")
+                return
+
+            by_id = {r["folder_id"]: r for r in rows}
+            by_parent: dict[str | None, list[dict[str, Any]]] = {}
+            for r in rows:
+                by_parent.setdefault(r["parent_folder_id"], []).append(r)
+
+            root_rows = [by_id[root_id]] if root_id else [r for r in rows if r["parent_folder_id"] is None]
+
+            def add_node(parent: Tree, row: dict[str, Any]) -> None:
+                label = f"{row['name']} [dim]({row['folder_id']}, {row['doc_count']} doc(s))[/dim]"
+                node = parent.add(label)
+                for child in sorted(by_parent.get(row["folder_id"], []), key=lambda r: r["name"]):
+                    add_node(node, child)
+
+            tree = Tree("[bold]Folders[/bold]")
+            for r in sorted(root_rows, key=lambda r: r["name"]):
+                add_node(tree, r)
+            console.print(tree)
 
         @cli_app.command("tui")
         def tui(

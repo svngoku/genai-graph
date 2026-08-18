@@ -15,7 +15,8 @@ remote backend can be plugged in without touching callers.
 from __future__ import annotations
 
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from typing import Any
 
 from loguru import logger
 from pydantic import BaseModel
@@ -40,13 +41,6 @@ class SourceFolder:
         self.kind = kind
         self.name = name
         self.base_path = base_path
-        self.folder_id = self._compute_folder_id(uri)
-
-    @staticmethod
-    def _compute_folder_id(uri: str) -> str:
-        from genai_tk.utils.hashing import buffer_digest
-
-        return f"folder_{buffer_digest(uri.encode('utf-8'))}"
 
     @classmethod
     def from_source(cls, source: str, *, cache_dir: str | None = None) -> "SourceFolder":
@@ -90,10 +84,6 @@ class SourceFolder:
             zf.extractall(extract_dir)
         return extract_dir
 
-    def folder_node(self) -> Folder:
-        """Return the Folder model for this source."""
-        return Folder(folder_id=self.folder_id, uri=self.uri, kind=self.kind, name=self.name)  # type: ignore[arg-type]
-
     def relative_path_of(self, abs_path: Path) -> str:
         """Return *abs_path* relative to the folder base (falls back to the name)."""
         try:
@@ -132,3 +122,84 @@ class SourceFolder:
 
         discovered = resolve_files(str(self.base_path), pathspecs=pathspecs)
         return [ResolvedFile(abs_path=Path(p), relative_path=self.relative_path_of(Path(p))) for p in discovered]
+
+
+class FolderTree:
+    """Builds a Merkle-hashed `Folder` node for every directory level under a `SourceFolder`.
+
+    Only directories that (transitively) contain at least one matched file get a
+    Folder node — a directory's `folder_id` is a content hash of its direct
+    children (matched file names + content hashes, subfolder names + folder_ids),
+    so identical subtrees collapse to the same node and unchanged subtrees keep
+    a stable id across re-ingestion. Two *different* sources with a structurally
+    identical subtree intentionally collapse to the same Folder node, mirroring
+    how `Document.content_hash` dedupes identical files.
+    """
+
+    def __init__(self, source: SourceFolder) -> None:
+        self.source = source
+        self.folders: dict[str, Folder] = {}
+        self._chain_by_file: dict[str, list[str]] = {}
+
+    def build(self, files: list[ResolvedFile], content_hashes: dict[str, str]) -> None:
+        """Compute all Folder nodes for *files* bottom-up.
+
+        Args:
+            files: Files already matched by include/exclude under this source.
+            content_hashes: Map of `str(abs_path)` -> content hash (precomputed by the caller).
+        """
+        from genai_tk.utils.hashing import buffer_digest
+
+        root: dict[str, Any] = {"files": [], "dirs": {}}
+        for rf in files:
+            parts = PurePosixPath(rf.relative_path).parts
+            dir_parts, filename = tuple(parts[:-1]), parts[-1]
+            node = root
+            for part in dir_parts:
+                node = node["dirs"].setdefault(part, {"files": [], "dirs": {}})
+            node["files"].append((filename, str(rf.abs_path)))
+
+        self.folders = {}
+        dir_folder_id: dict[tuple[str, ...], str] = {}
+
+        def build_dir(node: dict[str, Any], dir_parts: tuple[str, ...]) -> str:
+            child_ids = {name: build_dir(child, (*dir_parts, name)) for name, child in sorted(node["dirs"].items())}
+
+            entries = sorted(f"F:{name}:{content_hashes[path]}" for name, path in node["files"])
+            entries += sorted(f"D:{name}:{cid}" for name, cid in child_ids.items())
+            canonical = "\n".join(entries)
+            folder_id = f"folder_{buffer_digest(canonical.encode('utf-8'))}"
+
+            is_root = not dir_parts
+            folder = Folder(
+                folder_id=folder_id,
+                parent_folder_id=None,
+                uri=self.source.uri if is_root else "/".join(dir_parts),
+                kind=self.source.kind if is_root else "directory",
+                name=self.source.name if is_root else dir_parts[-1],
+            )
+            self.folders[folder_id] = folder
+            for cid in child_ids.values():
+                self.folders[cid].parent_folder_id = folder_id
+
+            dir_folder_id[dir_parts] = folder_id
+            return folder_id
+
+        build_dir(root, ())
+
+        def chain_of(folder_id: str) -> list[str]:
+            chain: list[str] = []
+            current: str | None = folder_id
+            while current is not None:
+                chain.append(current)
+                current = self.folders[current].parent_folder_id
+            chain.reverse()
+            return chain
+
+        for rf in files:
+            dir_parts = tuple(PurePosixPath(rf.relative_path).parts[:-1])
+            self._chain_by_file[str(rf.abs_path)] = chain_of(dir_folder_id[dir_parts])
+
+    def chain_for(self, abs_path: Path) -> list[str]:
+        """Return the ancestor `folder_id` chain (root-first, leaf-last) for *abs_path*."""
+        return self._chain_by_file[str(abs_path)]

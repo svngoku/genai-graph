@@ -284,6 +284,36 @@ def restart_database() -> KgBackend:
 # Schema
 
 
+def _add_missing_columns(backend: KgBackend, table_name: str, fields: list[str]) -> None:
+    """Add columns to an already-existing node table that are missing from its DB schema.
+
+    Handles schema evolution: `CREATE TABLE IF NOT EXISTS` is a no-op on a table
+    that already exists, so a Pydantic model field added after a table was first
+    created (e.g. `Folder.parent_folder_id`) would otherwise silently never reach
+    the database and later fail at merge time with "Cannot find property ...".
+
+    Args:
+        backend: Connected KgBackend.
+        table_name: Node table name (matches the Pydantic model's class name).
+        fields: `"field_name TYPE"` declarations, as passed to `CREATE TABLE`.
+    """
+    try:
+        existing_cols = {str(row[1]) for row in backend.execute(f"CALL table_info('{table_name}') RETURN *")}
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"Could not introspect columns for {table_name}: {exc}")
+        return
+
+    for field_decl in fields:
+        field_name = field_decl.split(" ", 1)[0]
+        if field_name in existing_cols:
+            continue
+        try:
+            backend.execute(f"ALTER TABLE {table_name} ADD {field_decl}")
+            logger.info(f"Schema evolution: added missing column '{field_name}' to existing table {table_name}")
+        except Exception as alter_exc:  # noqa: BLE001
+            logger.warning(f"Could not add missing column '{field_name}' to {table_name}: {alter_exc}")
+
+
 def create_schema(
     backend: KgBackend, nodes: list[GraphNode], relations: list[GraphRelation], context: KgManager | None = None
 ) -> None:
@@ -473,6 +503,7 @@ def create_schema(
 
         logger.debug(f"Creating node table: {create_sql}")
         backend.execute(create_sql)
+        _add_missing_columns(backend, table_name, fields)
         created_tables.add(table_name)
 
     # Create relationship tables with properties from p_*_ fields or relation.properties

@@ -16,10 +16,13 @@ from genai_graph.kg.document_graph.ingest import drop_document_graph, ingest_doc
 from genai_graph.kg.factories.document_graph_factory import DocumentGraphFactory
 from genai_graph.kg.query.document_graph_tools import (
     get_document_toc,
+    get_folder_path,
+    get_folder_tree,
     get_section_content,
     list_documents,
     reconstruct_document,
     reconstruct_section,
+    resolve_folder_id,
     search_sections,
 )
 
@@ -240,3 +243,82 @@ class TestDocumentGraphTools:
         assert "MarkdownSection" not in list(df["name"])
         assert "Document" not in list(df["name"])
         assert "Folder" not in list(df["name"])
+
+
+@pytest.fixture
+def nested_md_corpus(tmp_path: Path) -> Path:
+    """Create a corpus with a nested subfolder: root/alpha.md, root/sub/beta.md."""
+    (tmp_path / "alpha.md").write_text(DOC_ALPHA, encoding="utf-8")
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    (sub / "beta.md").write_text(DOC_BETA, encoding="utf-8")
+    return tmp_path
+
+
+@pytest.fixture
+def nested_doc_factory(nested_md_corpus: Path) -> DocumentGraphFactory:
+    return DocumentGraphFactory(sources=[str(nested_md_corpus)])
+
+
+@pytest.fixture
+def nested_ingested_backend(graph_backend: KuzuBackend, nested_doc_factory: DocumentGraphFactory) -> KuzuBackend:
+    ingest_document_graph(graph_backend, nested_doc_factory)
+    return graph_backend
+
+
+@pytest.mark.integration
+class TestFolderHierarchy:
+    def test_has_subfolder_edge_created(self, nested_ingested_backend: KuzuBackend) -> None:
+        df = nested_ingested_backend.execute_get_as_df(
+            "MATCH (parent:Folder)-[:HAS_SUBFOLDER]->(child:Folder) RETURN parent.name AS parent, child.name AS child",
+            union=False,
+        )
+        assert list(df["child"]) == ["sub"]
+
+    def test_document_folder_id_is_immediate_parent(self, nested_ingested_backend: KuzuBackend) -> None:
+        docs = list_documents(nested_ingested_backend)
+        beta = next(d for d in docs if d["filename"] == "beta.md")
+        alpha = next(d for d in docs if d["filename"] == "alpha.md")
+        assert beta["folder_id"] != alpha["folder_id"]
+
+    def test_list_documents_filtered_by_subfolder(self, nested_ingested_backend: KuzuBackend) -> None:
+        docs = list_documents(nested_ingested_backend)
+        beta_folder_id = next(d["folder_id"] for d in docs if d["filename"] == "beta.md")
+
+        filtered = list_documents(nested_ingested_backend, folder_id=beta_folder_id)
+        assert [d["filename"] for d in filtered] == ["beta.md"]
+
+    def test_list_documents_filtered_by_root_includes_subtree(self, nested_ingested_backend: KuzuBackend) -> None:
+        docs = list_documents(nested_ingested_backend)
+        # alpha.md lives directly in the top-level source folder (the tree's root)
+        root_folder_id = next(d["folder_id"] for d in docs if d["filename"] == "alpha.md")
+        path = get_folder_path(nested_ingested_backend, root_folder_id)
+        assert path[-1]["parent_folder_id"] is None
+
+        filtered = list_documents(nested_ingested_backend, folder_id=root_folder_id)
+        assert sorted(d["filename"] for d in filtered) == ["alpha.md", "beta.md"]
+
+    def test_resolve_folder_id_by_name(self, nested_ingested_backend: KuzuBackend) -> None:
+        assert resolve_folder_id(nested_ingested_backend, "sub") is not None
+        assert resolve_folder_id(nested_ingested_backend, "no-such-folder") is None
+
+    def test_get_folder_tree_reports_doc_counts(self, nested_ingested_backend: KuzuBackend) -> None:
+        rows = get_folder_tree(nested_ingested_backend)
+        sub_row = next(r for r in rows if r["name"] == "sub")
+        assert sub_row["doc_count"] == 1
+
+    def test_ingest_evolves_stale_folder_table_schema(
+        self, graph_backend: KuzuBackend, nested_doc_factory: DocumentGraphFactory
+    ) -> None:
+        """A Folder table created before `parent_folder_id` existed must be auto-migrated, not fail."""
+        graph_backend.execute(
+            "CREATE NODE TABLE Folder(name STRING, _original_name STRING, _created_at STRING, "
+            "_updated_at STRING, folder_id STRING, uri STRING, kind STRING, PRIMARY KEY(folder_id))"
+        )
+
+        result = ingest_document_graph(graph_backend, nested_doc_factory)
+
+        assert result.documents_failed == 0
+        assert result.documents_processed == 2
+        docs = list_documents(graph_backend)
+        assert sorted(d["filename"] for d in docs) == ["alpha.md", "beta.md"]

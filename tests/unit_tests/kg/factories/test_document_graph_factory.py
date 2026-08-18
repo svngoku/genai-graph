@@ -23,6 +23,7 @@ class TestDocumentGraphFactorySchema:
         assert "Document" in node_names
         assert "MarkdownSection" in node_names
         assert "CONTAINS" in rel_names
+        assert "HAS_SUBFOLDER" in rel_names
         assert "HAS_SECTION" in rel_names
         assert "HAS_SUBSECTION" in rel_names
 
@@ -96,3 +97,64 @@ class TestDocumentGraphFactoryParsing:
     def test_missing_file_returns_none(self, tmp_path: Path) -> None:
         factory = DocumentGraphFactory(sources=[str(tmp_path)])
         assert factory.get_struct_data_by_key(str(tmp_path / "missing.md")) is None
+
+
+@pytest.mark.unit
+class TestDocumentGraphFactoryFolderTree:
+    def test_nested_subfolder_ancestor_chain(self, tmp_path: Path) -> None:
+        nested = tmp_path / "a" / "b"
+        nested.mkdir(parents=True)
+        md_file = nested / "doc.md"
+        md_file.write_text("# Title\n\ntext\n")
+
+        factory = DocumentGraphFactory(sources=[str(tmp_path)])
+        bundle = factory.get_struct_data_by_key(str(md_file))
+
+        assert bundle is not None
+        # root -> a -> b (immediate parent), 3 levels
+        assert [f.name for f in bundle.folders] == [tmp_path.name, "a", "b"]
+        assert bundle.folders[0].parent_folder_id is None
+        assert bundle.folders[1].parent_folder_id == bundle.folders[0].folder_id
+        assert bundle.folders[2].parent_folder_id == bundle.folders[1].folder_id
+        assert bundle.document.folder_id == bundle.folders[-1].folder_id
+
+    def test_folder_id_changes_when_content_changes(self, tmp_path: Path) -> None:
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        md_file = sub / "doc.md"
+        md_file.write_text("# Title\n\ntext\n")
+
+        factory = DocumentGraphFactory(sources=[str(tmp_path)])
+        bundle_before = factory.get_struct_data_by_key(str(md_file))
+        assert bundle_before is not None
+        folder_id_before = bundle_before.folders[-1].folder_id
+
+        md_file.write_text("# Title\n\nchanged text\n")
+        factory_after = DocumentGraphFactory(sources=[str(tmp_path)])
+        bundle_after = factory_after.get_struct_data_by_key(str(md_file))
+        assert bundle_after is not None
+        folder_id_after = bundle_after.folders[-1].folder_id
+
+        assert folder_id_before != folder_id_after
+
+    def test_unrelated_sibling_rename_does_not_change_folder_id(self, tmp_path: Path) -> None:
+        sub_a = tmp_path / "a"
+        sub_a.mkdir()
+        (sub_a / "doc.md").write_text("# A\n\ntext\n")
+        sub_b = tmp_path / "b"
+        sub_b.mkdir()
+        (sub_b / "doc.md").write_text("# B\n\ntext\n")
+
+        factory = DocumentGraphFactory(sources=[str(tmp_path)])
+        bundle_a_before = factory.get_struct_data_by_key(str(sub_a / "doc.md"))
+        assert bundle_a_before is not None
+        folder_a_id_before = bundle_a_before.folders[-1].folder_id
+
+        (sub_b / "doc.md").rename(sub_b / "renamed.md")
+
+        factory_after = DocumentGraphFactory(sources=[str(tmp_path)])
+        bundle_a_after = factory_after.get_struct_data_by_key(str(sub_a / "doc.md"))
+        assert bundle_a_after is not None
+        folder_a_id_after = bundle_a_after.folders[-1].folder_id
+
+        assert folder_a_id_before == folder_a_id_after

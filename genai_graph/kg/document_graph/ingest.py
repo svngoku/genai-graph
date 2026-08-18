@@ -30,6 +30,7 @@ from genai_graph.kg.ingest.merge import (
 )
 from genai_graph.kg.nodes.document import (
     CONTAINS_DOC,
+    HAS_SUBFOLDER,
     DocumentNode,
     FolderNode,
 )
@@ -96,6 +97,7 @@ def ingest_document_graph(
     nodes = NodeDataCollection()
     relationships: list[RelationshipRecord] = []
     seen_folders: set[str] = set()
+    seen_folder_edges: set[tuple[str, str]] = set()
     seen_markdown: set[str] = set()
 
     for key in factory.get_keys():
@@ -112,24 +114,33 @@ def ingest_document_graph(
             result.documents_failed += 1
             continue
 
-        folder = bundle.folder
         document = bundle.document
         md_hash = document.markdown_hash or ""
 
         # --- structural nodes (always MERGE; cheap and idempotent) ---------
-        if folder.folder_id not in seen_folders:
-            seen_folders.add(folder.folder_id)
-            folder_dict = folder.model_dump()
-            folder_dict["name"] = folder.name
-            nodes.add(_FOLDER_TYPE, folder_dict)
+        for folder in bundle.folders:
+            if folder.folder_id not in seen_folders:
+                seen_folders.add(folder.folder_id)
+                folder_dict = folder.model_dump()
+                folder_dict["name"] = folder.name
+                nodes.add(_FOLDER_TYPE, folder_dict)
+
+        for parent_folder, child_folder in zip(bundle.folders, bundle.folders[1:], strict=False):
+            edge = (parent_folder.folder_id, child_folder.folder_id)
+            if edge not in seen_folder_edges:
+                seen_folder_edges.add(edge)
+                relationships.append(
+                    RelationshipRecord(_FOLDER_TYPE, edge[0], _FOLDER_TYPE, edge[1], HAS_SUBFOLDER.name, {})
+                )
 
         doc_dict = document.model_dump()
         doc_dict["name"] = document.filename
         nodes.add(_DOCUMENT_TYPE, doc_dict)
 
+        leaf_folder = bundle.folders[-1]
         relationships.append(
             RelationshipRecord(
-                _FOLDER_TYPE, folder.folder_id, _DOCUMENT_TYPE, document.content_hash, CONTAINS_DOC.name, {}
+                _FOLDER_TYPE, leaf_folder.folder_id, _DOCUMENT_TYPE, document.content_hash, CONTAINS_DOC.name, {}
             )
         )
 
@@ -211,4 +222,5 @@ def drop_document_graph(backend: KgBackend, *, drop_documents: bool = False) -> 
     if drop_documents:
         backend.drop_table(CONTAINS_DOC.name)
         backend.drop_table(_DOCUMENT_TYPE)
+        backend.drop_table(HAS_SUBFOLDER.name)
         backend.drop_table(_FOLDER_TYPE)
