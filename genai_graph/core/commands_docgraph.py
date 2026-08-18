@@ -294,7 +294,6 @@ class DocGraphCommands(CliTopCommand):
             drop_document_graph(backend, drop_documents=True)
             console.print("[green]Deleted all documents, folders, and sections.[/green]")
 
-
         @cli_app.command("list")
         def list_docs(
             folder: Annotated[
