@@ -45,6 +45,13 @@ class MarkdownSection(BaseModel):
     text: str = Field(..., description="Own Markdown text: heading line + body up to the next heading (any level)")
     token_count: int = Field(..., description="Approximate token count")
     sequence: int = Field(..., description="0-based position of this section within its document, in document order")
+    description: str | None = Field(
+        default=None, description="One-sentence routing description: what this section contains"
+    )
+    summary: str | None = Field(default=None, description="Short paragraph summary; only for substantial sections")
+    summary_source: str | None = Field(
+        default=None, description="How the description/summary was produced: 'llm', or None if not yet summarized"
+    )
 
 
 # ---------------------------------------------------------------------------

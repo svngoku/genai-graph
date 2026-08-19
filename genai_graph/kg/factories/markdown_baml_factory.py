@@ -98,6 +98,14 @@ class MarkdownBamlFactory(DocumentMixin, KgFactory):
         """Return the discovered Markdown file paths as factory keys."""
         return [str(p) for p in self.get_all_file_paths()]
 
+    def get_json_cache_path(self, md_path: Path) -> Path | None:
+        """Return the cached JSON path for a Markdown file, or None if caching is disabled."""
+        schema = self.build_schema()
+        model_cls = schema.root_model_class
+        if model_cls is None:
+            return None
+        return self._cache_path(md_path, model_cls.__name__)
+
     # ------------------------------------------------------------------
     # Extraction (BAML) with JSON caching
     # ------------------------------------------------------------------

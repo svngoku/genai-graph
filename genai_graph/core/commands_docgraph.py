@@ -343,14 +343,29 @@ class DocGraphCommands(CliTopCommand):
                     "--db", help="Path to the Ladybug database file. Uses graph_db.default from config if omitted."
                 ),
             ] = None,
+            yaml_out: Annotated[
+                bool,
+                typer.Option("--yaml", help="Print as YAML (with descriptions), for feeding to an agent."),
+            ] = False,
+            summaries: Annotated[
+                bool,
+                typer.Option("--summaries", help="With --yaml, also include the fuller per-section summaries."),
+            ] = False,
+            max_level: Annotated[
+                int | None,
+                typer.Option("--max-level", help="With --yaml, only show sections down to this heading level."),
+            ] = None,
         ) -> None:
             """Show the table of contents for one document, or list a folder's contents."""
             db_path = _resolve_db_path(db_path)
             from genai_graph.kg.backend import KuzuBackend
             from genai_graph.kg.query.document_graph_tools import (
+                document_toc_yaml,
+                folder_toc_yaml,
                 get_document_toc,
                 get_folder_tree,
                 list_documents,
+                render_toc_outline,
                 resolve_folder_id,
             )
 
@@ -359,6 +374,17 @@ class DocGraphCommands(CliTopCommand):
 
             folder_id = resolve_folder_id(backend, document)
             if folder_id is not None:
+                if yaml_out:
+                    console.print(
+                        folder_toc_yaml(
+                            backend,
+                            folder_id,
+                            include_sections=True,
+                            include_summaries=summaries,
+                            max_level=max_level,
+                        )
+                    )
+                    return
                 subfolders = [r for r in get_folder_tree(backend, folder_id) if r["parent_folder_id"] == folder_id]
                 docs = [r for r in list_documents(backend, folder_id=folder_id) if r["folder_id"] == folder_id]
                 if not subfolders and not docs:
@@ -370,13 +396,143 @@ class DocGraphCommands(CliTopCommand):
                     console.print(f"- \U0001f4c4 {d['filename']} ({d['markdown_hash']})")
                 return
 
+            if yaml_out:
+                console.print(document_toc_yaml(backend, document, include_summaries=summaries, max_level=max_level))
+                return
+
             rows = get_document_toc(backend, document)
             if not rows:
                 console.print(f"[yellow]No sections found for document: {document}[/yellow]")
                 return
-            for r in rows:  # type: ignore[union-attr]
-                indent = "  " * max(int(r["level"]) - 1, 0)
-                console.print(f"{indent}- [{r['section_id']}] {r['title']} (line {r['line_start']})")
+            console.print(render_toc_outline(rows))  # type: ignore[arg-type]
+
+        @cli_app.command("folder-toc")
+        def folder_toc(
+            folder: Annotated[
+                str | None,
+                typer.Argument(help="Folder hash/name to root the TOC at. Covers every document if omitted."),
+            ] = None,
+            db_path: Annotated[
+                str | None,
+                typer.Option(
+                    "--db", help="Path to the Ladybug database file. Uses graph_db.default from config if omitted."
+                ),
+            ] = None,
+            sections: Annotated[
+                bool,
+                typer.Option("--sections", help="Also inline each document's section tree."),
+            ] = False,
+            summaries: Annotated[
+                bool,
+                typer.Option("--summaries", help="Also include the fuller summaries."),
+            ] = False,
+        ) -> None:
+            """Print the documents under a folder's subtree as YAML, each with a one-line description.
+
+            Sections are omitted by default — this is the orientation view: pick a document,
+            then run `docgraph toc <id> --yaml` for its sections. Pass --sections to inline them.
+            """
+            db_path = _resolve_db_path(db_path)
+            from genai_graph.kg.backend import KuzuBackend
+            from genai_graph.kg.query.document_graph_tools import folder_toc_yaml
+
+            backend = KuzuBackend()
+            backend.connect(db_path)
+            folder_id = _resolve_folder_ref_or_exit(backend, folder)
+            console.print(folder_toc_yaml(backend, folder_id, include_sections=sections, include_summaries=summaries))
+
+        @cli_app.command("summarize")
+        def summarize(
+            folder: Annotated[
+                str | None,
+                typer.Option("--folder", help="Only summarize documents under this folder's subtree."),
+            ] = None,
+            document: Annotated[
+                str | None,
+                typer.Option("--document", help="Only summarize this one document (hash, prefix, or filename)."),
+            ] = None,
+            db_path: Annotated[
+                str | None,
+                typer.Option(
+                    "--db", help="Path to the Ladybug database file. Uses graph_db.default from config if omitted."
+                ),
+            ] = None,
+            llm: Annotated[
+                str | None,
+                typer.Option("--llm", help="LLM id (name@provider) or tag. Uses kg_build.llms.default if omitted."),
+            ] = None,
+            max_level: Annotated[
+                int, typer.Option("--max-level", help="Deepest heading level that gets a description.")
+            ] = 6,
+            summary_min_tokens: Annotated[
+                int,
+                typer.Option(
+                    "--summary-min-tokens",
+                    help="Sections at or above this token count also get a paragraph summary.",
+                ),
+            ] = 800,
+            llm_max_tokens: Annotated[
+                int | None,
+                typer.Option(
+                    "--llm-max-tokens",
+                    help="Explicit max output tokens for the LLM call. Raise this (e.g. 32000) if you see "
+                    "'length limit reached' errors — a reasoning model spent its whole completion budget on "
+                    "hidden reasoning tokens, not the input context window.",
+                ),
+            ] = None,
+            force: Annotated[
+                bool, typer.Option("--force", help="Re-summarize documents that already have a summary.")
+            ] = False,
+            dry_run: Annotated[
+                bool, typer.Option("--dry-run", help="Show the summarization plan without calling the LLM.")
+            ] = False,
+        ) -> None:
+            """Generate section and document summaries for the Document Graph.
+
+            Examples:
+                cli docgraph summarize --db ./data/kg/tree.db
+                cli docgraph summarize --document alpha.md --llm gpt_4o_mini@edenai --dry-run
+                cli docgraph summarize --db ./data/kg/tree.db --llm-max-tokens 32000  # reasoning model ran out of output tokens
+            """
+            db_path = _resolve_db_path(db_path)
+            from genai_graph.kg.backend import KuzuBackend
+            from genai_graph.kg.document_graph.summarize import SummarizationConfig, summarize_document, summarize_graph
+
+            backend = KuzuBackend()
+            backend.connect(db_path)
+            config = SummarizationConfig(
+                llm=llm,
+                max_level=max_level,
+                summary_min_tokens=summary_min_tokens,
+                llm_max_tokens=llm_max_tokens,
+            )
+
+            if document:
+                result = summarize_document(backend, document, config, force=force, dry_run=dry_run)
+                table = Table(title=f"Summarize — {document}" + (" (dry run)" if dry_run else ""))
+                table.add_column("Metric", style="cyan")
+                table.add_column("Value", style="white")
+                table.add_row("Already summarized", str(result.already_summarized))
+                table.add_row("Sections described", str(result.sections_described))
+                table.add_row("Sections summarized", str(result.sections_summarized))
+                table.add_row("LLM calls", str(result.llm_calls))
+                console.print(table)
+                for w in result.warnings:
+                    console.print(f"[yellow]⚠ {w}[/yellow]")
+                return
+
+            folder_id = _resolve_folder_ref_or_exit(backend, folder)
+            graph_result = summarize_graph(backend, config, folder_id=folder_id, force=force, dry_run=dry_run)
+            table = Table(title="Document Graph — Summarize Result" + (" (dry run)" if dry_run else ""))
+            table.add_column("Metric", style="cyan")
+            table.add_column("Value", style="white")
+            table.add_row("Processed", str(graph_result.documents_processed))
+            table.add_row("Skipped (already summarized)", str(graph_result.documents_skipped))
+            table.add_row("Failed", str(graph_result.documents_failed))
+            table.add_row("LLM calls", str(graph_result.total_llm_calls))
+            console.print(table)
+            for w in graph_result.warnings:
+                console.print(f"[yellow]⚠ {w}[/yellow]")
 
         @cli_app.command("cat")
         def cat(

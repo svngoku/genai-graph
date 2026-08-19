@@ -67,6 +67,8 @@ class Document(BaseModel):
     modified_at: str | None = Field(default=None, description="Last-modified timestamp (ISO 8601)")
     token_count: int = Field(default=0, description="Approximate token count of the whole Markdown rendering")
     section_count: int = Field(default=0, description="Number of Markdown sections parsed from this document")
+    description: str | None = Field(default=None, description="One-sentence routing description of the document")
+    summary: str | None = Field(default=None, description="LLM-generated document abstract (a short paragraph)")
     # Access control — basic; can be extended in domain-specific projects
     access_level: str = Field(default="public", description="Access level: public | restricted | confidential")
     allowed_roles: list[str] = Field(default_factory=list, description="Roles permitted to access this document")

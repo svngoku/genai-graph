@@ -19,6 +19,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from genai_graph.kg.factories.json_factory import JsonFileBackedFactory
+from genai_graph.kg.factories.markdown_baml_factory import MarkdownBamlFactory
 from genai_graph.kg.manager import KgManager
 
 
@@ -95,10 +96,10 @@ def build_lineage_for_manager(manager: KgManager) -> tuple[list[MarkdownLineage]
         not be imported — callers should surface these to the user.
     """
 
-    # Ensure JSON file discovery is fresh even if JsonFileBackedFactory
-    # instances were created earlier in the process (for example by
-    # GraphRegistry or other components).
+    # Ensure file discovery is fresh even if factory instances were created
+    # earlier in the process (for example by GraphRegistry or other components).
     JsonFileBackedFactory.clear_cache()
+    MarkdownBamlFactory.clear_cache()
 
     profile_cfg = manager.get_profile_dict()
     graphs_cfg = profile_cfg.get("graphs", []) or []
@@ -124,8 +125,10 @@ def build_lineage_for_manager(manager: KgManager) -> tuple[list[MarkdownLineage]
             import_errors.append(LineageImportError(factory_path=factory_path, error=str(exc), hint=hint))
             continue
 
-        if not isinstance(imported, type) or not issubclass(imported, JsonFileBackedFactory):
-            # Not a JSON-file-backed subgraph; nothing to do for lineage.
+        is_json_backed = isinstance(imported, type) and issubclass(imported, JsonFileBackedFactory)
+        is_markdown_baml = isinstance(imported, type) and issubclass(imported, MarkdownBamlFactory)
+        if not is_json_backed and not is_markdown_baml:
+            # Not a JSON- or Markdown-BAML-backed subgraph; nothing to do for lineage.
             continue
 
         constructor_kwargs = {k: v for k, v in graph_cfg.items() if k not in {"factory", "initial_load", "trigger"}}
@@ -137,19 +140,24 @@ def build_lineage_for_manager(manager: KgManager) -> tuple[list[MarkdownLineage]
             import_errors.append(LineageImportError(factory_path=factory_path, error=str(exc)))
             continue
 
-        for json_path in subgraph.get_all_file_paths():
-            lineage = _build_lineage_for_json(
-                manager.profile,
-                factory_path,
-                json_path,
-                data_root=getattr(subgraph, "data_root", None),
-            )
-            if lineage is None:
-                # If we cannot resolve markdown/source for a particular JSON
-                # file we simply skip it; the KG can still be queried but we
-                # have no lineage information for that file.
-                continue
+        if is_markdown_baml:
+            lineages = _build_lineage_for_markdown_factory(manager.profile, factory_path, subgraph)
+        else:
+            lineages = [
+                lineage
+                for json_path in subgraph.get_all_file_paths()
+                if (
+                    lineage := _build_lineage_for_json(
+                        manager.profile,
+                        factory_path,
+                        json_path,
+                        data_root=getattr(subgraph, "data_root", None),
+                    )
+                )
+                is not None
+            ]
 
+        for lineage in lineages:
             existing = by_markdown.get(lineage.markdown_path)
             if existing is None:
                 by_markdown[lineage.markdown_path] = lineage
@@ -161,6 +169,47 @@ def build_lineage_for_manager(manager: KgManager) -> tuple[list[MarkdownLineage]
                     existing.source_path = lineage.source_path
 
     return sorted(by_markdown.values(), key=lambda lineage: str(lineage.markdown_path)), import_errors
+
+
+def _build_lineage_for_markdown_factory(
+    profile: str,
+    subgraph_name: str,
+    subgraph: MarkdownBamlFactory,
+) -> list[MarkdownLineage]:
+    """Build lineage entries for a MarkdownBamlFactory subgraph.
+
+    Unlike JSON-file-backed subgraphs, here the Markdown file is the primary
+    key and the BAML-extracted JSON is a cached artifact derived from it, so
+    lineage can be built directly without guessing from manifests.
+    """
+
+    lineages: list[MarkdownLineage] = []
+    for md_path in subgraph.get_all_file_paths():
+        json_files: list[JsonArtifact] = []
+        try:
+            cache_path = subgraph.get_json_cache_path(md_path)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Failed to resolve JSON cache path for {}: {}", md_path, exc)
+            cache_path = None
+        if cache_path is not None and cache_path.exists():
+            json_files.append(JsonArtifact(path=cache_path, subgraph=subgraph_name))
+
+        md_manifest = md_path.parent / "manifest.json"
+        source_path = _resolve_related_path(
+            manifest_path=md_manifest,
+            target_path=md_path,
+            exts=(".pdf", ".docx", ".doc", ".pptx", ".ppt"),
+        )
+
+        lineages.append(
+            MarkdownLineage(
+                profile=profile,
+                markdown_path=md_path,
+                source_path=source_path,
+                json_files=json_files,
+            )
+        )
+    return lineages
 
 
 def _build_lineage_for_json(

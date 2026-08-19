@@ -6,12 +6,16 @@ import json
 from pathlib import Path
 
 import pytest
+from pydantic import BaseModel
 
+from genai_graph.kg.factories.markdown_baml_factory import MarkdownBamlFactory
 from genai_graph.kg.ingest.lineage import (
     _build_lineage_for_json,
+    _build_lineage_for_markdown_factory,
     _detect_baml_version_mismatch,
     _resolve_related_path,
 )
+from genai_graph.kg.schema.core import GraphSchema
 
 
 class TestDetectBamlVersionMismatch:
@@ -124,12 +128,66 @@ class TestBuildLineageForJson:
             def get_dict(self, key: str):
                 return {}
 
-        monkeypatch.setattr(
-            "genai_tk.config_mgmt.config_mngr.global_config", lambda: _FakeCfg()
-        )
+        monkeypatch.setattr("genai_tk.config_mgmt.config_mngr.global_config", lambda: _FakeCfg())
         js = tmp_path / "orphan.json"
         js.write_text("{}")
         assert lineage_mod._build_lineage_for_json("prof", "sub", js) is None
+
+
+class _DummyModel(BaseModel):
+    name: str = "dummy"
+
+
+class _DummyMarkdownFactory(MarkdownBamlFactory):
+    def extract_from_markdown(self, md_text: str) -> BaseModel:
+        return _DummyModel()
+
+    def build_schema(self) -> GraphSchema:
+        return GraphSchema(nodes=[], relations=[], root_model_class=_DummyModel)
+
+
+class TestBuildLineageForMarkdownFactory:
+    def test_resolves_cached_json_and_source(self, tmp_path: Path) -> None:
+        md_dir = tmp_path / "md"
+        json_dir = tmp_path / "json"
+        pdf_dir = tmp_path / "pdf"
+        for d in (md_dir, json_dir, pdf_dir):
+            d.mkdir()
+
+        pdf = pdf_dir / "doc.pdf"
+        pdf.write_bytes(b"%PDF")
+        md = md_dir / "doc.md"
+        md.write_text("# Doc")
+        (md_dir / "manifest.json").write_text(json.dumps({"source": str(pdf)}))
+
+        cache_path = json_dir / "_DummyModel" / "doc.json"
+        cache_path.parent.mkdir(parents=True)
+        cache_path.write_text("{}")
+
+        factory = _DummyMarkdownFactory(md_root=str(md_dir), json_cache_root=str(json_dir))
+
+        lineages = _build_lineage_for_markdown_factory("prof", "sub:Factory", factory)
+
+        assert len(lineages) == 1
+        lineage = lineages[0]
+        assert lineage.markdown_path == md
+        assert lineage.source_path == pdf
+        assert lineage.json_files[0].path == cache_path
+        assert lineage.json_files[0].subgraph == "sub:Factory"
+
+    def test_no_cached_json_yields_empty_json_files(self, tmp_path: Path) -> None:
+        md_dir = tmp_path / "md"
+        md_dir.mkdir()
+        md = md_dir / "doc.md"
+        md.write_text("# Doc")
+
+        factory = _DummyMarkdownFactory(md_root=str(md_dir), json_cache_root=None)
+
+        lineages = _build_lineage_for_markdown_factory("prof", "sub", factory)
+
+        assert len(lineages) == 1
+        assert lineages[0].markdown_path == md
+        assert lineages[0].json_files == []
 
     def test_markdown_without_pdf(self, tmp_path: Path) -> None:
         md_dir = tmp_path / "md"

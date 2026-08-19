@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import yaml
 from langchain_core.tools import BaseTool, tool
 from loguru import logger
 
@@ -135,13 +136,16 @@ def list_documents(backend: KgBackend, folder_id: str | None = None) -> list[dic
             (the folder itself or any nested subfolder).
 
     Returns:
-        List of `{content_hash, markdown_hash, filename, section_count, path, folder_id}` dicts.
+        List of `{content_hash, markdown_hash, filename, section_count, token_count, description,
+        summary, path, folder_id}` dicts.
     """
     if folder_id is None:
         query = (
             f"MATCH (d:{_DOCUMENT_LABEL}) "
             "RETURN d.content_hash AS content_hash, d.markdown_hash AS markdown_hash, d.filename AS filename, "
-            "d.section_count AS section_count, d.path AS path, d.folder_id AS folder_id ORDER BY d.filename"
+            "d.section_count AS section_count, d.token_count AS token_count, "
+            "d.description AS description, d.summary AS summary, "
+            "d.path AS path, d.folder_id AS folder_id ORDER BY d.filename"
         )
         params: dict[str, Any] = {}
     else:
@@ -149,14 +153,72 @@ def list_documents(backend: KgBackend, folder_id: str | None = None) -> list[dic
             MATCH (root:{_FOLDER_LABEL} {{folder_id: $folder_id}})-[:HAS_SUBFOLDER*0..30]->(f:{_FOLDER_LABEL})
             MATCH (f)-[:CONTAINS]->(d:{_DOCUMENT_LABEL})
             RETURN d.content_hash AS content_hash, d.markdown_hash AS markdown_hash, d.filename AS filename,
-                   d.section_count AS section_count, d.path AS path, d.folder_id AS folder_id ORDER BY d.filename
+                   d.section_count AS section_count, d.token_count AS token_count,
+                   d.description AS description, d.summary AS summary,
+                   d.path AS path, d.folder_id AS folder_id ORDER BY d.filename
         """
         params = {"folder_id": folder_id}
 
     rows, _ = _query_rows(backend, query, params)
     for row in rows:
         row["section_count"] = int(row.get("section_count") or 0)
+        row["token_count"] = int(row.get("token_count") or 0)
     return rows
+
+
+def get_document(backend: KgBackend, document_id: str) -> dict[str, Any] | None:
+    """Return one Document's full metadata, including `token_count` and `summary`.
+
+    Accepts the same references as `get_document_toc`: a content hash (full or
+    prefix), a `markdown_hash`, a filename, or a source path.
+    """
+    query = (
+        f"MATCH (d:{_DOCUMENT_LABEL}) "
+        "WHERE d.content_hash = $id OR d.content_hash STARTS WITH $id OR d.markdown_hash = $id "
+        "OR d.markdown_hash STARTS WITH $id OR d.filename = $id OR d.path = $id "
+        "RETURN d.content_hash AS content_hash, d.markdown_hash AS markdown_hash, d.filename AS filename, "
+        "d.section_count AS section_count, d.token_count AS token_count, "
+        "d.description AS description, d.summary AS summary, "
+        "d.path AS path, d.folder_id AS folder_id LIMIT 1"
+    )
+    rows, _ = _query_rows(backend, query, {"id": document_id})
+    if not rows:
+        return None
+    row = rows[0]
+    row["section_count"] = int(row.get("section_count") or 0)
+    row["token_count"] = int(row.get("token_count") or 0)
+    return row
+
+
+def apply_section_summaries(backend: KgBackend, rows: list[dict[str, Any]]) -> int:
+    """Write `description`/`summary`/`summary_source` onto MarkdownSection nodes.
+
+    Args:
+        rows: `{section_id, description, summary, summary_source}` dicts, one per section.
+
+    Returns:
+        Number of sections updated.
+    """
+    if not rows:
+        return 0
+    query = (
+        "UNWIND $rows AS row "
+        f"MATCH (s:{_SECTION_LABEL} {{section_id: row.section_id}}) "
+        "SET s.description = row.description, s.summary = row.summary, s.summary_source = row.summary_source"
+    )
+    backend.execute(query, {"rows": rows})
+    return len(rows)
+
+
+def apply_document_summary(
+    backend: KgBackend, markdown_hash: str, *, description: str | None = None, summary: str | None = None
+) -> None:
+    """Write the document-level description/abstract onto every Document sharing *markdown_hash*."""
+    backend.execute(
+        f"MATCH (d:{_DOCUMENT_LABEL} {{markdown_hash: $markdown_hash}}) "
+        "SET d.description = $description, d.summary = $summary",
+        {"markdown_hash": markdown_hash, "description": description, "summary": summary},
+    )
 
 
 def get_document_toc(
@@ -164,8 +226,9 @@ def get_document_toc(
 ) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], str]:
     """Return the table of contents (heading tree) for one document.
 
-    No section body text is returned — this is the map an agent uses to decide
-    which sections to fetch with `get_section_content`.
+    Section body text is not returned, but `token_count` and `summary` are — this
+    is the map an agent uses to decide which sections to fetch in full with
+    `get_section_content`.
     """
     markdown_hash = _resolve_markdown_hash(backend, document_id)
     if not markdown_hash:
@@ -176,11 +239,139 @@ def get_document_toc(
     query = f"""
         MATCH (s:{_SECTION_LABEL} {{markdown_hash: $markdown_hash}})
         RETURN s.section_id AS section_id, s.parent_section_id AS parent_section_id,
-               s.title AS title, s.level AS level, s.line_start AS line_start, s.sequence AS sequence
+               s.title AS title, s.level AS level, s.line_start AS line_start, s.sequence AS sequence,
+               s.token_count AS token_count, s.description AS description, s.summary AS summary,
+               s.summary_source AS summary_source
         ORDER BY s.sequence
     """
     rows, _ = _query_rows(backend, query, {"markdown_hash": markdown_hash})
     return (rows, query) if return_query else rows
+
+
+def build_toc_tree(
+    toc_rows: list[dict[str, Any]], *, include_summaries: bool = False, max_level: int | None = None
+) -> list[dict[str, Any]]:
+    """Nest flat `get_document_toc` rows into a tree by `parent_section_id`.
+
+    Each node is `{id, title, description?, summary?, sections?}`. Heading level and
+    token count are deliberately not emitted: level is redundant with the tree's own
+    nesting, and token count adds nothing an agent can act on once `description`
+    already answers "is this worth opening?". The synthetic level-0 root section is
+    unwrapped — it is a container for preamble text, not a heading an agent would
+    navigate to.
+
+    Args:
+        include_summaries: Also emit the fuller `summary` where one exists. Off by
+            default: `description` alone is what an agent needs to pick a section, and
+            adding summaries roughly triples the size of the tree.
+        max_level: Drop sections deeper than this heading level.
+    """
+    by_parent: dict[str | None, list[dict[str, Any]]] = {}
+    for row in toc_rows:
+        by_parent.setdefault(row.get("parent_section_id"), []).append(row)
+
+    def build(parent_id: str | None) -> list[dict[str, Any]]:
+        nodes = []
+        for row in sorted(by_parent.get(parent_id, []), key=lambda r: r["sequence"]):
+            if max_level is not None and int(row["level"]) > max_level:
+                continue
+            node: dict[str, Any] = {
+                "id": row["section_id"],
+                "title": row["title"],
+            }
+            if row.get("description"):
+                node["description"] = row["description"]
+            if include_summaries and row.get("summary"):
+                node["summary"] = row["summary"]
+            children = build(row["section_id"])
+            if children:
+                node["sections"] = children
+            nodes.append(node)
+        return nodes
+
+    root_rows = [r for r in toc_rows if r.get("level") == 0]
+    if root_rows:
+        return build(root_rows[0]["section_id"])
+    return build(None)
+
+
+def render_toc_outline(toc_rows: list[dict[str, Any]]) -> str:
+    """Render a document's TOC as compact indented text (`- [id] Title`), for LLM prompts and the CLI."""
+    lines = []
+    for row in toc_rows:
+        if int(row.get("level") or 0) == 0:
+            continue  # synthetic root: not a navigable heading
+        indent = "  " * max(int(row["level"]) - 1, 0)
+        lines.append(f"{indent}- [{row['section_id']}] {row['title']} (line {row['line_start']})")
+    return "\n".join(lines)
+
+
+def document_toc_yaml(
+    backend: KgBackend, document_id: str, *, include_summaries: bool = False, max_level: int | None = None
+) -> str:
+    """Return one document's table of contents as a YAML string.
+
+    Section `description`s are always included (they are the routing signal); pass
+    `include_summaries=True` for the fuller per-section summaries as well.
+    """
+    doc = get_document(backend, document_id)
+    toc_rows = get_document_toc(backend, document_id)
+    if doc is None or not toc_rows:
+        return yaml.safe_dump({"error": f"No document found matching: {document_id}"}, sort_keys=False)
+    payload: dict[str, Any] = {
+        "document": doc["filename"],
+        "id": doc["content_hash"],
+    }
+    if doc.get("description"):
+        payload["description"] = doc["description"]
+    if doc.get("summary"):
+        payload["summary"] = doc["summary"]
+    payload["sections"] = build_toc_tree(
+        toc_rows,  # type: ignore[arg-type]
+        include_summaries=include_summaries,
+        max_level=max_level,
+    )
+    return yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
+
+
+def folder_toc_yaml(
+    backend: KgBackend,
+    folder_id: str | None,
+    *,
+    include_sections: bool = False,
+    include_summaries: bool = False,
+    max_level: int | None = None,
+) -> str:
+    """Return the documents under a folder's subtree as one YAML string.
+
+    Sections are omitted by default — this is the *orientation* view an agent reads
+    first to pick a document, and inlining every section of every document defeats
+    the point (and blows the context window on a large corpus). Call
+    `document_toc_yaml` for the chosen document, or pass `include_sections=True`.
+    """
+    docs = list_documents(backend, folder_id=folder_id)
+    if not docs:
+        return yaml.safe_dump({"documents": []}, sort_keys=False)
+    payload: dict[str, Any] = {"documents": []}
+    for doc in docs:
+        entry: dict[str, Any] = {
+            "id": doc["content_hash"],
+            "name": doc["filename"],
+            "sections": doc["section_count"],
+        }
+        if doc.get("description"):
+            entry["description"] = doc["description"]
+        if include_summaries and doc.get("summary"):
+            entry["summary"] = doc["summary"]
+        if include_sections:
+            toc_rows = get_document_toc(backend, doc["markdown_hash"])
+            entry["toc"] = build_toc_tree(
+                toc_rows,  # type: ignore[arg-type]
+                include_summaries=include_summaries,
+                max_level=max_level,
+            )
+        payload["documents"].append(entry)
+    return yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
 
 
 def get_section_content(
@@ -312,36 +503,56 @@ def create_document_graph_tools(db_path: str) -> list[BaseTool]:
         db_path: Path to the Ladybug database holding the ingested graph.
 
     Returns:
-        `[list_documents, get_document_toc, get_section_content, search_sections]` tools.
+        `[list_documents, get_document_toc, get_folder_toc, get_section_content, search_sections]` tools.
     """
 
     @tool("list_documents")
     def _list_documents() -> str:
-        """List every ingested document with its section count."""
+        """List every ingested document with its section count and one-line description."""
         try:
             rows = list_documents(_connect(db_path))
         except Exception as exc:  # noqa: BLE001
             return f"Error listing documents: {exc}"
         if not rows:
             return "No documents ingested yet."
-        return "\n".join(
-            f"- {r['filename']} ({r['section_count']} sections) — md_hash: {r['markdown_hash']}" for r in rows
-        )
+        lines = []
+        for r in rows:
+            line = f"- [{r['content_hash']}] {r['filename']} ({r['section_count']} sections, {r['token_count']} tokens)"
+            if r.get("description"):
+                line += f"\n  {r['description']}"
+            lines.append(line)
+        return "\n".join(lines)
+
+    @tool("get_folder_toc")
+    def _get_folder_toc(folder_id: str | None = None) -> str:
+        """Start here. List the documents in a folder, each with an id and a one-line description.
+
+        Sections are NOT included — pick a document from this list, then call
+        `get_document_toc` with its id to see that document's sections.
+        Omit `folder_id` to cover every ingested document.
+        """
+        try:
+            backend = _connect(db_path)
+            resolved = resolve_folder_id(backend, folder_id) if folder_id else None
+            return folder_toc_yaml(backend, resolved)
+        except Exception as exc:  # noqa: BLE001
+            return f"Error fetching folder TOC: {exc}"
 
     @tool("get_document_toc")
-    def _get_document_toc(document_id: str) -> str:
-        """Get the table of contents (heading tree) for one document (hash or filename)."""
+    def _get_document_toc(document_id: str, include_summaries: bool = False, max_level: int | None = None) -> str:
+        """Get one document's section tree as YAML: each section's id, title, size and description.
+
+        Use the section ids from here with `get_section_content` to read the actual text.
+        `document_id` is a content hash (full or prefix), a filename, or a source path.
+        Set `include_summaries=True` for fuller per-section summaries, or `max_level` to
+        show only top-level sections of a very long document.
+        """
         try:
-            rows = get_document_toc(_connect(db_path), document_id)
+            return document_toc_yaml(
+                _connect(db_path), document_id, include_summaries=include_summaries, max_level=max_level
+            )
         except Exception as exc:  # noqa: BLE001
             return f"Error fetching TOC: {exc}"
-        if not rows:
-            return f"No sections found for document: {document_id}"
-        lines = []
-        for r in rows:  # type: ignore[union-attr]
-            indent = "  " * max(int(r["level"]) - 1, 0)
-            lines.append(f"{indent}- [{r['section_id']}] {r['title']} (line {r['line_start']})")
-        return "\n".join(lines)
 
     @tool("get_section_content")
     def _get_section_content(section_ids: str) -> str:
@@ -369,4 +580,4 @@ def create_document_graph_tools(db_path: str) -> list[BaseTool]:
             for r in rows  # type: ignore[union-attr]
         )
 
-    return [_list_documents, _get_document_toc, _get_section_content, _search_sections]
+    return [_get_folder_toc, _get_document_toc, _get_section_content, _search_sections, _list_documents]

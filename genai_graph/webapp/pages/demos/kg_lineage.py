@@ -46,15 +46,18 @@ def _get_data_roots() -> list[Path]:
         if ekg_data:
             roots.append(Path(ekg_data))
 
-        # Also include explicit data_root values from subgraphs
+        # Also include explicit data_root/md_root/json_cache_root values from graphs
         manager = get_kg_manager()
         profile_cfg = manager.get_profile_dict()
-        subgraphs_cfg = profile_cfg.get("subgraphs", []) or []
+        graphs_cfg = profile_cfg.get("graphs", []) or []
 
-        for subgraph_cfg in subgraphs_cfg:
-            if isinstance(subgraph_cfg, dict) and "data_root" in subgraph_cfg:
-                resolved = resolve_config_path(subgraph_cfg["data_root"])
-                roots.append(Path(resolved))
+        for graph_cfg in graphs_cfg:
+            if not isinstance(graph_cfg, dict):
+                continue
+            for key in ("data_root", "md_root", "json_cache_root"):
+                if key in graph_cfg:
+                    resolved = resolve_config_path(graph_cfg[key])
+                    roots.append(Path(resolved))
     except Exception as exc:
         logger.warning("Could not extract data_roots: {}", exc)
 
