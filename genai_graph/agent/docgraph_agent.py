@@ -1,0 +1,242 @@
+"""Build and run a deep agent over the Document Graph.
+
+The agent is a genai-tk ``type: deep`` profile (DeepAgents SDK) wired with the
+read-only Document Graph navigation tools from
+:mod:`genai_graph.kg.query.document_graph_tools` and the runtime skills co-located
+under ``genai_graph/agent/skills/``. The tools and the target folder are injected
+at runtime so ``--db`` / ``--folder`` / ``--llm`` overrides work without editing
+the profile.
+
+Skills are loaded via DeepAgents' ``SkillsMiddleware`` through a
+``FilesystemBackend``. Because the generic skills ship inside the ``genai_graph``
+package while a downstream project's skills live in its own tree, the backend
+root is computed as the common ancestor of all skill directories — that keeps
+``virtual_mode=True`` path-traversal checks satisfied regardless of which
+project the agent is launched from.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Any
+
+from langchain_core.tools import BaseTool
+from loguru import logger
+
+from genai_graph.kg.backend import KuzuBackend
+from genai_graph.kg.query.document_graph_tools import (
+    DocumentGraphError,
+    create_document_graph_tools,
+    get_folder_path,
+    resolve_folder_id,
+)
+
+DEFAULT_LLM = "deepseek_v4flash@openrouter"
+DEFAULT_PROFILE = "docgraph"
+
+# Co-located runtime skills, resolved from the package location so they work
+# no matter which project imports genai_graph.
+_PACKAGE_SKILLS_DIR = str(Path(__file__).resolve().parent / "skills")
+
+
+def resolve_db_path(db_path: str | None) -> str:
+    """Return *db_path* or the configured ``graph_db.default``.
+
+    Raises:
+        DocumentGraphError: When no path is given and no default is configured.
+    """
+    if db_path:
+        return db_path
+    from genai_tk.config_mgmt.config_mngr import global_config
+
+    default_db = global_config().get("graph_db.default", None)
+    if default_db:
+        return str(default_db)
+    raise DocumentGraphError(
+        "No database path provided and no `graph_db.default` configured. "
+        "Pass --db <path> or add graph_db.default to your config."
+    )
+
+
+def create_document_graph_tools_from_config(db_path: str | None = None) -> list[BaseTool]:
+    """Build the navigation tools, resolving *db_path* from config when omitted."""
+    return create_document_graph_tools(resolve_db_path(db_path))
+
+
+def build_docgraph_system_prompt(
+    folder_id: str | None = None,
+    folder_name: str | None = None,
+    *,
+    base: str | None = None,
+) -> str:
+    """Build the system prompt that frames the agent as a Document Graph analyst.
+
+    When *folder_id* is given the agent is scoped to that folder's documents.
+    """
+    target = ""
+    if folder_id:
+        label = f"{folder_name!r} ({folder_id})" if folder_name else folder_id
+        target = f"\n\n[Target folder: {label} — focus your search on this folder's documents.]"
+
+    prompt = f"""\
+You are a document-graph analyst. You answer questions by NAVIGATING the Document
+Graph loaded into your tools — a Ladybug graph of Folders → Documents → Markdown
+sections. You do NOT have the documents memorised; you must read them via tools.
+
+Navigation loop (vectorless agentic RAG):
+1. `get_folder_toc(folder_id)` — list the documents in the folder, each with an id
+   and a one-line description. Pick the document(s) most likely to answer.
+2. `get_document_toc(document_id)` — get one document's section tree: section ids,
+   titles and one-line descriptions. This is the map; use it to pick sections.
+3. `get_section_content(section_ids)` — read the raw Markdown of ONLY the sections
+   whose description matches the question (comma-separated ids).
+4. `search_sections(keyword, folder_id=...)` — when you do not know which document
+   or section holds an answer, keyword-search titles and text across the folder.
+5. Iterate: read more sections or search again with different keywords until you
+   have grounded evidence, then answer.
+
+Rules:
+- Ground every claim in section text you actually read; cite section ids as
+  `[hash::sequence]` and name the source document.
+- If a tool returns "No ... found", try another tool or keyword — never guess.
+- Never invent content that is not in the graph. If information is genuinely
+  absent, say so explicitly.
+- Return your analysis as your message. Do NOT use write_file/edit_file — the
+  caller persists the report.{target}
+"""
+    if base:
+        prompt = f"{prompt}\n\n{base}"
+    return prompt
+
+
+def _resolve_folder(backend: KuzuBackend, folder_ref: str | None) -> tuple[str | None, str | None]:
+    """Resolve a folder reference to (folder_id, folder_name); (None, None) when omitted."""
+    if not folder_ref:
+        return None, None
+    folder_id = resolve_folder_id(backend, folder_ref)
+    if folder_id is None:
+        raise DocumentGraphError(
+            f"No folder found matching {folder_ref!r}. "
+            "Use `cli docgraph folders` to list ingested folders, or omit --folder to search everything."
+        )
+    chain = get_folder_path(backend, folder_id)
+    name = chain[-1]["name"] if chain else None
+    return folder_id, name
+
+
+def _common_root(skill_dirs: list[str]) -> str:
+    """Return a single directory that contains every path in *skill_dirs*.
+
+    Used as the ``FilesystemBackend`` root so the SkillsMiddleware can read skills
+    from several project trees under ``virtual_mode=True`` (which forbids paths
+    outside the root). Falls back to the first dir's parent when there is only one.
+    """
+    resolved = [str(Path(d).resolve()) for d in skill_dirs]
+    if not resolved:
+        return str(Path.cwd())
+    if len(resolved) == 1:
+        return resolved[0]
+    return os.path.commonpath(resolved)
+
+
+def prepare_docgraph_profile(
+    profile: Any,
+    *,
+    db_path: str | None = None,
+    folder_id: str | None = None,
+    extra_skill_dirs: list[str] | None = None,
+) -> Any:
+    """Mutate and return *profile* in place for a Document Graph run.
+
+    Sets the system prompt (scoped to *folder_id* when given), the skill
+    directories (package skills + caller extras + profile-listed), and a
+    filesystem backend rooted at the common ancestor of those skill dirs.
+    """
+    resolved_db = resolve_db_path(db_path)
+
+    folder_resolved_id: str | None = None
+    folder_name: str | None = None
+    if folder_id:
+        backend = KuzuBackend()
+        backend.connect(resolved_db)
+        try:
+            folder_resolved_id, folder_name = _resolve_folder(backend, folder_id)
+        finally:
+            backend.close()
+
+    profile.system_prompt = build_docgraph_system_prompt(folder_resolved_id, folder_name, base=profile.system_prompt)
+
+    skill_dirs: list[str] = [_PACKAGE_SKILLS_DIR]
+    if extra_skill_dirs:
+        skill_dirs.extend(extra_skill_dirs)
+    if getattr(profile, "skill_directories", None):
+        skill_dirs.extend(profile.skill_directories)
+    # De-duplicate while preserving order.
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for d in skill_dirs:
+        if d not in seen:
+            seen.add(d)
+            deduped.append(d)
+    profile.skill_directories = deduped
+
+    # Resolve/expand (drops missing dirs, expands one level) so the backend root
+    # is computed from the same dirs the SkillsMiddleware will actually scan.
+    from genai_tk.agents.langchain.factory import _resolve_skill_dirs
+
+    resolved_skills = _resolve_skill_dirs(deduped)
+    if resolved_skills:
+        from genai_tk.agents.langchain.config import BackendConfig
+
+        profile.backend = BackendConfig(type="filesystem", root_dir=_common_root(resolved_skills))
+        logger.info("Document-graph agent skills: {} (backend root: {})", resolved_skills, profile.backend.root_dir)
+    else:
+        logger.warning("No skill directories resolved for document-graph agent; running without skills.")
+
+    return profile
+
+
+def create_docgraph_agent(
+    profile: Any,
+    *,
+    llm: str | None = None,
+    db_path: str | None = None,
+    folder_id: str | None = None,
+    extra_skill_dirs: list[str] | None = None,
+) -> Any:
+    """Prepare *profile* and return a ready-to-stream :class:`LangChainHarness`.
+
+    The harness lazily compiles the deep agent on first use. The navigation tools
+    are injected as ``extra_tools`` so they reflect the resolved ``db_path`` and
+    ``folder_id`` without touching the profile YAML.
+
+    Args:
+        profile: A resolved ``AgentProfileConfig`` (``type: deep``), typically from
+            :func:`genai_tk.agents.harness.profiles.load_langchain_profiles`.
+        llm: LLM identifier override (e.g. ``"deepseek_v4flash"``).
+        db_path: Ladybug database path; resolved from ``graph_db.default`` when None.
+        folder_id: Folder to scope the agent to (hash, prefix, or name).
+        extra_skill_dirs: Additional runtime skill directories (e.g. a project's
+            use-case skills).
+
+    Returns:
+        A :class:`genai_tk.agents.harness.langchain_harness.LangChainHarness`.
+    """
+    from genai_tk.agents.harness.langchain_harness import LangChainHarness
+
+    prepare_docgraph_profile(profile, db_path=db_path, folder_id=folder_id, extra_skill_dirs=extra_skill_dirs)
+    tools = create_document_graph_tools_from_config(db_path)
+    return LangChainHarness(
+        profile,
+        llm_override=llm,
+        force_memory_checkpointer=True,
+        extra_tools=tools,
+    )
+
+
+async def run_docgraph_agent(harness: Any, query: str, *, show_trace: bool = False) -> str:
+    """Run one turn against *harness*, streaming events, and return the assistant text."""
+    from genai_tk.agents.harness.chat_repl import astream_turn
+
+    return await astream_turn(harness, query, show_trace=show_trace)

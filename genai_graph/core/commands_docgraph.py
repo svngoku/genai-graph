@@ -686,6 +686,117 @@ class DocGraphCommands(CliTopCommand):
 
             run_document_graph_tui(db_path)
 
+        @cli_app.command("agent")
+        def agent(
+            query: Annotated[
+                str | None,
+                typer.Argument(
+                    help="Question to answer by navigating the Document Graph "
+                    "(omit with --chat for interactive mode)."
+                ),
+            ] = None,
+            profile: Annotated[
+                str,
+                typer.Option("--profile", "-p", help="Agent profile key (default: docgraph)."),
+            ] = "docgraph",
+            llm: Annotated[
+                str,
+                typer.Option("--llm", "-m", help="LLM id (name@provider) or tag. Defaults to the profile's LLM."),
+            ] = "default",
+            db_path: Annotated[
+                str | None,
+                typer.Option(
+                    "--db",
+                    help="Path to the Ladybug database file. Uses graph_db.default from config if omitted.",
+                ),
+            ] = None,
+            folder: Annotated[
+                str | None,
+                typer.Option("--folder", help="Folder to scope the agent to (hash, prefix, or name)."),
+            ] = None,
+            skill_dir: Annotated[
+                list[str] | None,
+                typer.Option("--skill-dir", help="Additional runtime skill directory (repeatable)."),
+            ] = None,
+            recursion_limit: Annotated[
+                int, typer.Option("--recursion-limit", help="Max LangGraph steps per turn.")
+            ] = 120,
+            chat: Annotated[
+                bool, typer.Option("--chat", help="Interactive multi-turn REPL (memory enabled).")
+            ] = False,
+            trace: Annotated[
+                bool, typer.Option("--trace", help="Print graph node trace lines.")
+            ] = False,
+        ) -> None:
+            """Run a deep agent that navigates the Document Graph to answer a query.
+
+            Examples:
+                cli docgraph agent "What IT services is Alko requesting?" --folder folder_273e65da416b2e72
+                cli docgraph agent --chat --folder folder_273e65da416b2e72
+                cli docgraph agent "Summarize the SLAs" --llm deepseek_v4flash@openrouter
+            """
+            import asyncio
+
+            from genai_tk.agents.harness.profiles import load_langchain_profiles
+
+            from genai_graph.agent import create_docgraph_agent, run_docgraph_agent
+            from genai_graph.kg.query.document_graph_tools import DocumentGraphError
+
+            profiles = load_langchain_profiles()
+            if profile not in profiles:
+                console.print(f"[red]Agent profile {profile!r} not found. Available: {sorted(profiles)}[/red]")
+                raise typer.Exit(1)
+            agent_profile = profiles[profile]
+            agent_profile.recursion_limit = recursion_limit
+            llm_id = llm if llm != "default" else None
+
+            async def _run() -> None:
+                try:
+                    harness = create_docgraph_agent(
+                        agent_profile,
+                        llm=llm_id,
+                        db_path=db_path,
+                        folder_id=folder,
+                        extra_skill_dirs=skill_dir,
+                    )
+                except DocumentGraphError as exc:
+                    console.print(f"[red]{exc}[/red]")
+                    raise typer.Exit(1) from exc
+
+                try:
+                    if chat:
+                        from genai_tk.agents.harness.chat_repl import run_chat_repl
+
+                        console.print(
+                            f"[cyan]Document Graph agent ({profile}) — interactive mode. "
+                            "Type /quit to exit.[/cyan]\n"
+                        )
+                        await run_chat_repl(harness, initial_query=query, show_trace=trace)
+                        return
+
+                    if not query:
+                        console.print(
+                            "[red]A query is required in one-shot mode "
+                            "(or use --chat for interactive mode).[/red]"
+                        )
+                        raise typer.Exit(1)
+
+                    label = llm_id or agent_profile.llm or "default"
+                    console.print(f"[dim]Running {profile} agent (llm={label})…[/dim]\n")
+                    await run_docgraph_agent(harness, query, show_trace=trace)
+                    console.print()
+                finally:
+                    await harness.aclose()
+
+            try:
+                asyncio.run(_run())
+            except typer.Exit:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("docgraph agent error", exc_info=True)
+                console.print(f"[red]Agent error: {exc}[/red]")
+                raise typer.Exit(1) from exc
+
         logger.debug("Registered 'docgraph' CLI commands")
 
 

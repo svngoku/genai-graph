@@ -67,3 +67,8 @@ llm:
     - model_id: gpt-4.1-mini 
       providers:
         - edenai: openai/gpt-4.1-mini
+
+    - model_id: deepseek_v4flash
+      providers:
+        - openrouter: deepseek/deepseek-v4-flash
+      capabilities: ['structured_outputs']

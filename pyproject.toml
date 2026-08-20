@@ -46,6 +46,11 @@ Homepage = "https://github.com/tclatos/genai-graph"
 Repository = "https://github.com/tclatos/genai-graph"
 
 
+[project.optional-dependencies]
+# Agentic harness — required to RUN `cli docgraph agent` (type: deep agents).
+# Install with: uv sync --extra harnessing
+harnessing = ["genai-tk[harnessing]"]
+
 [dependency-groups]
 # UI and web application dependencies
 

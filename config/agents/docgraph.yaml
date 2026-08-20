@@ -1,0 +1,37 @@
+# Document Graph deep agent — navigates the Ladybug Document Graph.
+#
+# Unified `agents:` form (genai-tk). The `cli docgraph agent` command loads this
+# profile and runs it through `genai_graph.agent.create_docgraph_agent`, which
+# injects the navigation tools and the colocated `genai_graph/agent/skills` at
+# runtime (so --db / --folder / --llm overrides work without editing this file).
+
+agent_defaults:
+  type: react
+  middlewares:
+    - class: genai_tk.agents.langchain.middleware.rich_middleware.RichToolCallMiddleware
+  checkpointer:
+    type: none
+  default_profile: docgraph
+
+agents:
+  docgraph:
+    harness: langchain
+    name: "Document Graph Agent"
+    type: deep
+    description: "Deep agent that navigates the Ladybug Document Graph (Folders → Documents → sections) to answer queries."
+    llm: deepseek_v4flash@openrouter
+    system_prompt: |
+      You answer questions about an ingested document corpus by navigating the
+      Document Graph with the provided tools. Read the `navigate-document-graph`
+      and `document-graph-tools` skills for the exact navigation loop, then follow
+      it: orient with get_folder_toc, get the map with get_document_toc, read only
+      the relevant sections with get_section_content, and search_sections when you
+      do not know where an answer lives. Cite section ids for every claim.
+    tools: []
+    skill_directories: []
+    enable_planning: true
+    enable_file_system: false
+    recursion_limit: 120
+    examples:
+      - "What IT services is Alko requesting in the RFP?"
+      - "Summarize the SLA requirements in the RFP folder."

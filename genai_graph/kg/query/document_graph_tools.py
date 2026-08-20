@@ -5,6 +5,15 @@ command) can call to walk a document's heading hierarchy, fetch individual
 sections, and reconstruct a whole document from its sections. Documents are
 addressed by the Document content hash (full or prefix), its ``markdown_hash``,
 the filename, or the source path.
+
+The tools are **schema-tolerant**: they introspect the actual Ladybug table
+columns once (via ``CALL table_info``) and ``CALL show_tables`` for
+relationships, then build RETURN clauses and traversals from what is present.
+An older database that lacks ``Folder.parent_folder_id`` / ``HAS_SUBFOLDER``
+or the ``description`` / ``summary`` columns is handled gracefully (those
+fields are omitted, folder navigation falls back to flat) instead of raising a
+raw Cypher binder error. Truly-missing structures surface as
+:class:`DocumentGraphError` with a plain-English message.
 """
 
 from __future__ import annotations
@@ -22,6 +31,113 @@ from genai_graph.kg.nodes.document_section import SectionNode
 _DOCUMENT_LABEL = DocumentNode.node_class.__name__
 _SECTION_LABEL = SectionNode.node_class.__name__
 _FOLDER_LABEL = FolderNode.node_class.__name__
+
+# Columns a caller can reasonably expect on each row type. Rows are normalized
+# so every key is present (``None`` when the column does not exist in the DB),
+# which keeps callers and the TUI/CLI from KeyErroing on an older schema.
+_FOLDER_KEYS: tuple[str, ...] = ("folder_id", "parent_folder_id", "name", "kind", "uri", "doc_count")
+_DOC_KEYS: tuple[str, ...] = (
+    "content_hash",
+    "markdown_hash",
+    "filename",
+    "section_count",
+    "token_count",
+    "description",
+    "summary",
+    "path",
+    "folder_id",
+)
+_SECTION_TOC_KEYS: tuple[str, ...] = (
+    "section_id",
+    "parent_section_id",
+    "title",
+    "level",
+    "line_start",
+    "sequence",
+    "token_count",
+    "description",
+    "summary",
+    "summary_source",
+)
+
+# Per-backend introspection caches (keyed by id(backend) so distinct connections
+# don't share stale schemas).
+_TABLE_COL_CACHE: dict[tuple[int, str], set[str]] = {}
+_REL_CACHE: dict[int, set[str]] = {}
+
+
+class DocumentGraphError(Exception):
+    """Raised when the Document Graph cannot answer because required data is missing.
+
+    Carries a plain-English message suitable for surfacing to an agent or a CLI
+    user (e.g. "no Document table — ingest first with `cli docgraph build`").
+    """
+
+
+def _table_columns(backend: KgBackend, table: str) -> set[str]:
+    """Return the set of property names on a node table, introspected via ``table_info``.
+
+    Returns an empty set when the table does not exist (e.g. a fresh DB that has
+    never been ingested) so callers can fall back instead of crashing.
+    """
+    key = (id(backend), table)
+    cached = _TABLE_COL_CACHE.get(key)
+    if cached is not None:
+        return cached
+    try:
+        df = backend.execute_get_as_df(f"CALL table_info('{table}') RETURN *", None, union=False)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("table_info('{}') failed: {}", table, exc)
+        _TABLE_COL_CACHE[key] = set()
+        return set()
+    if df is None or df.empty:
+        _TABLE_COL_CACHE[key] = set()
+        return set()
+    name_col = df["name"] if "name" in df.columns else df.iloc[:, 1]
+    cols = {str(v) for v in name_col}
+    _TABLE_COL_CACHE[key] = cols
+    return cols
+
+
+def _has_relationship(backend: KgBackend, rel_name: str) -> bool:
+    """Return True when a relationship table named *rel_name* exists in the DB."""
+    key = id(backend)
+    cached = _REL_CACHE.get(key)
+    if cached is None:
+        try:
+            df = backend.execute_get_as_df("CALL show_tables() RETURN *", None, union=False)
+            cached = {str(v) for v in (df.values.flatten() if df is not None else [])}
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("show_tables() failed: {}", exc)
+            cached = set()
+        _REL_CACHE[key] = cached
+    return rel_name in cached
+
+
+def _has_table(backend: KgBackend, table: str) -> bool:
+    """Return True when a node/rel table named *table* exists."""
+    return bool(_table_columns(backend, table)) or _has_relationship(backend, table)
+
+
+def _pick(cols: set[str], candidates: tuple[str, ...]) -> tuple[str, ...]:
+    """Return the subset of *candidates* that are present in *cols*, in order."""
+    return tuple(c for c in candidates if c in cols)
+
+
+def _return_fields(backend: KgBackend, table: str, alias: str, candidates: tuple[str, ...]) -> str:
+    """Build a ``alias.col AS col, ...`` fragment from the columns that actually exist."""
+    avail = _pick(_table_columns(backend, table), candidates)
+    if not avail:
+        raise DocumentGraphError(
+            f"The '{table}' table has none of the expected columns ({', '.join(candidates)}). "
+            "The database may not have been ingested as a Document Graph — run `cli docgraph build` first."
+        )
+    return ", ".join(f"{alias}.{c} AS {c}" for c in avail)
+
+
+def _normalize_row(row: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
+    """Ensure every key in *keys* is present on *row* (defaulting to None)."""
+    return {k: row.get(k) for k in keys}
 
 
 def _query_rows(
@@ -76,7 +192,22 @@ def resolve_folder_id(backend: KgBackend, folder_ref: str) -> str | None:
 
 
 def get_folder_path(backend: KgBackend, folder_id: str) -> list[dict[str, Any]]:
-    """Return the ancestor chain (root-first, ``folder_id``-last) for a folder, for breadcrumb display."""
+    """Return the ancestor chain (root-first, ``folder_id``-last) for a folder, for breadcrumb display.
+
+    On a schema without ``Folder.parent_folder_id`` the chain is just the folder
+    itself (folders are stored flat).
+    """
+    cols = _table_columns(backend, _FOLDER_LABEL)
+    if "parent_folder_id" not in cols:
+        rows, _ = _query_rows(
+            backend,
+            f"MATCH (f:{_FOLDER_LABEL} {{folder_id: $id}}) "
+            "RETURN f.folder_id AS folder_id, f.parent_folder_id AS parent_folder_id, f.name AS name, "
+            "f.kind AS kind, f.uri AS uri",
+            {"id": folder_id},
+        )
+        return [_normalize_row(r, _FOLDER_KEYS) for r in rows]
+
     chain: list[dict[str, Any]] = []
     current: str | None = folder_id
     seen: set[str] = set()
@@ -91,7 +222,7 @@ def get_folder_path(backend: KgBackend, folder_id: str) -> list[dict[str, Any]]:
         )
         if not rows:
             break
-        chain.append(rows[0])
+        chain.append(_normalize_row(rows[0], _FOLDER_KEYS))
         current = rows[0]["parent_folder_id"]
     chain.reverse()
     return chain
@@ -100,10 +231,52 @@ def get_folder_path(backend: KgBackend, folder_id: str) -> list[dict[str, Any]]:
 def get_folder_tree(backend: KgBackend, root_folder_id: str | None = None) -> list[dict[str, Any]]:
     """Return the folder hierarchy (subfolders + direct document counts) rooted at *root_folder_id*.
 
-    Each row is `{folder_id, parent_folder_id, name, kind, doc_count}`. When
-    `root_folder_id` is None, returns every top-level source folder (those with
-    no parent) plus their full descendant subtree.
+    Each row is ``{folder_id, parent_folder_id, name, kind, uri, doc_count}``.
+    When ``root_folder_id`` is None, returns every top-level source folder (those
+    with no parent) plus their full descendant subtree.
+
+    On a schema without ``HAS_SUBFOLDER`` the hierarchy is flat: the single root
+    (when given) or every folder, each with its direct document count.
     """
+    if not _has_table(backend, _FOLDER_LABEL):
+        return []
+    cols = _table_columns(backend, _FOLDER_LABEL)
+    folder_fields = ", ".join(
+        f"f.{c} AS {c}" for c in _pick(cols, ("folder_id", "parent_folder_id", "name", "kind", "uri"))
+    )
+    has_subfolder = _has_relationship(backend, "HAS_SUBFOLDER")
+
+    def _with_counts(folder_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        by_id: dict[str, dict[str, Any]] = {}
+        for r in folder_rows:
+            r = _normalize_row(r, _FOLDER_KEYS)
+            r["doc_count"] = 0
+            by_id[r["folder_id"]] = r
+        if by_id and _has_table(backend, _DOCUMENT_LABEL):
+            ids = list(by_id)
+            count_rows, _ = _query_rows(
+                backend,
+                f"MATCH (f:{_FOLDER_LABEL})-[:CONTAINS]->(d:{_DOCUMENT_LABEL}) "
+                "WHERE f.folder_id IN $ids RETURN f.folder_id AS fid, count(d) AS n",
+                {"ids": ids},
+            )
+            for r in count_rows:
+                fid = r["fid"]
+                if fid in by_id:
+                    by_id[fid]["doc_count"] = int(r["n"] or 0)
+        return sorted(by_id.values(), key=lambda r: r["name"] or "")
+
+    if not has_subfolder:
+        if root_folder_id is not None:
+            rows, _ = _query_rows(
+                backend,
+                f"MATCH (f:{_FOLDER_LABEL} {{folder_id: $id}}) RETURN {folder_fields}",
+                {"id": root_folder_id},
+            )
+        else:
+            rows, _ = _query_rows(backend, f"MATCH (f:{_FOLDER_LABEL}) RETURN {folder_fields}")
+        return _with_counts(rows)
+
     if root_folder_id is None:
         root_rows, _ = _query_rows(
             backend, f"MATCH (r:{_FOLDER_LABEL}) WHERE r.parent_folder_id IS NULL RETURN r.folder_id AS folder_id"
@@ -117,15 +290,15 @@ def get_folder_tree(backend: KgBackend, root_folder_id: str | None = None) -> li
         query = f"""
             MATCH (root:{_FOLDER_LABEL} {{folder_id: $root_id}})-[:HAS_SUBFOLDER*0..30]->(f:{_FOLDER_LABEL})
             OPTIONAL MATCH (f)-[:CONTAINS]->(d:{_DOCUMENT_LABEL})
-            RETURN f.folder_id AS folder_id, f.parent_folder_id AS parent_folder_id, f.name AS name,
-                   f.kind AS kind, count(d) AS doc_count
+            RETURN {folder_fields}, count(d) AS doc_count
         """
         rows, _ = _query_rows(backend, query, {"root_id": root_id})
         for row in rows:
+            row = _normalize_row(row, _FOLDER_KEYS)
             row["doc_count"] = int(row.get("doc_count") or 0)
             by_folder_id[row["folder_id"]] = row
 
-    return sorted(by_folder_id.values(), key=lambda r: r["name"])
+    return sorted(by_folder_id.values(), key=lambda r: r["name"] or "")
 
 
 def list_documents(backend: KgBackend, folder_id: str | None = None) -> list[dict[str, Any]]:
@@ -133,58 +306,65 @@ def list_documents(backend: KgBackend, folder_id: str | None = None) -> list[dic
 
     Args:
         folder_id: When given, only return documents under this folder's subtree
-            (the folder itself or any nested subfolder).
+            (the folder itself or any nested subfolder). On a schema without
+            ``HAS_SUBFOLDER``, restricted to the folder's direct documents.
 
     Returns:
-        List of `{content_hash, markdown_hash, filename, section_count, token_count, description,
-        summary, path, folder_id}` dicts.
+        List of ``{content_hash, markdown_hash, filename, section_count, token_count,
+        description, summary, path, folder_id}`` dicts (optional fields are ``None``
+        when absent from the DB).
     """
+    if not _has_table(backend, _DOCUMENT_LABEL):
+        return []
+    fields = _return_fields(backend, _DOCUMENT_LABEL, "d", _DOC_KEYS)
+    order = "ORDER BY d.filename"
+
     if folder_id is None:
-        query = (
-            f"MATCH (d:{_DOCUMENT_LABEL}) "
-            "RETURN d.content_hash AS content_hash, d.markdown_hash AS markdown_hash, d.filename AS filename, "
-            "d.section_count AS section_count, d.token_count AS token_count, "
-            "d.description AS description, d.summary AS summary, "
-            "d.path AS path, d.folder_id AS folder_id ORDER BY d.filename"
-        )
+        query = f"MATCH (d:{_DOCUMENT_LABEL}) RETURN {fields} {order}"
         params: dict[str, Any] = {}
-    else:
+    elif _has_relationship(backend, "HAS_SUBFOLDER"):
         query = f"""
             MATCH (root:{_FOLDER_LABEL} {{folder_id: $folder_id}})-[:HAS_SUBFOLDER*0..30]->(f:{_FOLDER_LABEL})
             MATCH (f)-[:CONTAINS]->(d:{_DOCUMENT_LABEL})
-            RETURN d.content_hash AS content_hash, d.markdown_hash AS markdown_hash, d.filename AS filename,
-                   d.section_count AS section_count, d.token_count AS token_count,
-                   d.description AS description, d.summary AS summary,
-                   d.path AS path, d.folder_id AS folder_id ORDER BY d.filename
+            RETURN {fields} {order}
+        """
+        params = {"folder_id": folder_id}
+    else:
+        query = f"""
+            MATCH (f:{_FOLDER_LABEL} {{folder_id: $folder_id}})-[:CONTAINS]->(d:{_DOCUMENT_LABEL})
+            RETURN {fields} {order}
         """
         params = {"folder_id": folder_id}
 
     rows, _ = _query_rows(backend, query, params)
+    out: list[dict[str, Any]] = []
     for row in rows:
+        row = _normalize_row(row, _DOC_KEYS)
         row["section_count"] = int(row.get("section_count") or 0)
         row["token_count"] = int(row.get("token_count") or 0)
-    return rows
+        out.append(row)
+    return out
 
 
 def get_document(backend: KgBackend, document_id: str) -> dict[str, Any] | None:
-    """Return one Document's full metadata, including `token_count` and `summary`.
+    """Return one Document's full metadata, including ``token_count`` and ``summary``.
 
     Accepts the same references as `get_document_toc`: a content hash (full or
-    prefix), a `markdown_hash`, a filename, or a source path.
+    prefix), a ``markdown_hash``, a filename, or a source path.
     """
+    if not _has_table(backend, _DOCUMENT_LABEL):
+        return None
+    fields = _return_fields(backend, _DOCUMENT_LABEL, "d", _DOC_KEYS)
     query = (
         f"MATCH (d:{_DOCUMENT_LABEL}) "
         "WHERE d.content_hash = $id OR d.content_hash STARTS WITH $id OR d.markdown_hash = $id "
         "OR d.markdown_hash STARTS WITH $id OR d.filename = $id OR d.path = $id "
-        "RETURN d.content_hash AS content_hash, d.markdown_hash AS markdown_hash, d.filename AS filename, "
-        "d.section_count AS section_count, d.token_count AS token_count, "
-        "d.description AS description, d.summary AS summary, "
-        "d.path AS path, d.folder_id AS folder_id LIMIT 1"
+        f"RETURN {fields} LIMIT 1"
     )
     rows, _ = _query_rows(backend, query, {"id": document_id})
     if not rows:
         return None
-    row = rows[0]
+    row = _normalize_row(rows[0], _DOC_KEYS)
     row["section_count"] = int(row.get("section_count") or 0)
     row["token_count"] = int(row.get("token_count") or 0)
     return row
@@ -236,16 +416,22 @@ def get_document_toc(
         query = f"-- No document found matching: {document_id}"
         return (result, query) if return_query else result
 
+    # Document exists but its MarkdownSection table was dropped (e.g. after a partial
+    # drop) — degrade to an empty TOC rather than raising a binder error.
+    if not _has_table(backend, _SECTION_LABEL):
+        result: list[dict[str, Any]] = []
+        query = f"-- No sections table for document: {document_id}"
+        return (result, query) if return_query else result
+
+    fields = _return_fields(backend, _SECTION_LABEL, "s", _SECTION_TOC_KEYS)
     query = f"""
         MATCH (s:{_SECTION_LABEL} {{markdown_hash: $markdown_hash}})
-        RETURN s.section_id AS section_id, s.parent_section_id AS parent_section_id,
-               s.title AS title, s.level AS level, s.line_start AS line_start, s.sequence AS sequence,
-               s.token_count AS token_count, s.description AS description, s.summary AS summary,
-               s.summary_source AS summary_source
+        RETURN {fields}
         ORDER BY s.sequence
     """
-    rows, _ = _query_rows(backend, query, {"markdown_hash": markdown_hash})
-    return (rows, query) if return_query else rows
+    rows, q = _query_rows(backend, query, {"markdown_hash": markdown_hash})
+    rows = [_normalize_row(r, _SECTION_TOC_KEYS) for r in rows]
+    return (rows, q) if return_query else rows
 
 
 def build_toc_tree(
@@ -474,7 +660,7 @@ def search_sections(
             LIMIT $limit
         """
         params: dict[str, Any] = {"keyword": keyword, "limit": limit}
-    else:
+    elif _has_relationship(backend, "HAS_SUBFOLDER"):
         query = f"""
             MATCH (root:{_FOLDER_LABEL} {{folder_id: $folder_id}})-[:HAS_SUBFOLDER*0..30]->(f:{_FOLDER_LABEL})
             MATCH (f)-[:CONTAINS]->(d:{_DOCUMENT_LABEL})
@@ -486,14 +672,32 @@ def search_sections(
             LIMIT $limit
         """
         params = {"keyword": keyword, "limit": limit, "folder_id": folder_id}
-    rows, _ = _query_rows(backend, query, params)
-    return (rows, query) if return_query else rows
+    else:
+        query = f"""
+            MATCH (f:{_FOLDER_LABEL} {{folder_id: $folder_id}})-[:CONTAINS]->(d:{_DOCUMENT_LABEL})
+            MATCH (s:{_SECTION_LABEL} {{markdown_hash: d.markdown_hash}})
+            WHERE s.title CONTAINS $keyword OR s.text CONTAINS $keyword
+            RETURN s.markdown_hash AS markdown_hash, s.section_id AS section_id, s.title AS title,
+                   s.level AS level, s.line_start AS line_start
+            ORDER BY s.markdown_hash, s.line_start
+            LIMIT $limit
+        """
+        params = {"keyword": keyword, "limit": limit, "folder_id": folder_id}
+    rows, q = _query_rows(backend, query, params)
+    return (rows, q) if return_query else rows
 
 
 def _connect(db_path: str) -> KgBackend:
     backend = KuzuBackend()
     backend.connect(db_path)
     return backend
+
+
+def _tool_error(exc: Exception) -> str:
+    """Turn an exception into a concise, agent-friendly tool result string."""
+    if isinstance(exc, DocumentGraphError):
+        return f"Error: {exc}"
+    return f"Error: {type(exc).__name__}: {exc}"
 
 
 def create_document_graph_tools(db_path: str) -> list[BaseTool]:
@@ -503,7 +707,7 @@ def create_document_graph_tools(db_path: str) -> list[BaseTool]:
         db_path: Path to the Ladybug database holding the ingested graph.
 
     Returns:
-        `[list_documents, get_document_toc, get_folder_toc, get_section_content, search_sections]` tools.
+        ``[list_documents, get_document_toc, get_folder_toc, get_section_content, search_sections]`` tools.
     """
 
     @tool("list_documents")
@@ -512,9 +716,9 @@ def create_document_graph_tools(db_path: str) -> list[BaseTool]:
         try:
             rows = list_documents(_connect(db_path))
         except Exception as exc:  # noqa: BLE001
-            return f"Error listing documents: {exc}"
+            return _tool_error(exc)
         if not rows:
-            return "No documents ingested yet."
+            return "No documents ingested yet. Build the graph first with `cli docgraph build`."
         lines = []
         for r in rows:
             line = f"- [{r['content_hash']}] {r['filename']} ({r['section_count']} sections, {r['token_count']} tokens)"
@@ -534,9 +738,13 @@ def create_document_graph_tools(db_path: str) -> list[BaseTool]:
         try:
             backend = _connect(db_path)
             resolved = resolve_folder_id(backend, folder_id) if folder_id else None
+            if folder_id and resolved is None:
+                return (
+                    f"No folder found matching {folder_id!r}. Omit folder_id to list every ingested document."
+                )
             return folder_toc_yaml(backend, resolved)
         except Exception as exc:  # noqa: BLE001
-            return f"Error fetching folder TOC: {exc}"
+            return _tool_error(exc)
 
     @tool("get_document_toc")
     def _get_document_toc(document_id: str, include_summaries: bool = False, max_level: int | None = None) -> str:
@@ -552,7 +760,7 @@ def create_document_graph_tools(db_path: str) -> list[BaseTool]:
                 _connect(db_path), document_id, include_summaries=include_summaries, max_level=max_level
             )
         except Exception as exc:  # noqa: BLE001
-            return f"Error fetching TOC: {exc}"
+            return _tool_error(exc)
 
     @tool("get_section_content")
     def _get_section_content(section_ids: str) -> str:
@@ -561,23 +769,28 @@ def create_document_graph_tools(db_path: str) -> list[BaseTool]:
         try:
             rows = get_section_content(_connect(db_path), ids)
         except Exception as exc:  # noqa: BLE001
-            return f"Error fetching section content: {exc}"
+            return _tool_error(exc)
         if not rows:
             return f"No sections found for ids: {section_ids}"
-        return "\n\n---\n\n".join(f"### [{r['section_id']}] {r['title']}\n\n{r['text']}" for r in rows)  # type: ignore[union-attr]
+        return "\n\n---\n\n".join(f"### [{r['section_id']}] {r['title']}\n\n{r['text']}" for r in rows)
 
     @tool("search_sections")
-    def _search_sections(keyword: str, limit: int = 20) -> str:
-        """Cross-document keyword search over section titles and text (no embeddings)."""
+    def _search_sections(keyword: str, limit: int = 20, folder_id: str | None = None) -> str:
+        """Cross-document keyword search over section titles and text (no embeddings).
+
+        Pass `folder_id` to restrict the search to one folder's subtree.
+        """
         try:
-            rows = search_sections(_connect(db_path), keyword, limit)
+            backend = _connect(db_path)
+            resolved = resolve_folder_id(backend, folder_id) if folder_id else None
+            rows = search_sections(backend, keyword, limit, folder_id=resolved)
         except Exception as exc:  # noqa: BLE001
-            return f"Error searching sections: {exc}"
+            return _tool_error(exc)
         if not rows:
             return f"No sections matched keyword: {keyword!r}"
         return "\n".join(
             f"- [{r['section_id']}] {r['title']} (line {r['line_start']}) — md_hash: {r['markdown_hash']}"
-            for r in rows  # type: ignore[union-attr]
+            for r in rows
         )
 
     return [_get_folder_toc, _get_document_toc, _get_section_content, _search_sections, _list_documents]
