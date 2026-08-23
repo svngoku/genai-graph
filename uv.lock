@@ -2329,7 +2329,7 @@ requires-dist = [
     { name = "fastapi", extras = ["standard"], specifier = ">=0.115.6" },
     { name = "genai-tk", git = "https://github.com/tclatos/genai-tk?branch=main" },
     { name = "genai-tk", extras = ["harnessing"], marker = "extra == 'harnessing'", git = "https://github.com/tclatos/genai-tk?branch=main" },
-    { name = "ladybug", specifier = "==0.16.1" },
+    { name = "ladybug", specifier = ">=0.16.1" },
     { name = "langchain-classic", specifier = ">=1.0.0" },
     { name = "langchain-litellm", specifier = ">=0.3.2" },
     { name = "loguru", specifier = ">=0.7.3" },

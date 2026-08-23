@@ -38,6 +38,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from genai_graph.kg.backend import KgBackend
+from genai_graph.kg.parallel import SharedKuzuParallel
 from genai_graph.kg.query.document_graph_tools import (
     apply_document_summary,
     apply_section_summaries,
@@ -595,49 +596,47 @@ def summarize_document(
     return result
 
 
-def summarize_graph(
-    backend: KgBackend,
-    config: SummarizationConfig | None = None,
+def _summarize_hashes(
+    parallel: SharedKuzuParallel,
+    target_hashes: list[str],
+    hash_to_filename: dict[str, str],
+    config: SummarizationConfig,
     *,
-    folder_id: str | None = None,
-    force: bool = False,
-    dry_run: bool = False,
+    force: bool,
+    dry_run: bool,
+    result: SummarizeGraphResult | None = None,
 ) -> SummarizeGraphResult:
-    """Summarize every ingested document (optionally scoped to one folder's subtree).
+    """Fan `summarize_document` out over `target_hashes` on the shared-DB worker pool.
 
-    Args:
-        backend: Connected `KgBackend`.
-        config: Summarization policy and LLM settings. Defaults applied if omitted.
-        folder_id: When given, only summarize documents under this folder's subtree.
-        force: Re-summarize documents that already have a `summary`.
-        dry_run: Plan only — no LLM calls, no writes.
-
-    Returns:
-        `SummarizeGraphResult` aggregating per-document outcomes.
+    Each worker borrows a backend from *parallel* and summarizes one document, so
+    the slow LLM calls overlap while the fast graph writes stay on disjoint rows
+    (every `markdown_hash` is summarized exactly once). Per-document failures are
+    returned by `SharedKuzuParallel.map` as `Exception` values and folded into
+    `documents_failed`/`warnings`, never aborting the whole run.
     """
-    config = config or SummarizationConfig()
-    result = SummarizeGraphResult()
-    docs = list_documents(backend, folder_id=folder_id)
-    logger.info("Summarizing {} document(s){}...", len(docs), f" under folder {folder_id}" if folder_id else "")
-    for i, doc in enumerate(docs, start=1):
-        logger.info("[{}/{}] {}", i, len(docs), doc["filename"])
-        started = time.monotonic()
-        try:
-            doc_result = summarize_document(backend, doc["markdown_hash"], config, force=force, dry_run=dry_run)
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Failed to summarize {}: {}", doc["filename"], exc)
-            result.warnings.append(f"Failed to summarize {doc['filename']}: {exc}")
-            result.documents_failed += 1
-            continue
+    result = result or SummarizeGraphResult()
+    if not target_hashes:
+        logger.info("Summarize done: nothing to do")
+        return result
 
-        if doc_result.already_summarized:
+    def _worker(backend: KgBackend, markdown_hash: str) -> SummarizeDocumentResult:
+        return summarize_document(backend, markdown_hash, config, force=force, dry_run=dry_run)
+
+    outcomes = parallel.map(_worker, target_hashes)
+    for markdown_hash, outcome in zip(target_hashes, outcomes, strict=True):
+        filename = hash_to_filename.get(markdown_hash, markdown_hash)
+        if isinstance(outcome, Exception):
+            result.documents_failed += 1
+            result.warnings.append(f"Failed to summarize {filename}: {outcome}")
+            logger.error("Failed to summarize {}: {}", filename, outcome)
+            continue
+        if outcome.already_summarized:
             result.documents_skipped += 1
-            logger.info("[{}/{}] {}: already summarized, skipping", i, len(docs), doc["filename"])
+            logger.info("{}: already summarized, skipping", filename)
         else:
             result.documents_processed += 1
-            logger.info("[{}/{}] {}: done ({:.1f}s)", i, len(docs), doc["filename"], time.monotonic() - started)
-        result.total_llm_calls += doc_result.llm_calls
-        result.warnings.extend(f"{doc['filename']}: {w}" for w in doc_result.warnings)
+        result.total_llm_calls += outcome.llm_calls
+        result.warnings.extend(f"{filename}: {w}" for w in outcome.warnings)
 
     logger.info(
         "Summarize done: {} processed, {} skipped, {} failed, {} LLM call(s) total",
@@ -647,3 +646,101 @@ def summarize_graph(
         result.total_llm_calls,
     )
     return result
+
+
+def summarize_graph(
+    db_path: str,
+    config: SummarizationConfig | None = None,
+    *,
+    folder_id: str | None = None,
+    force: bool = False,
+    dry_run: bool = False,
+    workers: int = 1,
+) -> SummarizeGraphResult:
+    """Summarize every ingested document (optionally scoped to one folder's subtree).
+
+    Documents are summarized concurrently across `workers` threads that share one
+    Ladybug ``Database`` (each with its own ``Connection``). Ladybug only allows a
+    single read-write ``Database`` per file in a process, so the fan-out shares it
+    rather than opening one per worker; concurrent writes require
+    ``enable_multi_writes=True`` (set by ``SharedKuzuParallel``) and must touch
+    disjoint rows, which is why each ``markdown_hash`` is summarized exactly once.
+
+    Args:
+        db_path: Path to the (already built) Ladybug Document Graph database.
+        config: Summarization policy and LLM settings. Defaults applied if omitted.
+        folder_id: When given, only summarize documents under this folder's subtree.
+        force: Re-summarize documents that already have a `summary`.
+        dry_run: Plan only — no LLM calls, no writes.
+        workers: Number of documents summarized in parallel (>= 1).
+
+    Returns:
+        `SummarizeGraphResult` aggregating per-document outcomes.
+    """
+    config = config or SummarizationConfig()
+    with SharedKuzuParallel(db_path, max_workers=workers) as parallel:
+        docs = list_documents(parallel.primary, folder_id=folder_id)
+        # Dedupe by markdown_hash: documents sharing content share the same
+        # MarkdownSection/Document rows, so summarizing them concurrently would
+        # write the same rows from two transactions and conflict.
+        hash_to_filename: dict[str, str] = {}
+        target_hashes: list[str] = []
+        for doc in docs:
+            markdown_hash = doc["markdown_hash"]
+            if markdown_hash in hash_to_filename:
+                continue
+            hash_to_filename[markdown_hash] = doc["filename"]
+            target_hashes.append(markdown_hash)
+        scope = f" under folder {folder_id}" if folder_id else ""
+        logger.info("Summarizing {} document(s){}...", len(target_hashes), scope)
+        return _summarize_hashes(parallel, target_hashes, hash_to_filename, config, force=force, dry_run=dry_run)
+
+
+def summarize_documents(
+    db_path: str,
+    document_ids: list[str],
+    config: SummarizationConfig | None = None,
+    *,
+    force: bool = False,
+    dry_run: bool = False,
+    workers: int = 1,
+) -> SummarizeGraphResult:
+    """Summarize an explicit list of documents (by hash, prefix, filename, or path).
+
+    Each reference is resolved to its `markdown_hash` on the shared-DB primary
+    connection, references are de-duplicated by `markdown_hash` (same content = same
+    rows; summarizing it twice concurrently would conflict), and the resolved
+    documents are summarized concurrently across `workers` threads. Unresolved
+    references are recorded as failures with a warning rather than raising.
+
+    Args:
+        db_path: Path to the (already built) Ladybug Document Graph database.
+        document_ids: Document references (content/markdown hash or prefix, filename, path).
+        config: Summarization policy and LLM settings. Defaults applied if omitted.
+        force: Re-summarize documents that already have a `summary`.
+        dry_run: Plan only — no LLM calls, no writes.
+        workers: Number of documents summarized in parallel (>= 1).
+
+    Returns:
+        `SummarizeGraphResult` aggregating per-document outcomes.
+    """
+    config = config or SummarizationConfig()
+    result = SummarizeGraphResult()
+    with SharedKuzuParallel(db_path, max_workers=workers) as parallel:
+        hash_to_filename: dict[str, str] = {}
+        target_hashes: list[str] = []
+        for ref in document_ids:
+            doc = get_document(parallel.primary, ref)
+            if doc is None:
+                result.warnings.append(f"Document not found: {ref}")
+                result.documents_failed += 1
+                continue
+            markdown_hash = doc["markdown_hash"]
+            if markdown_hash in hash_to_filename:
+                continue
+            hash_to_filename[markdown_hash] = doc["filename"]
+            target_hashes.append(markdown_hash)
+        logger.info("Summarizing {} document(s)...", len(target_hashes))
+        return _summarize_hashes(
+            parallel, target_hashes, hash_to_filename, config, force=force, dry_run=dry_run, result=result
+        )

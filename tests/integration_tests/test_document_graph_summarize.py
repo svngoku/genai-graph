@@ -100,6 +100,27 @@ def fake_llm(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("genai_graph.kg.document_graph.summarize._call_llm", _fake_call_llm)
 
 
+@pytest.fixture
+def ingested_db_path(temp_db_path: str, md_corpus: Path) -> str:
+    """Ingest the corpus, close the backend, and yield just the db path.
+
+    ``summarize_graph`` opens its own Ladybug ``Database`` on the path, so the
+    ingest-time backend must be closed first to keep a single ``Database`` object
+    on the file during the parallel run.
+    """
+    backend = KuzuBackend()
+    backend.connect(temp_db_path)
+    ingest_document_graph(backend, DocumentGraphFactory(sources=[str(md_corpus)]))
+    backend.close()
+    return temp_db_path
+
+
+def _open_backend(db_path: str) -> KuzuBackend:
+    backend = KuzuBackend()
+    backend.connect(db_path)
+    return backend
+
+
 @pytest.mark.integration
 @pytest.mark.usefixtures("fake_llm")
 class TestSummarizeDocument:
@@ -172,12 +193,19 @@ class TestSummarizeDocument:
 @pytest.mark.integration
 @pytest.mark.usefixtures("fake_llm")
 class TestSummarizeGraph:
-    def test_summarizes_every_document_then_skips_on_rerun(self, ingested_backend: KuzuBackend) -> None:
-        result = summarize_graph(ingested_backend)
+    def test_summarizes_every_document_then_skips_on_rerun(self, ingested_db_path: str) -> None:
+        result = summarize_graph(ingested_db_path)
         assert result.documents_processed == 2
         assert result.documents_failed == 0
 
-        assert summarize_graph(ingested_backend).documents_skipped == 2
+        assert summarize_graph(ingested_db_path).documents_skipped == 2
+
+    def test_workers_4_matches_workers_1_counts(self, ingested_db_path: str) -> None:
+        sequential = summarize_graph(ingested_db_path, workers=1, force=True)
+        parallel = summarize_graph(ingested_db_path, workers=4, force=True)
+        assert parallel.documents_processed == sequential.documents_processed == 2
+        assert parallel.documents_failed == sequential.documents_failed == 0
+        assert parallel.total_llm_calls == sequential.total_llm_calls
 
 
 @pytest.mark.integration
@@ -213,26 +241,34 @@ class TestTocYaml:
         verbose = yaml.safe_load(document_toc_yaml(ingested_backend, "alpha.md", include_summaries=True))
         assert verbose["sections"][0]["summary"].startswith("Summary of ")
 
-    def test_folder_toc_yaml_lists_documents_without_sections(
-        self, ingested_backend: KuzuBackend, fake_llm: None
-    ) -> None:
-        summarize_graph(ingested_backend)
-        payload = yaml.safe_load(folder_toc_yaml(ingested_backend, None))
+    def test_folder_toc_yaml_lists_documents_without_sections(self, ingested_db_path: str, fake_llm: None) -> None:
+        summarize_graph(ingested_db_path)
+        backend = _open_backend(ingested_db_path)
+        try:
+            payload = yaml.safe_load(folder_toc_yaml(backend, None))
+        finally:
+            backend.close()
 
         assert {d["name"] for d in payload["documents"]} == {"alpha.md", "beta.md"}
         for entry in payload["documents"]:
             assert "toc" not in entry  # orientation view: no sections inlined
             assert entry["description"].startswith("Description of ")
 
-    def test_folder_toc_yaml_can_inline_sections(self, ingested_backend: KuzuBackend, fake_llm: None) -> None:
-        summarize_graph(ingested_backend)
-        payload = yaml.safe_load(folder_toc_yaml(ingested_backend, None, include_sections=True))
+    def test_folder_toc_yaml_can_inline_sections(self, ingested_db_path: str, fake_llm: None) -> None:
+        summarize_graph(ingested_db_path)
+        backend = _open_backend(ingested_db_path)
+        try:
+            payload = yaml.safe_load(folder_toc_yaml(backend, None, include_sections=True))
+        finally:
+            backend.close()
         assert all("toc" in entry for entry in payload["documents"])
 
-    def test_folder_toc_is_much_smaller_than_the_sectioned_view(
-        self, ingested_backend: KuzuBackend, fake_llm: None
-    ) -> None:
-        summarize_graph(ingested_backend)
-        compact = folder_toc_yaml(ingested_backend, None)
-        full = folder_toc_yaml(ingested_backend, None, include_sections=True, include_summaries=True)
+    def test_folder_toc_is_much_smaller_than_the_sectioned_view(self, ingested_db_path: str, fake_llm: None) -> None:
+        summarize_graph(ingested_db_path)
+        backend = _open_backend(ingested_db_path)
+        try:
+            compact = folder_toc_yaml(backend, None)
+            full = folder_toc_yaml(backend, None, include_sections=True, include_summaries=True)
+        finally:
+            backend.close()
         assert len(compact) < len(full) / 2

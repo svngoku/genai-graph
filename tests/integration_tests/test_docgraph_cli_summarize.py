@@ -17,7 +17,7 @@ from typer.testing import CliRunner
 from genai_graph.core.commands_docgraph import DocGraphCommands
 from genai_graph.kg.backend import KuzuBackend
 from genai_graph.kg.document_graph.ingest import ingest_document_graph
-from genai_graph.kg.document_graph.summarize import DocumentIndex, SectionEntry, SummarizationConfig
+from genai_graph.kg.document_graph.summarize import DocumentIndex, SectionEntry
 from genai_graph.kg.factories.document_graph_factory import DocumentGraphFactory
 
 DOC = """# Guide
@@ -40,6 +40,20 @@ def ingested_db(temp_db_path: str, tmp_path: Path) -> str:
     backend = KuzuBackend()
     backend.connect(temp_db_path)
     ingest_document_graph(backend, DocumentGraphFactory(sources=[str(tmp_path)]))
+    # The CLI opens its own Ladybug Database on this path; close the ingest
+    # backend so only one Database object holds the file during the run.
+    backend.close()
+    return temp_db_path
+
+
+@pytest.fixture
+def ingested_two_doc_db(temp_db_path: str, tmp_path: Path) -> str:
+    (tmp_path / "alpha.md").write_text(DOC.format(filler="Alpha setup notes. " * 60), encoding="utf-8")
+    (tmp_path / "beta.md").write_text("# Beta\n\n## Overview\n\nShort beta doc.\n", encoding="utf-8")
+    backend = KuzuBackend()
+    backend.connect(temp_db_path)
+    ingest_document_graph(backend, DocumentGraphFactory(sources=[str(tmp_path)]))
+    backend.close()
     return temp_db_path
 
 
@@ -98,18 +112,43 @@ def test_summarize_cli_llm_max_tokens_option_is_threaded_through(
 
 
 @pytest.mark.integration
-def test_summarize_cli_summary_min_tokens_option_is_threaded_through(
-    ingested_db: str, monkeypatch: pytest.MonkeyPatch
+def test_summarize_cli_multiple_documents_run_in_parallel(
+    ingested_two_doc_db: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    seen: list[SummarizationConfig] = []
-
-    def fake_call_llm(*, config: SummarizationConfig, **kwargs) -> DocumentIndex:
-        seen.append(config)
-        return _index_for(kwargs["plans"])
+    def fake_call_llm(*, plans: list, **kwargs) -> DocumentIndex:
+        return _index_for(plans)
 
     monkeypatch.setattr("genai_graph.kg.document_graph.summarize._call_llm", fake_call_llm)
 
-    result = CliRunner().invoke(_cli_app(), ["docgraph", "summarize", "--db", ingested_db, "--summary-min-tokens", "5"])
+    result = CliRunner().invoke(
+        _cli_app(),
+        [
+            "docgraph",
+            "summarize",
+            "--db",
+            ingested_two_doc_db,
+            "--document",
+            "alpha.md",
+            "--document",
+            "beta.md",
+            "--workers",
+            "2",
+        ],
+    )
 
     assert result.exit_code == 0, result.output
-    assert seen[0].summary_min_tokens == 5
+    assert "Processed" in result.output
+    # Both documents summarized with no failures or warnings.
+    assert "⚠" not in result.output
+
+
+@pytest.mark.integration
+def test_summarize_cli_workers_option_is_accepted(ingested_db: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_call_llm(*, plans: list, **kwargs) -> DocumentIndex:
+        return _index_for(plans)
+
+    monkeypatch.setattr("genai_graph.kg.document_graph.summarize._call_llm", fake_call_llm)
+
+    result = CliRunner().invoke(_cli_app(), ["docgraph", "summarize", "--db", ingested_db, "--workers", "3"])
+
+    assert result.exit_code == 0, result.output

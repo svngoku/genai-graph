@@ -205,15 +205,50 @@ class KuzuBackend(KgBackend):
         self.db: Any = None
         self.conn: Any = None
 
-    def connect(self, connection_string: str) -> None:
-        """Connect to Ladybug database."""
+    def connect(self, connection_string: str, *, enable_multi_writes: bool = False) -> None:
+        """Connect to a Ladybug database file, owning the underlying ``Database``.
+
+        Opens a fresh ``ladybug.Database`` plus one ``Connection`` and loads the
+        vector extension. Use ``attach`` instead when several workers must share
+        a single ``Database`` (the only shape Ladybug allows for concurrent
+        writers within one process).
+
+        Args:
+            connection_string: Path to the ``.lbdb`` file (or ``:memory:``).
+            enable_multi_writes: Forwarded to ``ladybug.Database``. Set ``True``
+                only when concurrent write transactions will run against this
+                same ``Database`` object (e.g. a shared-DB worker pool); with the
+                default ``False`` Ladybug rejects concurrent write transactions
+                with "Only one write transaction at a time is allowed".
+        """
         import ladybug
 
-        self.db = ladybug.Database(connection_string)
+        self.db = ladybug.Database(connection_string, enable_multi_writes=enable_multi_writes)
         self.conn = ladybug.Connection(self.db)
         # Ensure the vector extension is loaded so tables with vector indexes
         # can accept inserts without a "extension is not loaded" binder error.
         self.ensure_vector_extension()
+
+    def attach(self, database: Any, *, num_threads: int = 0) -> None:
+        """Reuse an already-open ``ladybug.Database`` with a fresh ``Connection``.
+
+        Unlike ``connect``, this does **not** create a new ``Database`` object —
+        Ladybug permits only one read-write ``Database`` per file in a process, so
+        worker threads that need to write concurrently must all share one and each
+        take their own ``Connection`` from it. The vector extension is intentionally
+        **not** loaded here: attached workers are meant for plain Cypher work (the
+        summarize path), and loading it on every worker is wasteful. Callers that
+        need vector operations on an attached backend can run ``ensure_vector_extension``
+        themselves.
+
+        Args:
+            database: An existing, open ``ladybug.Database`` object.
+            num_threads: Per-connection query thread cap (0 = unlimited).
+        """
+        import ladybug
+
+        self.db = database
+        self.conn = ladybug.Connection(database, num_threads=num_threads)
 
     def execute(self, query: str, parameters: dict[str, Any] | None = None) -> Any:
         """Execute a Cypher query on Ladybug."""

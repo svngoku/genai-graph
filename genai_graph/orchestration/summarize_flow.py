@@ -4,11 +4,19 @@ Wraps `genai_graph.kg.document_graph.summarize.summarize_graph` so it can be
 referenced by dotted path from a genai-tk workflow YAML (`run:` / `uses:`),
 exactly like `document_graph_flow` or `kg_create_step`.
 
-Runs through a single graph-backend connection (like `document_graph_flow`) —
-the Ladybug/Kuzu file backing a Document Graph is not proven safe for
-concurrent writers, so documents are summarized one at a time within the task
-rather than fanned out across parallel Prefect tasks that would each open
-their own connection.
+Concurrency model
+-----------------
+Documents are summarized concurrently across ``workers`` threads that share a
+single Ladybug ``Database`` (each thread its own ``Connection``) — see
+``genai_graph.kg.parallel.SharedKuzuParallel``. Ladybug is embedded: only one
+read-write ``Database`` may exist per file in a process, but multiple
+``Connection``s from that one ``Database`` issue concurrent read and write
+transactions safely as long as they touch disjoint rows, which per-document
+summarization does (each ``markdown_hash`` is summarized exactly once). This
+stays a single Prefect task with internal thread parallelism, not a fan-out of
+per-document Prefect tasks (those would each open their own ``Database`` and
+race). The Ladybug REST API server is only needed for multi-*process* access,
+which is not the case here.
 """
 
 from __future__ import annotations
@@ -30,17 +38,14 @@ def _summarize_graph_task(
     llm_max_tokens: int | None,
     force: bool,
     dry_run: bool,
+    workers: int,
 ) -> dict[str, Any]:
-    from genai_graph.kg.backend import KuzuBackend
     from genai_graph.kg.document_graph.summarize import SummarizationConfig, summarize_graph
-
-    backend = KuzuBackend()
-    backend.connect(db_path)
 
     config = SummarizationConfig(
         llm=llm, max_level=max_level, summary_min_tokens=summary_min_tokens, llm_max_tokens=llm_max_tokens
     )
-    result = summarize_graph(backend, config, folder_id=folder_id, force=force, dry_run=dry_run)
+    result = summarize_graph(db_path, config, folder_id=folder_id, force=force, dry_run=dry_run, workers=workers)
     return result.model_dump()
 
 
@@ -55,6 +60,7 @@ def summarize_document_graph_flow(
     llm_max_tokens: int | None = None,
     force: bool = False,
     dry_run: bool = False,
+    workers: int = 4,
 ) -> dict[str, Any]:
     """Summarize every ingested document's sections (and whole-document abstract).
 
@@ -70,6 +76,7 @@ def summarize_document_graph_flow(
         force: Re-summarize documents that already have a `summary`.
         dry_run: Compute the plan (selection, batching, warnings) without calling the
             LLM or writing to the graph.
+        workers: Number of documents summarized in parallel (shared-DB thread pool).
 
     Returns:
         Dict with `db_path`, `documents_processed`, `documents_skipped`,
@@ -84,6 +91,7 @@ def summarize_document_graph_flow(
         llm_max_tokens=llm_max_tokens,
         force=force,
         dry_run=dry_run,
+        workers=workers,
     )
     return {"db_path": db_path, **result}
 
@@ -99,6 +107,7 @@ def document_graph_summarize_step(
     llm_max_tokens: int | None = None,
     force: bool = False,
     dry_run: bool = False,
+    workers: int = 4,
 ) -> dict[str, Any]:
     """Workflow-engine wrapper around `summarize_document_graph_flow` (see its docstring)."""
     return summarize_document_graph_flow(
@@ -110,4 +119,5 @@ def document_graph_summarize_step(
         llm_max_tokens=llm_max_tokens,
         force=force,
         dry_run=dry_run,
+        workers=workers,
     )

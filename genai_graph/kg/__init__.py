@@ -26,6 +26,7 @@ from genai_graph.kg.backend import (
     create_in_memory_backend,
 )
 from genai_graph.kg.manager import KgManager, get_kg_manager
+from genai_graph.kg.parallel import SharedKuzuParallel
 
 __all__ = [
     "KgManager",
@@ -35,4 +36,5 @@ __all__ = [
     "create_backend",
     "create_backend_from_config",
     "create_in_memory_backend",
+    "SharedKuzuParallel",
 ]

@@ -117,14 +117,22 @@ semantics.
 Graph so an agent can navigate it without reading full text:
 
 ```python
-from genai_graph.kg.backend import KuzuBackend
 from genai_graph.kg.document_graph.summarize import SummarizationConfig, summarize_graph
 
-backend = KuzuBackend()
-backend.connect("./data/kg/tree.db")
-
-result = summarize_graph(backend, SummarizationConfig(summary_min_tokens=800))
+# summarize_graph opens its own Ladybug Database and shares it across worker
+# threads (each document's rows are disjoint, so writes don't conflict). Pass
+# the db path and a worker count — not a backend.
+result = summarize_graph(
+    "./data/kg/tree.db",
+    SummarizationConfig(summary_min_tokens=800),
+    workers=4,
+)
 ```
+
+For an explicit document list (by hash, prefix, or filename), use
+`summarize_documents(db_path, document_ids, config, *, force=False, dry_run=False,
+workers=1)`; references sharing a `markdown_hash` are de-duplicated so the same
+rows are never written from two concurrent transactions.
 
 **Two fields, two jobs.** `description` is one plain-text sentence and is always
 present — it is the *routing* signal an agent scans to choose a section, and it must
@@ -169,12 +177,15 @@ skip a document that already has every section described unless `force=True`, an
 `dry_run=True` computes the plan (selection, batching, warnings) without calling the
 LLM or writing to the graph.
 
-A run streams progress via loguru as it happens (`[i/N]` per-document counters,
-per-batch "calling LLM"/"done (Xs)", retries and failures logged immediately) —
-it does not go silent until a final summary table, even across many documents.
+A run streams progress via loguru as it happens — per-batch "calling LLM"/"done
+(Xs)" lines from each worker, retries and failures logged immediately, and a final
+aggregate summary. With `workers > 1` documents complete in a nondeterministic
+order, so the old sequential `[i/N]` per-document counter is gone, but no run goes
+silent until the final summary table, even across many documents.
 
 ```bash
 cli docgraph summarize --db ./data/kg/tree.db                          # summarize everything
+cli docgraph summarize --db ./data/kg/tree.db --document guide.md --document overview.md --workers 4
 cli docgraph summarize --db ./data/kg/tree.db --document guide.md --dry-run
 cli docgraph summarize --db ./data/kg/tree.db --llm gpt_4o_mini@edenai --force
 cli docgraph summarize --db ./data/kg/tree.db --summary-min-tokens 400 # more sections get a paragraph

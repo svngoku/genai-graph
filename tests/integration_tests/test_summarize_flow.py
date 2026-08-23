@@ -45,10 +45,13 @@ def test_summarize_flow_end_to_end(temp_db_path: str, tmp_path: Path, monkeypatc
     backend = KuzuBackend()
     backend.connect(temp_db_path)
     ingest_document_graph(backend, DocumentGraphFactory(sources=[str(tmp_path)]))
+    # The flow opens its own Ladybug Database on temp_db_path; close the ingest
+    # backend first so only one Database object holds the file during the run.
+    backend.close()
 
     monkeypatch.setattr("genai_graph.kg.document_graph.summarize._call_llm", _fake_call_llm)
 
-    result = summarize_document_graph_flow(temp_db_path)
+    result = summarize_document_graph_flow(temp_db_path, workers=2)
 
     assert result["documents_processed"] == 1
     assert result["documents_failed"] == 0

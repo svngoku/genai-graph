@@ -76,16 +76,32 @@ D is built once.
 
 ### Concurrency Model
 
-**Ladybug constraint:** Ladybug is an embedded database with a single-writer lock.
-Multiple threads cannot write simultaneously.
+**Ladybug constraint:** Ladybug is an embedded database — only **one read-write
+`Database` object** may exist per file in a process. However, multiple
+`Connection`s created from that *single shared* `Database` may issue **concurrent
+read and write transactions safely**: the transaction manager inside the shared
+`Database` serializes them correctly, as long as they touch **disjoint rows**. Two
+transactions writing the *same* row raise a write-write conflict. Concurrent write
+transactions additionally require `Database(..., lady=True)`;
+without it Ladybug rejects a second concurrent write with "Only one write
+transaction at a time is allowed". (This is why each task cannot simply open its
+own `KuzuBackend`/`Database` and fan out — those would be separate `Database`
+objects on one file, which races and loses data. Multi-*process* access to one
+file is a different problem and would need Ladybug's REST API server; the pipeline
+is single-process and does not.)
+
+The reusable in-process primitive for disjoint-row fan-out is
+`genai_graph.kg.parallel.SharedKuzuParallel` — one shared `Database` plus a pool of
+worker `Connection`s driven by a `ThreadPoolExecutor`.
 
 The pipeline uses `ThreadPoolTaskRunner(max_workers=4)`:
 
 | Phase | Concurrency | Reason |
 |-------|-------------|--------|
 | Import | Serial | Each import may trigger a sub-flow that writes to Ladybug |
-| Schema creation | Serial | Writes to Ladybug catalog |
-| Ingestion | Serial (per-bundle) | Ladybug single-writer constraint |
+| Schema creation | Serial | Mutates the shared Ladybug catalog |
+| Ingestion | Serial (per-bundle) | Bundles mutate shared catalog/schema and overlap on shared rows |
+| **Summarization** | **Parallel** (per-document) | Each document's `MarkdownSection`/`Document` rows are disjoint; shares one `Database` via `SharedKuzuParallel` |
 | **Export** | **Parallel** | Read-only tasks — no DB mutation |
 
 The `ParquetCollector` (which accumulates DataFrames during ingestion) is **thread-safe**

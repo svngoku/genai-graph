@@ -82,6 +82,20 @@ def _resolve_folder_ref_or_exit(backend: Any, folder_ref: str | None) -> str | N
     return folder_id
 
 
+def _print_summarize_result_table(csl: Console, title: str, graph_result: Any) -> None:
+    """Render the aggregated `SummarizeGraphResult` metrics + warnings."""
+    table = Table(title=title)
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", style="white")
+    table.add_row("Processed", str(graph_result.documents_processed))
+    table.add_row("Skipped (already summarized)", str(graph_result.documents_skipped))
+    table.add_row("Failed", str(graph_result.documents_failed))
+    table.add_row("LLM calls", str(graph_result.total_llm_calls))
+    csl.print(table)
+    for w in graph_result.warnings:
+        csl.print(f"[yellow]⚠ {w}[/yellow]")
+
+
 class DocGraphCommands(CliTopCommand):
     """Commands for building and navigating a Document Graph."""
 
@@ -448,8 +462,10 @@ class DocGraphCommands(CliTopCommand):
                 typer.Option("--folder", help="Only summarize documents under this folder's subtree."),
             ] = None,
             document: Annotated[
-                str | None,
-                typer.Option("--document", help="Only summarize this one document (hash, prefix, or filename)."),
+                list[str] | None,
+                typer.Option(
+                    "--document", "--doc", help="Only summarize these documents (hash, prefix, filename). Repeatable."
+                ),
             ] = None,
             db_path: Annotated[
                 str | None,
@@ -486,20 +502,26 @@ class DocGraphCommands(CliTopCommand):
             dry_run: Annotated[
                 bool, typer.Option("--dry-run", help="Show the summarization plan without calling the LLM.")
             ] = False,
+            workers: Annotated[
+                int, typer.Option("--workers", help="Number of documents summarized in parallel (shared-DB threads).")
+            ] = 4,
         ) -> None:
             """Generate section and document summaries for the Document Graph.
 
             Examples:
                 cli docgraph summarize --db ./data/kg/tree.db
+                cli docgraph summarize --document alpha.md --document beta.md --workers 4 --force
                 cli docgraph summarize --document alpha.md --llm gpt_4o_mini@edenai --dry-run
                 cli docgraph summarize --db ./data/kg/tree.db --llm-max-tokens 32000  # reasoning model ran out of output tokens
             """
             db_path = _resolve_db_path(db_path)
             from genai_graph.kg.backend import KuzuBackend
-            from genai_graph.kg.document_graph.summarize import SummarizationConfig, summarize_document, summarize_graph
+            from genai_graph.kg.document_graph.summarize import (
+                SummarizationConfig,
+                summarize_documents,
+                summarize_graph,
+            )
 
-            backend = KuzuBackend()
-            backend.connect(db_path)
             config = SummarizationConfig(
                 llm=llm,
                 max_level=max_level,
@@ -508,31 +530,26 @@ class DocGraphCommands(CliTopCommand):
             )
 
             if document:
-                result = summarize_document(backend, document, config, force=force, dry_run=dry_run)
-                table = Table(title=f"Summarize — {document}" + (" (dry run)" if dry_run else ""))
-                table.add_column("Metric", style="cyan")
-                table.add_column("Value", style="white")
-                table.add_row("Already summarized", str(result.already_summarized))
-                table.add_row("Sections described", str(result.sections_described))
-                table.add_row("Sections summarized", str(result.sections_summarized))
-                table.add_row("LLM calls", str(result.llm_calls))
-                console.print(table)
-                for w in result.warnings:
-                    console.print(f"[yellow]⚠ {w}[/yellow]")
+                graph_result = summarize_documents(
+                    db_path, document, config, force=force, dry_run=dry_run, workers=workers
+                )
+                title = "Document Graph — Summarize Result" + (" (dry run)" if dry_run else "")
+                _print_summarize_result_table(console, title, graph_result)
                 return
 
-            folder_id = _resolve_folder_ref_or_exit(backend, folder)
-            graph_result = summarize_graph(backend, config, folder_id=folder_id, force=force, dry_run=dry_run)
-            table = Table(title="Document Graph — Summarize Result" + (" (dry run)" if dry_run else ""))
-            table.add_column("Metric", style="cyan")
-            table.add_column("Value", style="white")
-            table.add_row("Processed", str(graph_result.documents_processed))
-            table.add_row("Skipped (already summarized)", str(graph_result.documents_skipped))
-            table.add_row("Failed", str(graph_result.documents_failed))
-            table.add_row("LLM calls", str(graph_result.total_llm_calls))
-            console.print(table)
-            for w in graph_result.warnings:
-                console.print(f"[yellow]⚠ {w}[/yellow]")
+            # No --document: resolve an optional --folder ref to a folder_id with a short-lived
+            # connection, then fan out over the folder (or the whole graph) on the shared-DB pool.
+            backend = KuzuBackend()
+            backend.connect(db_path)
+            try:
+                folder_id = _resolve_folder_ref_or_exit(backend, folder)
+            finally:
+                backend.close()
+            graph_result = summarize_graph(
+                db_path, config, folder_id=folder_id, force=force, dry_run=dry_run, workers=workers
+            )
+            title = "Document Graph — Summarize Result" + (" (dry run)" if dry_run else "")
+            _print_summarize_result_table(console, title, graph_result)
 
         @cli_app.command("cat")
         def cat(
@@ -691,8 +708,7 @@ class DocGraphCommands(CliTopCommand):
             query: Annotated[
                 str | None,
                 typer.Argument(
-                    help="Question to answer by navigating the Document Graph "
-                    "(omit with --chat for interactive mode)."
+                    help="Question to answer by navigating the Document Graph (omit with --chat for interactive mode)."
                 ),
             ] = None,
             profile: Annotated[
@@ -721,12 +737,8 @@ class DocGraphCommands(CliTopCommand):
             recursion_limit: Annotated[
                 int, typer.Option("--recursion-limit", help="Max LangGraph steps per turn.")
             ] = 120,
-            chat: Annotated[
-                bool, typer.Option("--chat", help="Interactive multi-turn REPL (memory enabled).")
-            ] = False,
-            trace: Annotated[
-                bool, typer.Option("--trace", help="Print graph node trace lines.")
-            ] = False,
+            chat: Annotated[bool, typer.Option("--chat", help="Interactive multi-turn REPL (memory enabled).")] = False,
+            trace: Annotated[bool, typer.Option("--trace", help="Print graph node trace lines.")] = False,
         ) -> None:
             """Run a deep agent that navigates the Document Graph to answer a query.
 
@@ -768,16 +780,14 @@ class DocGraphCommands(CliTopCommand):
                         from genai_tk.agents.harness.chat_repl import run_chat_repl
 
                         console.print(
-                            f"[cyan]Document Graph agent ({profile}) — interactive mode. "
-                            "Type /quit to exit.[/cyan]\n"
+                            f"[cyan]Document Graph agent ({profile}) — interactive mode. Type /quit to exit.[/cyan]\n"
                         )
                         await run_chat_repl(harness, initial_query=query, show_trace=trace)
                         return
 
                     if not query:
                         console.print(
-                            "[red]A query is required in one-shot mode "
-                            "(or use --chat for interactive mode).[/red]"
+                            "[red]A query is required in one-shot mode (or use --chat for interactive mode).[/red]"
                         )
                         raise typer.Exit(1)
 
