@@ -7,6 +7,7 @@ referenced by dotted path from a genai-tk workflow YAML (`run:` /
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from genai_tk.workflow.registry import workflow
@@ -15,6 +16,26 @@ from prefect import flow
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+
+def _resolve_build_llm(llm: str | None) -> str | None:
+    """Resolve a `--llm` value to a concrete LLM id, or None for the algo path.
+
+    A value with `@` is a literal id (``name@provider``); any other non-empty
+    value is treated as a config tag resolved via ``kg_build.llms.<tag>``
+    (e.g. ``default``, ``flash``), falling back to ``kg_build.llms.default``.
+    """
+    if llm is None:
+        return None
+    if "@" in llm:
+        return llm
+    from genai_tk.config_mgmt.config_mngr import global_config
+
+    cfg = global_config()
+    resolved = cfg.get_str(f"kg_build.llms.{llm}", default=None)
+    if resolved:
+        return resolved
+    return cfg.get_str("kg_build.llms.default", default=None)
 
 
 @flow(name="document_graph")
@@ -27,6 +48,12 @@ def document_graph_flow(
     recursive: bool = True,
     force_stage: str | None = None,
     delete_first: bool = False,
+    llm: str | None = None,
+    llm_max_tokens: int | None = None,
+    summary_min_tokens: int = 800,
+    outline_cache_dir: str | None = None,
+    workers: int = 4,
+    context_safety_ratio: float = 0.9,
 ) -> dict[str, Any]:
     """Build (or update) a Document Graph at *db_path*.
 
@@ -42,46 +69,87 @@ def document_graph_flow(
         delete_first: Drop the Section tables before ingesting (full reset of the
             document graph; the shared Document table is preserved). Implies
             `force_stage="graph"` — sections are rebuilt for every document.
+        llm: LLM id (``name@provider``) or config tag (e.g. ``default``/``flash``)
+            enabling the LLM build path: a flash model discovers each document's
+            structure and summarizes its sections in one call. None (default) keeps
+            the fast algorithmic-only path. See ``kg_build.llms.*`` config tags.
+        llm_max_tokens: Explicit max output tokens for the outline call; raise for
+            reasoning models that exhaust their completion budget.
+        summary_min_tokens: Prompt guidance for what counts as a "substantial"
+            section worth a fuller summary.
+        outline_cache_dir: Directory for the content-addressed outline JSON cache.
+            Defaults to ``<db_path stem>_outlines``.
+        workers: Parallelism for the outline pre-pass (and LLM calls).
+        context_safety_ratio: Degrade a document to algorithmic parsing (no LLM
+            call, no summaries) when its token count exceeds this fraction of the
+            model's context window.
 
     Returns:
         Dict with `db_path`, `documents_processed`, `documents_skipped`,
-        `documents_failed`, `sections_created`, `relationships_created`,
-        `warnings`.
+        `documents_failed`, `sections_created`, `sections_summarized`,
+        `relationships_created`, `files_degraded`, `warnings`.
     """
     from genai_tk.workflow.force import ForceStage, stage_active
 
     from genai_graph.kg.backend import KuzuBackend
     from genai_graph.kg.document_graph.ingest import drop_document_graph, ingest_document_graph
+    from genai_graph.kg.document_graph.outline_extract import OutlineConfig
     from genai_graph.kg.factories.document_graph_factory import DocumentGraphFactory
 
     backend = KuzuBackend()
     backend.connect(db_path)
+    try:
+        if delete_first:
+            logger.info("Dropping existing Document Graph tables at {}", db_path)
+            drop_document_graph(backend)
 
-    if delete_first:
-        logger.info("Dropping existing Document Graph tables at {}", db_path)
-        drop_document_graph(backend)
+        resolved_llm = _resolve_build_llm(llm)
+        outline_config: OutlineConfig | None = None
+        if resolved_llm is not None:
+            cache_root = outline_cache_dir or str(Path(db_path).with_suffix("")) + "_outlines"
+            outline_config = OutlineConfig(
+                llm=resolved_llm,
+                llm_max_tokens=llm_max_tokens,
+                summary_min_tokens=summary_min_tokens,
+                cache_root=cache_root,
+                context_safety_ratio=context_safety_ratio,
+            )
 
-    factory = DocumentGraphFactory(
-        sources=sources,
-        include=include or ["*.md"],
-        exclude=exclude or [],
-        recursive=recursive,
-    )
+        factory = DocumentGraphFactory(
+            sources=sources,
+            include=include or ["*.md"],
+            exclude=exclude or [],
+            recursive=recursive,
+            outline_config=outline_config,
+        )
 
-    # Dropping the Section tables leaves the Document nodes behind, so sections must be
-    # rebuilt for them — otherwise the hash-based skip check makes the reset a no-op.
-    force = delete_first or stage_active(force_stage, ForceStage.graph)
-    result = ingest_document_graph(backend, factory, force=force)
+        # The pre-pass warms the content-addressed outline cache in parallel (no DB),
+        # so the subsequent ingest reads each outline from disk without an LLM call.
+        files_degraded = 0
+        outline_warnings: list[str] = []
+        if outline_config is not None:
+            stats = factory.extract_outlines(workers=workers)
+            files_degraded = stats.degraded_count
+            outline_warnings = list(stats.warnings)
 
-    return {
-        "db_path": db_path,
-        "documents_processed": result.documents_processed,
-        "documents_skipped": result.documents_skipped,
-        "documents_failed": result.documents_failed,
-        "sections_created": result.sections_created,
-        "relationships_created": result.relationships_created,
-        "warnings": result.warnings,
-    }
+        # Dropping the Section tables leaves the Document nodes behind, so sections must be
+        # rebuilt for them — otherwise the hash-based skip check makes the reset a no-op.
+        force = delete_first or stage_active(force_stage, ForceStage.graph)
+        result = ingest_document_graph(backend, factory, force=force)
+
+        return {
+            "db_path": db_path,
+            "documents_processed": result.documents_processed,
+            "documents_skipped": result.documents_skipped,
+            "documents_failed": result.documents_failed,
+            "sections_created": result.sections_created,
+            "sections_summarized": result.sections_summarized,
+            "relationships_created": result.relationships_created,
+            "files_degraded": files_degraded,
+            "warnings": [*outline_warnings, *result.warnings],
+        }
+    finally:
+        backend.close()
 
 
 @workflow(name="document_graph_build", description="Build a Document Graph from a corpus")
@@ -94,6 +162,12 @@ def document_graph_build_step(
     recursive: bool = True,
     force_stage: str | None = None,
     delete_first: bool = False,
+    llm: str | None = None,
+    llm_max_tokens: int | None = None,
+    summary_min_tokens: int = 800,
+    outline_cache_dir: str | None = None,
+    workers: int = 4,
+    context_safety_ratio: float = 0.9,
 ) -> dict[str, Any]:
     """Workflow-engine wrapper around `document_graph_flow` (see its docstring)."""
     return document_graph_flow(
@@ -104,6 +178,12 @@ def document_graph_build_step(
         recursive=recursive,
         force_stage=force_stage,
         delete_first=delete_first,
+        llm=llm,
+        llm_max_tokens=llm_max_tokens,
+        summary_min_tokens=summary_min_tokens,
+        outline_cache_dir=outline_cache_dir,
+        workers=workers,
+        context_safety_ratio=context_safety_ratio,
     )
 
 

@@ -79,6 +79,11 @@ class FlatSection(BaseModel):
     parent_index: int | None = Field(
         default=None, description="Index of the parent section within the same flat list, or None for a root section"
     )
+    description: str | None = Field(default=None, description="One-sentence routing description of the section")
+    summary: str | None = Field(default=None, description="Short paragraph summary (substantial sections only)")
+    summary_source: str | None = Field(
+        default=None, description="How description/summary were produced (e.g. 'llm'), or None when not yet set"
+    )
 
 
 def _estimate_token_count(text: str) -> int:
@@ -86,29 +91,24 @@ def _estimate_token_count(text: str) -> int:
     return len(re.findall(r"\w+|[^\w\s]", text))
 
 
-def parse_markdown_tree(raw: str) -> list[FlatSection]:
-    """Parse *raw* Markdown into a flat, order-preserving list of sections.
+def detect_headings(raw: str) -> list[tuple[str, int, int]]:
+    """Find the document's top-level headings and their logical levels.
 
-    Every document yields at least one section. Section line ranges partition the
-    document with no overlap, so concatenating the sections' ``text`` in
-    ``sequence`` order reconstructs the original document.
-
-    Args:
-        raw: Full Markdown document text.
+    Uses ``markdown-it-py`` so headings inside fenced code blocks, inline code, or
+    blockquotes are ignored, and each heading's source line number is known
+    precisely. Page-marker headings (``Page 12``) are dropped — they are PDF/Doc
+    conversion artifacts with no structural meaning. For numbered documents the
+    unreliable source ``#`` levels are re-derived from the outline numbers.
 
     Returns:
-        Flat list of `FlatSection` in document order (never empty). Parent/child
-        hierarchy is resolved with a level-based stack and stored as `parent_index`.
+        ``(title, level, line_start)`` tuples in document order, where
+        ``line_start`` is 1-indexed. Empty when the document has no headings.
     """
     from markdown_it import MarkdownIt
 
     md = MarkdownIt("commonmark", {"html": True}).enable("table").enable("strikethrough")
     tokens = md.parse(raw)
 
-    lines = raw.splitlines()
-    total_lines = len(lines)
-
-    # Collect only top-level headings (nesting depth 0 — not inside blockquotes/lists).
     headings: list[tuple[str, int, int]] = []  # (title, level, line_start 1-indexed)
     depth = 0
     for i, tok in enumerate(tokens):
@@ -118,21 +118,31 @@ def parse_markdown_tree(raw: str) -> list[FlatSection]:
             title = ""
             if i + 1 < len(tokens) and tokens[i + 1].type == "inline":
                 title = tokens[i + 1].content.strip()
-            # Drop page-marker headings ("Page 12"): they are conversion artifacts,
-            # not document structure. Their text stays inline in the enclosing section.
+            # Drop page-marker headings ("Page 12"): their text stays inline.
             if not _PAGE_MARKER_RE.match(title):
                 headings.append((title, level, line_start))
         depth += tok.nesting
 
-    # In numbered documents the source '#' levels are unreliable (PDF artifacts);
-    # re-derive each heading's logical level from its outline number.
     inferred_levels = _infer_levels([h[0] for h in headings], [h[1] for h in headings])
-    headings = [(title, inferred_levels[idx], line_start) for idx, (title, _, line_start) in enumerate(headings)]
+    return [(title, inferred_levels[idx], line_start) for idx, (title, _, line_start) in enumerate(headings)]
+
+
+def slice_sections(raw: str, headings: list[tuple[str, int, int]]) -> list[FlatSection]:
+    """Slice *raw* into non-overlapping sections anchored at *headings*.
+
+    Each heading's section owns its heading line plus body up to the line before
+    the next heading of ANY level (a nested subsection's lines belong to the
+    subsection, not the parent). Any text before the first heading — or a document
+    with no headings at all — is captured by a synthetic level-0 root section.
+    ``headings`` is ``(title, level, line_start)`` in document order, with
+    ``line_start`` 1-indexed. The result is never empty, and concatenating the
+    sections' ``text`` in order reconstructs *raw*.
+    """
+    lines = raw.splitlines()
+    total_lines = len(lines)
 
     sections: list[FlatSection] = []
 
-    # Synthetic root section: needed when the document has no headings, or when
-    # there is preamble content before the first heading.
     first_heading_line = headings[0][2] if headings else None
     if first_heading_line is None or first_heading_line > 1:
         root_end = (first_heading_line - 1) if first_heading_line is not None else total_lines
@@ -149,7 +159,6 @@ def parse_markdown_tree(raw: str) -> list[FlatSection]:
             )
         )
 
-    # Heading sections: own text runs up to the line before the next heading of ANY level.
     for idx, (title, level, line_start) in enumerate(headings):
         next_line = headings[idx + 1][2] if idx + 1 < len(headings) else total_lines + 1
         line_end = next_line - 1
@@ -165,7 +174,6 @@ def parse_markdown_tree(raw: str) -> list[FlatSection]:
             )
         )
 
-    # Resolve parent_index: nearest preceding section with a strictly smaller level.
     stack: list[int] = []
     for idx, section in enumerate(sections):
         while stack and sections[stack[-1]].level >= section.level:
@@ -174,3 +182,20 @@ def parse_markdown_tree(raw: str) -> list[FlatSection]:
         stack.append(idx)
 
     return sections
+
+
+def parse_markdown_tree(raw: str) -> list[FlatSection]:
+    """Parse *raw* Markdown into a flat, order-preserving list of sections.
+
+    Every document yields at least one section. Section line ranges partition the
+    document with no overlap, so concatenating the sections' ``text`` in
+    ``sequence`` order reconstructs the original document.
+
+    Args:
+        raw: Full Markdown document text.
+
+    Returns:
+        Flat list of `FlatSection` in document order (never empty). Parent/child
+        hierarchy is resolved with a level-based stack and stored as `parent_index`.
+    """
+    return slice_sections(raw, detect_headings(raw))

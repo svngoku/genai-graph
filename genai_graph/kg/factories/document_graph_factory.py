@@ -26,10 +26,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from loguru import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
+from genai_graph.kg.document_graph.outline_extract import (
+    OutlineConfig,
+    OutlineResult,
+    OutlineStats,
+    extract_outline,
+)
+from genai_graph.kg.document_graph.outline_merge import merge_outline
 from genai_graph.kg.document_graph.repository import FolderTree, SourceFolder
-from genai_graph.kg.document_graph.tree_parser import _estimate_token_count, parse_markdown_tree
+from genai_graph.kg.document_graph.tree_parser import _estimate_token_count, detect_headings, parse_markdown_tree
 from genai_graph.kg.factories.base import KgFactory
 from genai_graph.kg.nodes.document import (
     CONTAINS_DOC,
@@ -71,11 +78,20 @@ class DocumentGraphFactory(KgFactory):
     exclude: list[str] = Field(default_factory=list, description="Glob patterns to exclude")
     recursive: bool = Field(default=True, description="Recurse into sub-directories")
     cache_dir: str | None = Field(default=None, description="Directory to extract .zip archives into")
+    outline_config: OutlineConfig | None = Field(
+        default=None,
+        description="When set, build each document's sections from an LLM outline (structure + summaries) "
+        "instead of the algorithmic heading parser; None keeps the fast algo path",
+    )
 
     # Per-instance caches
     _files_cache: list[Path] | None = None
     _folder_tree_by_file: dict[str, FolderTree] | None = None
     _content_hash_by_file: dict[str, str] | None = None
+    # Soft warnings from on-the-fly outline extraction in `_build_bundle` (cache misses
+    # after, or without, the parallel pre-pass). The flow's pre-pass surfaces its own
+    # warnings via `OutlineStats`; this list only fills in for the no-pre-pass edge case.
+    _outline_warnings: list[str] = PrivateAttr(default_factory=list)
 
     # ------------------------------------------------------------------
     # KgFactory protocol
@@ -167,6 +183,59 @@ class DocumentGraphFactory(KgFactory):
     # Bundle construction
     # ------------------------------------------------------------------
 
+    def _extract_outline_result(self, text: str, markdown_hash: str, filename: str) -> OutlineResult:
+        """Read one document's cached outline, extracting it on a cache miss."""
+        assert self.outline_config is not None
+        return extract_outline(text, markdown_hash, filename, self.outline_config, warnings=self._outline_warnings)
+
+    def extract_outlines(self, workers: int = 4) -> OutlineStats:
+        """Pre-extract (and cache) outlines for every discovered file, in parallel.
+
+        No database access: it only reads files and warms the content-addressed
+        outline cache, so the subsequent ingest pass reads each outline from disk
+        without an LLM call. Run it before :func:`~genai_graph.kg.document_graph.ingest.ingest_document_graph`
+        when ``outline_config`` is set. A no-op (empty stats) when there is no
+        ``outline_config`` or no files.
+        """
+        from genai_tk.utils.hashing import buffer_digest
+
+        files = self._get_files()
+        if self.outline_config is None or not files:
+            return OutlineStats()
+
+        def _one(path: Path) -> tuple[OutlineResult, list[str]]:
+            text = path.read_text(encoding="utf-8", errors="replace")
+            md_hash = buffer_digest(text.encode("utf-8"))
+            local_warnings: list[str] = []
+            result = extract_outline(text, md_hash, path.name, self.outline_config, warnings=local_warnings)
+            return result, local_warnings
+
+        if workers <= 1:
+            pairs: list[tuple[OutlineResult, list[str]]] = [_one(p) for p in files]
+        else:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=workers) as ex:
+                pairs = list(ex.map(_one, files))
+
+        degraded = 0
+        llm_calls = 0
+        warnings: list[str] = []
+        for result, file_warnings in pairs:
+            if result.degraded:
+                degraded += 1
+            llm_calls += result.llm_calls
+            warnings.extend(file_warnings)
+        logger.info(
+            "Outline pre-pass: {} file(s), {} degraded, {} LLM call(s)",
+            len(files),
+            degraded,
+            llm_calls,
+        )
+        return OutlineStats(
+            total_files=len(files), degraded_count=degraded, llm_calls=llm_calls, warnings=warnings
+        )
+
     def _build_bundle(self, path: Path, tree: FolderTree, content_hash: str) -> DocumentGraphBundle:
         from genai_tk.utils.hashing import buffer_digest
 
@@ -176,7 +245,7 @@ class DocumentGraphFactory(KgFactory):
             stat = path.stat()
             file_size: int | None = stat.st_size
             modified_at: str | None = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.warning("Could not stat {}: {}", path, exc)
             file_size = None
             modified_at = None
@@ -184,7 +253,20 @@ class DocumentGraphFactory(KgFactory):
         mime_type, _ = mimetypes.guess_type(str(path))
 
         markdown_hash = buffer_digest(text.encode("utf-8"))
-        flat_sections = parse_markdown_tree(text)
+        document_description: str | None = None
+        document_summary: str | None = None
+        if self.outline_config is not None:
+            outline_result = self._extract_outline_result(text, markdown_hash, path.name)
+            if outline_result.outline is not None:
+                flat_sections = merge_outline(text, outline_result.outline, detect_headings(text))
+                document_description = outline_result.outline.document_description
+                document_summary = outline_result.outline.document_summary
+            else:
+                # Degraded (over context window or LLM failure): algorithmic structure, no summaries.
+                flat_sections = parse_markdown_tree(text)
+        else:
+            flat_sections = parse_markdown_tree(text)
+
         sections = [
             MarkdownSection(
                 section_id=f"{markdown_hash}::{idx}",
@@ -197,6 +279,9 @@ class DocumentGraphFactory(KgFactory):
                 text=fs.text,
                 token_count=fs.token_count,
                 sequence=idx,
+                description=fs.description,
+                summary=fs.summary,
+                summary_source=fs.summary_source,
             )
             for idx, fs in enumerate(flat_sections)
         ]
@@ -215,6 +300,8 @@ class DocumentGraphFactory(KgFactory):
             modified_at=modified_at,
             token_count=_estimate_token_count(text),
             section_count=len(sections),
+            description=document_description,
+            summary=document_summary,
         )
 
         return DocumentGraphBundle(

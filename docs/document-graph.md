@@ -113,8 +113,47 @@ semantics.
 
 ## Summarization
 
-`genai_graph.kg.document_graph.summarize` annotates an already-ingested Document
-Graph so an agent can navigate it without reading full text:
+Every section carries a one-sentence `description` (the *routing* signal an agent
+scans to pick a section) and, for substantial sections, a short-paragraph `summary`
+(the *triage* signal — "is this worth opening?"), and the `Document` node gets its
+own description and summary. There are two ways to populate them.
+
+### During build: `cli docgraph build --llm`
+
+Pass `--llm` to `docgraph build` and a (typically cheap, large-context "flash")
+model discovers each document's structure **and** summarizes its sections in a
+single call. It emits a content-free JSON outline — the table of contents plus a
+description of every section (and a summary of the substantial ones) — *without*
+re-emitting section text, so the output stays small on million-token documents.
+The outline is cached by `markdown_hash` (and a policy/LLM hash, so re-runs are
+free), and a deterministic merge anchors its titles back to the Markdown to build
+the actual section nodes.
+
+```bash
+# Algorithmic build only — fast, no LLM, no descriptions
+cli docgraph build ./docs --db ./data/kg/tree.db
+
+# LLM-enhanced build: structure + descriptions + summaries in one call per doc
+cli docgraph build ./docs --db ./data/kg/tree.db --llm flash
+cli docgraph build ./docs --db ./data/kg/tree.db --llm gpt_4o_mini@edenai --workers 4
+cli docgraph build ./docs --db ./data/kg/tree.db --llm flash --summary-min-tokens 400
+cli docgraph build ./docs --db ./data/kg/tree.db --llm flash --llm-max-tokens 32000
+```
+
+`--llm` takes a literal `name@provider` id or a config tag resolved from
+`kg_build.llms.<tag>` (e.g. `flash`, `default`). Two failure modes degrade
+gracefully — the document is still ingested, just without descriptions/summaries,
+and a warning is surfaced: a document exceeding `context_safety_ratio` (default
+0.9) of the model's context window makes no LLM call at all; an LLM call failure
+(or no outline title matching the Markdown) falls back to the algorithmic
+structure. The result table reports `Sections summarized` and
+`Files degraded to algo`.
+
+### After build: the library / workflow step
+
+`genai_graph.kg.document_graph.summarize` annotates an already-ingested graph —
+use it when a graph was built algorithmically and you want to enrich it without
+rebuilding sections:
 
 ```python
 from genai_graph.kg.document_graph.summarize import SummarizationConfig, summarize_graph
@@ -183,14 +222,10 @@ aggregate summary. With `workers > 1` documents complete in a nondeterministic
 order, so the old sequential `[i/N]` per-document counter is gone, but no run goes
 silent until the final summary table, even across many documents.
 
-```bash
-cli docgraph summarize --db ./data/kg/tree.db                          # summarize everything
-cli docgraph summarize --db ./data/kg/tree.db --document guide.md --document overview.md --workers 4
-cli docgraph summarize --db ./data/kg/tree.db --document guide.md --dry-run
-cli docgraph summarize --db ./data/kg/tree.db --llm gpt_4o_mini@edenai --force
-cli docgraph summarize --db ./data/kg/tree.db --summary-min-tokens 400 # more sections get a paragraph
-cli docgraph summarize --db ./data/kg/tree.db --llm-max-tokens 32000   # reasoning model hit its output-token limit
-```
+> The `cli docgraph summarize` command was removed. Use `cli docgraph build --llm`
+> (above) to produce sections and summaries during ingest, or call
+> `summarize_graph` / the `document_graph_summarize_step` workflow step to enrich
+> an already-built graph.
 
 ## Navigating as an agent
 
@@ -258,8 +293,8 @@ cli docgraph cat <filename-or-hash> --db ./data/kg/tree.db
 cli docgraph search "keyword" --db ./data/kg/tree.db
 cli docgraph tui --db ./data/kg/tree.db
 
-# Summarize sections and documents
-cli docgraph summarize --db ./data/kg/tree.db
+# LLM-enhanced build: structure + descriptions + summaries in one call per document
+cli docgraph build ./docs --db ./data/kg/tree.db --llm flash
 ```
 
 `cli kg create <name>` runs the same workflow engine against a **predefined** set of

@@ -82,20 +82,6 @@ def _resolve_folder_ref_or_exit(backend: Any, folder_ref: str | None) -> str | N
     return folder_id
 
 
-def _print_summarize_result_table(csl: Console, title: str, graph_result: Any) -> None:
-    """Render the aggregated `SummarizeGraphResult` metrics + warnings."""
-    table = Table(title=title)
-    table.add_column("Metric", style="cyan")
-    table.add_column("Value", style="white")
-    table.add_row("Processed", str(graph_result.documents_processed))
-    table.add_row("Skipped (already summarized)", str(graph_result.documents_skipped))
-    table.add_row("Failed", str(graph_result.documents_failed))
-    table.add_row("LLM calls", str(graph_result.total_llm_calls))
-    csl.print(table)
-    for w in graph_result.warnings:
-        csl.print(f"[yellow]⚠ {w}[/yellow]")
-
-
 class DocGraphCommands(CliTopCommand):
     """Commands for building and navigating a Document Graph."""
 
@@ -220,13 +206,55 @@ class DocGraphCommands(CliTopCommand):
                 bool,
                 typer.Option("--delete-first", help="Drop existing Section tables and rebuild all sections."),
             ] = False,
+            llm: Annotated[
+                str | None,
+                typer.Option(
+                    "--llm",
+                    help="LLM id (name@provider) or config tag (e.g. default/flash) enabling the LLM build path: "
+                    "a flash model discovers each document's structure and summarizes its sections in one call. "
+                    "Omit for the fast algorithmic-only path. See kg_build.llms.* config tags.",
+                ),
+            ] = None,
+            llm_max_tokens: Annotated[
+                int | None,
+                typer.Option(
+                    "--llm-max-tokens",
+                    help="Explicit max output tokens for the outline call; raise for reasoning models that "
+                    "exhaust their completion budget ('length limit reached' errors).",
+                ),
+            ] = None,
+            summary_min_tokens: Annotated[
+                int,
+                typer.Option("--summary-min-tokens", help="Prompt guidance for what counts as a 'substantial' section."),
+            ] = 800,
+            outline_cache_dir: Annotated[
+                str | None,
+                typer.Option("--outline-cache-dir", help="Directory for the content-addressed outline JSON cache."),
+            ] = None,
+            workers: Annotated[int, typer.Option("--workers", help="Parallelism for the LLM outline pre-pass.")] = 4,
+            context_safety_ratio: Annotated[
+                float,
+                typer.Option(
+                    "--context-safety-ratio",
+                    help="Degrade a document to algorithmic parsing (no LLM call, no summaries) when its token "
+                    "count exceeds this fraction of the model's context window.",
+                ),
+            ] = 0.9,
         ) -> None:
             """Markdownize sources, then build (or update) a Document Graph.
+
+            Without `--llm`, the build is algorithmic and fast (heading hierarchy
+            only). With `--llm`, a flash model discovers each document's real
+            structure (from its table of contents / style changes) AND summarizes
+            each section in one call, producing descriptions + summaries in the
+            graph. Documents over the model's context window degrade to the
+            algorithmic path (no summaries) and are still ingested.
 
             Examples:
                 cli docgraph build ./docs --db ./data/kg/tree.db
                 cli docgraph build ./Alko.zip --db ./data/kg/tree.db --force md
-                cli docgraph build ./docs (uses graph_db.default from config)
+                cli docgraph build ./docs --llm default --workers 8
+                cli docgraph build ./docs --db ./data/kg/tree.db --llm-max-tokens 32000
             """
             _validate_force(force)
             db_path = _resolve_db_path(db_path)
@@ -264,6 +292,12 @@ class DocGraphCommands(CliTopCommand):
                 exclude=exclude or [],
                 force_stage=force,
                 delete_first=delete_first,
+                llm=llm,
+                llm_max_tokens=llm_max_tokens,
+                summary_min_tokens=summary_min_tokens,
+                outline_cache_dir=outline_cache_dir,
+                workers=workers,
+                context_safety_ratio=context_safety_ratio,
             )
 
             table = Table(title="Document Graph — Build Result")
@@ -273,6 +307,11 @@ class DocGraphCommands(CliTopCommand):
             table.add_row("Skipped (unchanged)", str(result_dict["documents_skipped"]))
             table.add_row("Failed", str(result_dict["documents_failed"]))
             table.add_row("Sections created", str(result_dict["sections_created"]))
+            table.add_row("Sections summarized", str(result_dict.get("sections_summarized", 0)))
+            table.add_row(
+                "Files degraded to algo (over context window)",
+                str(result_dict.get("files_degraded", 0)),
+            )
             table.add_row("Relationships created", str(result_dict["relationships_created"]))
             console.print(table)
             for w in result_dict["warnings"]:
@@ -454,102 +493,6 @@ class DocGraphCommands(CliTopCommand):
             backend.connect(db_path)
             folder_id = _resolve_folder_ref_or_exit(backend, folder)
             console.print(folder_toc_yaml(backend, folder_id, include_sections=sections, include_summaries=summaries))
-
-        @cli_app.command("summarize")
-        def summarize(
-            folder: Annotated[
-                str | None,
-                typer.Option("--folder", help="Only summarize documents under this folder's subtree."),
-            ] = None,
-            document: Annotated[
-                list[str] | None,
-                typer.Option(
-                    "--document", "--doc", help="Only summarize these documents (hash, prefix, filename). Repeatable."
-                ),
-            ] = None,
-            db_path: Annotated[
-                str | None,
-                typer.Option(
-                    "--db", help="Path to the Ladybug database file. Uses graph_db.default from config if omitted."
-                ),
-            ] = None,
-            llm: Annotated[
-                str | None,
-                typer.Option("--llm", help="LLM id (name@provider) or tag. Uses kg_build.llms.default if omitted."),
-            ] = None,
-            max_level: Annotated[
-                int, typer.Option("--max-level", help="Deepest heading level that gets a description.")
-            ] = 6,
-            summary_min_tokens: Annotated[
-                int,
-                typer.Option(
-                    "--summary-min-tokens",
-                    help="Sections at or above this token count also get a paragraph summary.",
-                ),
-            ] = 800,
-            llm_max_tokens: Annotated[
-                int | None,
-                typer.Option(
-                    "--llm-max-tokens",
-                    help="Explicit max output tokens for the LLM call. Raise this (e.g. 32000) if you see "
-                    "'length limit reached' errors — a reasoning model spent its whole completion budget on "
-                    "hidden reasoning tokens, not the input context window.",
-                ),
-            ] = None,
-            force: Annotated[
-                bool, typer.Option("--force", help="Re-summarize documents that already have a summary.")
-            ] = False,
-            dry_run: Annotated[
-                bool, typer.Option("--dry-run", help="Show the summarization plan without calling the LLM.")
-            ] = False,
-            workers: Annotated[
-                int, typer.Option("--workers", help="Number of documents summarized in parallel (shared-DB threads).")
-            ] = 4,
-        ) -> None:
-            """Generate section and document summaries for the Document Graph.
-
-            Examples:
-                cli docgraph summarize --db ./data/kg/tree.db
-                cli docgraph summarize --document alpha.md --document beta.md --workers 4 --force
-                cli docgraph summarize --document alpha.md --llm gpt_4o_mini@edenai --dry-run
-                cli docgraph summarize --db ./data/kg/tree.db --llm-max-tokens 32000  # reasoning model ran out of output tokens
-            """
-            db_path = _resolve_db_path(db_path)
-            from genai_graph.kg.backend import KuzuBackend
-            from genai_graph.kg.document_graph.summarize import (
-                SummarizationConfig,
-                summarize_documents,
-                summarize_graph,
-            )
-
-            config = SummarizationConfig(
-                llm=llm,
-                max_level=max_level,
-                summary_min_tokens=summary_min_tokens,
-                llm_max_tokens=llm_max_tokens,
-            )
-
-            if document:
-                graph_result = summarize_documents(
-                    db_path, document, config, force=force, dry_run=dry_run, workers=workers
-                )
-                title = "Document Graph — Summarize Result" + (" (dry run)" if dry_run else "")
-                _print_summarize_result_table(console, title, graph_result)
-                return
-
-            # No --document: resolve an optional --folder ref to a folder_id with a short-lived
-            # connection, then fan out over the folder (or the whole graph) on the shared-DB pool.
-            backend = KuzuBackend()
-            backend.connect(db_path)
-            try:
-                folder_id = _resolve_folder_ref_or_exit(backend, folder)
-            finally:
-                backend.close()
-            graph_result = summarize_graph(
-                db_path, config, folder_id=folder_id, force=force, dry_run=dry_run, workers=workers
-            )
-            title = "Document Graph — Summarize Result" + (" (dry run)" if dry_run else "")
-            _print_summarize_result_table(console, title, graph_result)
 
         @cli_app.command("cat")
         def cat(

@@ -48,6 +48,7 @@ class DocumentGraphIngestResult(BaseModel):
     documents_failed: int = 0
     documents_skipped: int = 0
     sections_created: int = 0
+    sections_summarized: int = 0
     relationships_created: int = 0
     warnings: list[str] = Field(default_factory=list)
 
@@ -65,6 +66,29 @@ def _document_exists(backend: KgBackend, markdown_hash: str) -> bool:
             return False
         raise
     return not df.empty
+
+
+def _sections_described(backend: KgBackend, markdown_hash: str) -> bool:
+    """Return True if any section of this document already carries a description.
+
+    Used by the LLM build path to decide whether an already-ingested document's
+    sections were built algorithmically (no descriptions) and so should be rebuilt
+    to pick up the LLM outline's descriptions/summaries.
+    """
+    try:
+        df = backend.execute_get_as_df(
+            f"MATCH (s:{_SECTION_TYPE} {{markdown_hash: $h}}) WHERE s.description IS NOT NULL "
+            "RETURN count(s) AS c",
+            {"h": markdown_hash},
+            union=False,
+        )
+    except Exception as exc:  # noqa: BLE001
+        if "does not exist" in str(exc):
+            return False
+        raise
+    if df.empty:
+        return False
+    return int(df.iloc[0]["c"]) > 0
 
 
 def ingest_document_graph(
@@ -145,14 +169,30 @@ def ingest_document_graph(
         )
 
         # --- section reuse: skip if already ingested -----------------------
-        already_ingested = md_hash in seen_markdown or (not force and _document_exists(backend, md_hash))
-        if already_ingested:
+        # In-batch dedup first: the same markdown already queued for merge this run.
+        if md_hash in seen_markdown:
+            result.documents_skipped += 1
+            result.documents_processed += 1
+            continue
+
+        in_db = _document_exists(backend, md_hash)
+        if force:
+            rebuild = True
+        elif factory.outline_config is not None:
+            # LLM build path: rebuild sections that were built without descriptions
+            # (algorithmically, or by a prior degraded run) so a re-run after `--llm`
+            # enriches them with the outline's descriptions/summaries.
+            rebuild = in_db and not _sections_described(backend, md_hash)
+        else:
+            rebuild = False
+
+        if in_db and not rebuild:
             result.documents_skipped += 1
             result.documents_processed += 1
             continue
         seen_markdown.add(md_hash)
 
-        if force:
+        if rebuild:
             _delete_document_sections(backend, md_hash)
 
         for section in bundle.sections:
@@ -179,6 +219,7 @@ def ingest_document_graph(
                 )
 
         result.sections_created += len(bundle.sections)
+        result.sections_summarized += sum(1 for s in bundle.sections if s.summary)
         result.documents_processed += 1
 
     merge_result = merge_nodes_batch(backend, nodes, registry)

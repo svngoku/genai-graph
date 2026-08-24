@@ -30,6 +30,9 @@ profile: ${oc.env:BLUEPRINT_CONFIG,ekg_local}
     kg_build:
       llms:
         default: gpt_4o_mini@edenai
+        # "flash" is a large-context, cheap model used by `cli docgraph build --llm flash`
+        # to discover document structure + summarize sections in one call.
+        flash: deepseek_v4flash@openrouter
       embeddings:
         default: ada_002@edenai
     embeddings_store:
