@@ -170,7 +170,13 @@ def _clean_outline(outline: DocumentOutline, config: OutlineConfig) -> DocumentO
 
 
 def _build_prompt(*, filename: str, raw: str, config: OutlineConfig) -> tuple[str, str]:
-    """Build the (system, user) prompt asking for the outline + summaries, never the content."""
+    """Build the (system, user) prompt asking for the outline + summaries, never the content.
+
+    The user message references the document through ``{filename}``/``{raw}`` template
+    variables (filled at invoke time in :func:`_call_llm`) rather than baking the
+    source text into the template string, so braces in the Markdown (e.g. LaTeX
+    superscripts ``^{(1)}``) are not interpreted as prompt-template variables.
+    """
     system = f"""
         You build the table of contents for a document library that an AI agent reads to
         decide which section to open. The document may have NO heading markup and
@@ -197,7 +203,7 @@ def _build_prompt(*, filename: str, raw: str, config: OutlineConfig) -> tuple[st
         two document-level fields. Returning section content defeats the point (token cost)
         and is forbidden.
     """
-    user = f"""
+    user = """
         Document: {filename}
 
         --- full document ---
@@ -221,7 +227,9 @@ def _call_llm(
     prompt = def_prompt(system=system, user=user)
     llm_kwargs = {"max_tokens": max_tokens} if max_tokens is not None else {}
     structured_llm = get_llm(llm_id, **llm_kwargs).with_structured_output(DocumentOutline)
-    result = (prompt | structured_llm).invoke({})
+    # Fill {filename}/{raw} as template variables (not a literal template string) so braces
+    # in the source Markdown (e.g. LaTeX superscripts `^{(1)}`) are not parsed as variables.
+    result = (prompt | structured_llm).invoke({"filename": filename, "raw": raw})
     assert isinstance(result, DocumentOutline)
     return result
 
