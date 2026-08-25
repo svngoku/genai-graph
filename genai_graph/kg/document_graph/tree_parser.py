@@ -27,6 +27,12 @@ ROOT_SECTION_TITLE = "(document root)"
 # "## Page 12"). These carry no structural meaning and must not become sections.
 _PAGE_MARKER_RE = re.compile(r"^page\s+\d+$", re.IGNORECASE)
 
+# Surrounding Markdown emphasis/whitespace, stripped before comparing a heading
+# title to another for de-duplication (e.g. "**Advanced Micro Devices, Inc.**"
+# and "Advanced Micro Devices, Inc." collapse together).
+_DEDUP_EMPHASIS_RE = re.compile(r"[*_`]{1,3}")
+_DEDUP_WS_RE = re.compile(r"\s+")
+
 # Leading outline number of a heading, ignoring surrounding Markdown emphasis
 # (e.g. "**3.4 Device life cycle**" → "3.4"). The depth (dot-separated component
 # count) gives the heading's logical level in a numbered document.
@@ -39,6 +45,47 @@ def _outline_depth(title: str) -> int | None:
     if not match:
         return None
     return match.group(1).count(".") + 1
+
+
+def _normalize_title_for_dedup(title: str) -> str:
+    """Normalize a heading title for repeat-detection (emphasis/whitespace-stripped, lowercased)."""
+    stripped = _DEDUP_EMPHASIS_RE.sub("", title or "")
+    return _DEDUP_WS_RE.sub(" ", stripped).strip().lower()
+
+
+def _dedupe_page_header_headings(
+    headings: list[tuple[str, int, int]], raw_lines: list[str]
+) -> list[tuple[str, int, int]]:
+    """Drop repeated page-header headings whose own body is empty.
+
+    PDF/Office → Markdown conversions repeat a company-name or title line as a
+    ``#`` heading before every statement (e.g. ``# **Advanced Micro Devices, Inc.**``
+    ahead of each financial statement). Each such heading owns no body — the next
+    heading follows on a nearby line — so it would become a near-empty section
+    (the "empty sections" of the algorithmic path). Drop a heading when its body
+    (the lines between it and the next heading) is entirely blank AND its
+    normalized title has already appeared earlier in the document. Real
+    sub-headings, first occurrences, and headings with body are always kept, so no
+    content is lost and the document stays byte-for-byte reconstructable.
+    """
+    kept: list[tuple[str, int, int]] = []
+    seen: set[str] = set()
+    n = len(headings)
+    for i, (title, level, line_start) in enumerate(headings):
+        next_start = headings[i + 1][2] if i + 1 < n else None
+        norm = _normalize_title_for_dedup(title)
+        is_repeat = bool(norm) and norm in seen
+        empty_body = False
+        if next_start is not None:
+            # Body lines: 0-indexed slice from just after the heading line up to
+            # (excluding) the next heading's line.
+            body = raw_lines[line_start: next_start - 1]
+            empty_body = all(not line.strip() for line in body)
+        if is_repeat and empty_body:
+            continue
+        kept.append((title, level, line_start))
+        seen.add(norm)
+    return kept
 
 
 def _infer_levels(titles: list[str], md_levels: list[int]) -> list[int]:
@@ -124,7 +171,11 @@ def detect_headings(raw: str) -> list[tuple[str, int, int]]:
         depth += tok.nesting
 
     inferred_levels = _infer_levels([h[0] for h in headings], [h[1] for h in headings])
-    return [(title, inferred_levels[idx], line_start) for idx, (title, _, line_start) in enumerate(headings)]
+    inferred = [
+        (title, inferred_levels[idx], line_start)
+        for idx, (title, _, line_start) in enumerate(headings)
+    ]
+    return _dedupe_page_header_headings(inferred, raw.splitlines())
 
 
 def slice_sections(raw: str, headings: list[tuple[str, int, int]]) -> list[FlatSection]:

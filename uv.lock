@@ -17,7 +17,6 @@ resolution-markers = [
 constraints = [
     { name = "alembic", specifier = "<1.18" },
     { name = "ipython", specifier = "<9" },
-    { name = "langsmith", specifier = "<0.9" },
     { name = "openai", specifier = "<2.44" },
     { name = "requests", specifier = "<2.34" },
 ]

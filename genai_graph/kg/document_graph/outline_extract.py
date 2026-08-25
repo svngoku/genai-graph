@@ -31,6 +31,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from genai_graph.kg.document_graph.summarize import _clean_text, _is_length_limit_error
+from genai_graph.kg.document_graph.tree_parser import detect_headings
 
 _DEFAULT_LLM_TAG = "default"
 
@@ -125,8 +126,16 @@ def _context_window_for(llm_id: str) -> int | None:
 
 
 def _policy_hash(config: OutlineConfig, llm_id: str) -> str:
-    """Stable short hash of the LLM + policy fields that affect the outline."""
-    payload = f"{llm_id}|{config.summary_min_tokens}|{config.max_description_words}|{config.max_summary_words}"
+    """Stable short hash of the LLM + policy fields that affect the outline.
+
+    Includes a ``hybrid-v1`` tag so a cache built by the older "LLM discovers the
+    TOC" prompt (which produced ~27 coarse sections) is not reused once the
+    heading-anchored enrichment prompt ships.
+    """
+    payload = (
+        f"hybrid-v1|{llm_id}|{config.summary_min_tokens}|"
+        f"{config.max_description_words}|{config.max_summary_words}"
+    )
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12]
 
 
@@ -169,49 +178,135 @@ def _clean_outline(outline: DocumentOutline, config: OutlineConfig) -> DocumentO
     )
 
 
-def _build_prompt(*, filename: str, raw: str, config: OutlineConfig) -> tuple[str, str]:
-    """Build the (system, user) prompt asking for the outline + summaries, never the content.
+# ---------------------------------------------------------------------------
+# Heading-anchored enrichment (hybrid granularity)
+# ---------------------------------------------------------------------------
+#
+# The LLM no longer "discovers" the table of contents (it collapsed the 10-K to
+# ~27 coarse PART/ITEM sections, ignoring the document's real H1/H2/H3
+# sub-headings). Instead the Markdown headings are detected algorithmically
+# (:func:`~genai_graph.kg.document_graph.tree_parser.detect_headings`, reliable)
+# and the LLM is asked to return ONE description/summary per listed heading, in
+# order. The LLM's entries are then aligned back to the detected headings by
+# title, so the cached outline carries the heading's verbatim title and its
+# Markdown level (authoritative), plus the LLM's description/summary where one
+# was provided. Headings the LLM skipped still become sections (with no
+# description); LLM entries that match no heading (collapses/hallucinations) are
+# dropped. The downstream merge then slices on the detected headings directly.
 
-    The user message references the document through ``{filename}``/``{raw}`` template
-    variables (filled at invoke time in :func:`_call_llm`) rather than baking the
-    source text into the template string, so braces in the Markdown (e.g. LaTeX
-    superscripts ``^{(1)}``) are not interpreted as prompt-template variables.
+_LEADING_NOISE_RE = re.compile(r"^\s*(?:#{1,6}\s*|[-*+]\s+|>\s*|\d+[.)]\s*)")
+_ENRICH_EMPHASIS_RE = re.compile(r"[*_`]{1,3}")
+_ENRICH_WS_RE = re.compile(r"\s+")
+
+
+def _normalize_title(text: str) -> str:
+    """Normalize a heading title or source line for tolerant matching."""
+    stripped = _LEADING_NOISE_RE.sub("", text or "")
+    stripped = _ENRICH_EMPHASIS_RE.sub("", stripped)
+    return _ENRICH_WS_RE.sub(" ", stripped).strip().lower()
+
+
+def _titles_match(a: str, b: str) -> bool:
+    """True when two titles are equal, or one contains the other, after normalization."""
+    na, nb = _normalize_title(a), _normalize_title(b)
+    if not na or not nb:
+        return False
+    return na == nb or na in nb or nb in na
+
+
+def _render_headings_block(headings: list[tuple[str, int, int]]) -> str:
+    """Render detected headings as a numbered ``[Llevel] title`` list for the prompt."""
+    if not headings:
+        return "(no headings detected)"
+    return "\n".join(f"{i}. [L{level}] {title}" for i, (title, level, _line) in enumerate(headings, 1))
+
+
+def _align_outline(outline: DocumentOutline, algo_headings: list[tuple[str, int, int]]) -> DocumentOutline:
+    """Align an LLM outline onto the detected headings (title + level authoritative).
+
+    Returns a ``DocumentOutline`` with exactly one ``OutlineEntry`` per detected
+    heading, in document order: the heading's verbatim title and Markdown level,
+    plus the LLM's ``description``/``summary`` where an LLM entry matched that
+    heading by title (tolerant). Unmatched headings keep ``description``/``summary``
+    as ``None``; LLM entries that match no heading are dropped. Document-level
+    ``description``/``summary`` are preserved unchanged.
+    """
+    entries = list(outline.sections)
+    used: list[bool] = [False] * len(entries)
+    aligned: list[OutlineEntry] = []
+    for ah_title, ah_level, _line_start in algo_headings:
+        match_idx: int | None = None
+        for j, entry in enumerate(entries):
+            if used[j]:
+                continue
+            if _titles_match(ah_title, entry.title):
+                match_idx = j
+                used[j] = True
+                break
+        if match_idx is not None:
+            entry = entries[match_idx]
+            aligned.append(
+                OutlineEntry(title=ah_title, level=ah_level, description=entry.description, summary=entry.summary)
+            )
+        else:
+            aligned.append(OutlineEntry(title=ah_title, level=ah_level, description=None, summary=None))
+    return outline.model_copy(update={"sections": aligned})
+
+
+def _build_prompt(*, filename: str, raw: str, config: OutlineConfig) -> tuple[str, str]:
+    """Build the (system, user) prompt for heading-anchored outline enrichment.
+
+    The Markdown headings have already been detected algorithmically (reliable)
+    and are listed for the model in the user message. The model returns ONE
+    section entry per listed heading, reusing each heading's verbatim title and
+    listed level, plus a one-sentence description and (for substantial sections)
+    a short summary based on the document content under that heading.
+
+    The user message references the document through ``{filename}``/``{raw}``/``{headings}``
+    template variables (filled at invoke time in :func:`_call_llm`) rather than
+    baking the source text into the template string, so braces in the Markdown
+    (e.g. LaTeX superscripts ``^{(1)}``) are not interpreted as prompt-template
+    variables.
     """
     system = f"""
-        You build the table of contents for a document library that an AI agent reads to
-        decide which section to open. The document may have NO heading markup and
-        inconsistent formatting (it came from a PDF/Office -> Markdown conversion). Look
-        for a table of contents near the start, and for outline numbers or repeated style
-        changes in the body, to recover the REAL section structure — do not just split on
-        Markdown '#'.
+        You enrich the table of contents for a document library that an AI agent reads
+        to decide which section to open. The document's Markdown headings have ALREADY
+        been detected for you and are listed in the user message (numbered, with their
+        Markdown level as ``[Llevel]``). Return EXACTLY one ``sections`` entry per
+        listed heading, in the same order, using each heading's verbatim title and its
+        listed level, plus a description (and, for substantial sections, a summary)
+        that you write from the document content under that heading.
 
-        For every section, return (in document order):
-        - `title`: the heading text EXACTLY as it appears on its own line in the document.
-          We locate the section by matching this string back to the source, so it must be
-          verbatim. If a heading starts with a number or '#', include that prefix.
-        - `level`: 1 (top) to 6, from the numbering/TOC indentation (1 -> 1, 1.1 -> 2, ...).
-        - `description`: ONE plain-text sentence, at most {config.max_description_words} words,
-          saying what the section CONTAINS. No Markdown, no headings, no bullets, no line
-          breaks. Do not restate the title. Name the concrete subject matter.
+        For every listed heading, return (in the same order as the list):
+        - `title`: the heading text EXACTLY as listed (verbatim).
+        - `level`: the level listed for that heading.
+        - `description`: ONE plain-text sentence, at most {config.max_description_words}
+          words, saying what this section CONTAINS (based on the document text under
+          that heading). No Markdown, no headings, no bullets, no line breaks. Do not
+          restate the title; name the concrete subject matter so the agent can route.
         - `summary`: ONLY for substantial sections (more than roughly
           {config.summary_min_tokens} tokens, or {config.summary_min_tokens * 4} words):
           2-3 plain-text sentences, at most {config.max_summary_words} words. Leave null
           otherwise.
 
-        HARD RULE: never include the section's body text in your answer. Output only the
-        title, level, description and (when warranted) summary for each section, plus the
-        two document-level fields. Returning section content defeats the point (token cost)
-        and is forbidden.
+        HARD RULES:
+        - Return exactly one ``sections`` entry per listed heading. Do not omit, merge,
+          reorder, rename, or invent headings.
+        - Never include a section's body text in your answer (token cost). Output only
+          the title, level, description and (when warranted) summary for each section,
+          plus the two document-level fields.
+        - Also return `document_description` (one sentence, at most
+          {config.max_description_words} words) and `document_summary` (2-4 sentences,
+          at most {config.max_summary_words} words) describing the whole document.
     """
     user = """
         Document: {filename}
 
+        --- headings detected in this document (return one section per heading, in this order) ---
+        {headings}
         --- full document ---
         {raw}
         --- end document ---
-
-        Return `document_description`, `document_summary`, and `sections` (one per heading,
-        in document order, each title verbatim from the document).
     """
     return system, user
 
@@ -219,17 +314,24 @@ def _build_prompt(*, filename: str, raw: str, config: OutlineConfig) -> tuple[st
 def _call_llm(
     *, llm_id: str, filename: str, raw: str, config: OutlineConfig, max_tokens: int | None
 ) -> DocumentOutline:
-    """The LLM call boundary — isolated so tests can substitute a fake implementation."""
+    """The LLM call boundary — isolated so tests can substitute a fake implementation.
+
+    The detected headings block is computed here from ``raw`` (the LLM input text)
+    and passed as the ``{headings}`` template variable; this keeps the call
+    signature stable for fakes while still giving the model the heading list.
+    """
     from genai_tk.core.factories.llm_factory import get_llm
     from genai_tk.core.prompts import def_prompt
 
     system, user = _build_prompt(filename=filename, raw=raw, config=config)
+    headings_block = _render_headings_block(detect_headings(raw))
     prompt = def_prompt(system=system, user=user)
     llm_kwargs = {"max_tokens": max_tokens} if max_tokens is not None else {}
     structured_llm = get_llm(llm_id, **llm_kwargs).with_structured_output(DocumentOutline)
-    # Fill {filename}/{raw} as template variables (not a literal template string) so braces
-    # in the source Markdown (e.g. LaTeX superscripts `^{(1)}`) are not parsed as variables.
-    result = (prompt | structured_llm).invoke({"filename": filename, "raw": raw})
+    # Fill {filename}/{raw}/{headings} as template variables (not a literal template
+    # string) so braces in the source Markdown (e.g. LaTeX superscripts `^{(1)}`)
+    # are not parsed as variables.
+    result = (prompt | structured_llm).invoke({"filename": filename, "raw": raw, "headings": headings_block})
     assert isinstance(result, DocumentOutline)
     return result
 
@@ -339,7 +441,13 @@ def extract_outline(
     if outline is None:
         result = OutlineResult(degraded=True, reason="llm_call_failed")
     else:
-        result = OutlineResult(outline=outline, llm_calls=1)
+        # Anchor the LLM's entries onto the detected Markdown headings: the
+        # heading's verbatim title and level are authoritative (the LLM only
+        # supplies description/summary), so the cached outline matches the
+        # structure the downstream merge slices on (one entry per heading).
+        algo_headings = detect_headings(md_text)
+        aligned = _align_outline(outline, algo_headings)
+        result = OutlineResult(outline=aligned, llm_calls=1)
     if cache_path is not None:
         _write_cached(cache_path, result)
     return result

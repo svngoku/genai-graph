@@ -40,13 +40,33 @@ class TestExtractOutline:
         config = _config(tmp_path)
         warnings: list[str] = []
 
-        result = extract_outline("body", "deadbeef", "doc.md", config, warnings=warnings)
+        # Heading-bearing markdown: the LLM outline (Title, Section A) is aligned
+        # back onto the detected headings (verbatim title + algorithmic level).
+        md_text = "# Title\n\n## Section A\n\nbody\n"
+        result = extract_outline(md_text, "deadbeef", "doc.md", config, warnings=warnings)
 
         assert result.outline is not None
         assert result.degraded is False
         assert result.llm_calls == 1
+        assert len(result.outline.sections) == 2
+        assert result.outline.sections[0].title == "Title"
+        assert result.outline.sections[0].level == 1  # algorithmic level is authoritative
         assert result.outline.sections[0].description == "The title."
         assert list(tmp_path.rglob("*.json"))  # cache file written
+
+    def test_prompt_uses_template_variables_not_baked_text(self, tmp_path: Path) -> None:
+        # The user message must reference {raw}/{headings}/{filename} as template
+        # variables (filled at invoke time), not bake the source text into the
+        # template string — otherwise Markdown braces like LaTeX `^{(1)}` would be
+        # parsed as prompt-template variables and crash rendering.
+        from genai_graph.kg.document_graph.outline_extract import _build_prompt
+
+        system, user = _build_prompt(filename="doc.md", raw="SHOULD_NOT_APPEAR", config=_config(tmp_path))
+
+        assert "{filename}" in user
+        assert "{raw}" in user
+        assert "{headings}" in user
+        assert "SHOULD_NOT_APPEAR" not in user
 
     def test_cache_hit_avoids_llm_call(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         calls: list[dict] = []

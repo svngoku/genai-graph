@@ -167,6 +167,22 @@ def prepare_docgraph_profile(
 
     profile.system_prompt = build_docgraph_system_prompt(folder_resolved_id, folder_name, base=profile.system_prompt)
 
+    excluded = frozenset(getattr(profile, "excluded_tools", []) or [])
+    if "read_file" in excluded:
+        # Graph-only mode: file tools (incl. read_file) are stripped by the
+        # tool-exclusion middleware, so SkillsMiddleware could not read any
+        # SKILL.md anyway, and its progressive-disclosure prompt ("use
+        # read_file ... for full instructions") would point the agent at a tool
+        # it lacks. The navigation strategy must be inlined in the system prompt
+        # (see the docgraph profile) instead. Skip skill loading and the
+        # filesystem backend entirely for a clean, graph-only toolset.
+        profile.skill_directories = []
+        logger.info(
+            "Document-graph agent: graph-only mode (read_file excluded) — "
+            "skipping skill loading; navigation strategy is inlined in the system prompt."
+        )
+        return profile
+
     skill_dirs: list[str] = [_PACKAGE_SKILLS_DIR]
     if extra_skill_dirs:
         skill_dirs.extend(extra_skill_dirs)

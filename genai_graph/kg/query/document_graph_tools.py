@@ -435,7 +435,7 @@ def get_document_toc(
 
 
 def build_toc_tree(
-    toc_rows: list[dict[str, Any]], *, include_summaries: bool = False, max_level: int | None = None
+    toc_rows: list[dict[str, Any]], *, include_summaries: bool = True, max_level: int | None = None
 ) -> list[dict[str, Any]]:
     """Nest flat `get_document_toc` rows into a tree by `parent_section_id`.
 
@@ -447,9 +447,10 @@ def build_toc_tree(
     navigate to.
 
     Args:
-        include_summaries: Also emit the fuller `summary` where one exists. Off by
-            default: `description` alone is what an agent needs to pick a section, and
-            adding summaries roughly triples the size of the tree.
+        include_summaries: Also emit the fuller `summary` where one exists. On by
+            default so the agent sees the generated summaries for substantial
+            sections (only sections that actually have a summary are affected, so
+            the cost scales with how many were summarised, not the section count).
         max_level: Drop sections deeper than this heading level.
     """
     by_parent: dict[str | None, list[dict[str, Any]]] = {}
@@ -493,12 +494,13 @@ def render_toc_outline(toc_rows: list[dict[str, Any]]) -> str:
 
 
 def document_toc_yaml(
-    backend: KgBackend, document_id: str, *, include_summaries: bool = False, max_level: int | None = None
+    backend: KgBackend, document_id: str, *, include_summaries: bool = True, max_level: int | None = None
 ) -> str:
     """Return one document's table of contents as a YAML string.
 
-    Section `description`s are always included (they are the routing signal); pass
-    `include_summaries=True` for the fuller per-section summaries as well.
+    Section `description`s are always included (they are the routing signal), and
+    the fuller per-section `summary` is included by default where one was
+    generated (pass `include_summaries=False` to omit them).
     """
     doc = get_document(backend, document_id)
     toc_rows = get_document_toc(backend, document_id)
@@ -525,7 +527,7 @@ def folder_toc_yaml(
     folder_id: str | None,
     *,
     include_sections: bool = False,
-    include_summaries: bool = False,
+    include_summaries: bool = True,
     max_level: int | None = None,
 ) -> str:
     """Return the documents under a folder's subtree as one YAML string.
@@ -747,13 +749,14 @@ def create_document_graph_tools(db_path: str) -> list[BaseTool]:
             return _tool_error(exc)
 
     @tool("get_document_toc")
-    def _get_document_toc(document_id: str, include_summaries: bool = False, max_level: int | None = None) -> str:
+    def _get_document_toc(document_id: str, include_summaries: bool = True, max_level: int | None = None) -> str:
         """Get one document's section tree as YAML: each section's id, title, size and description.
 
         Use the section ids from here with `get_section_content` to read the actual text.
         `document_id` is a content hash (full or prefix), a filename, or a source path.
-        Set `include_summaries=True` for fuller per-section summaries, or `max_level` to
-        show only top-level sections of a very long document.
+        Per-section `summary` is included by default where one was generated; pass
+        `include_summaries=False` to omit them. Use `max_level` to show only the
+        top-level sections of a very long document.
         """
         try:
             return document_toc_yaml(

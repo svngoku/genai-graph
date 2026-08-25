@@ -74,27 +74,51 @@ def _fold_into(section: FlatSection, entry: OutlineEntry) -> None:
 def merge_outline(raw: str, outline: DocumentOutline, algo_headings: list[tuple[str, int, int]]) -> list[FlatSection]:
     """Anchor an LLM outline onto *raw* to produce a flat, ordered section list.
 
-    Each outline entry's verbatim ``title`` is matched to a source line by a
-    forward sequential scan; the matched line becomes the section's anchor and
-    the entry's ``level`` drives the hierarchy. Entries whose title matches no
-    line fall back to the nearest unused algorithmic heading; entries that
-    match neither fold their description/summary into the most recent matched
-    section. Sections are sliced with the same slicer the algorithmic parser
-    uses, so the result is non-overlapping and reconstructable.
+    Post-refactor the cached outline is already *aligned* to the detected
+    headings (one ``OutlineEntry`` per heading, in document order, carrying the
+    heading's verbatim title and detected level — see
+    :func:`genai_graph.kg.document_graph.outline_extract._align_outline`). In
+    that case the sections slice directly on ``algo_headings`` and the LLM's
+    ``description``/``summary`` attach by index: no fragile title-to-line scan,
+    and the detected title/level is authoritative.
+
+    When the entry and heading counts disagree (pre-refactor caches or
+    hand-crafted test outlines), fall back to the original title-anchored
+    reconciliation: each entry's verbatim title is matched to a source line by
+    a forward sequential scan; unmatched entries fold into the most recent
+    matched section; total failure degrades to the algorithmic structure.
 
     Args:
         raw: Full Markdown document text.
         outline: The LLM's content-free outline (titles + levels + descriptions).
-        algo_headings: ``(title, level, line_start)`` from ``detect_headings``,
-            used as fallback anchors and as the wholesale fallback structure.
+        algo_headings: ``(title, level, line_start)`` from ``detect_headings``;
+        authoritative title/level, and the wholesale fallback structure.
 
     Returns:
-        Flat list of `FlatSection` in document order (never empty). Matched
-        sections carry ``description``/``summary``/``summary_source='llm'``;
-        unmatched sections and the synthetic root do not.
+        Flat list of `FlatSection` in document order (never empty). Sections
+        the LLM described carry ``description``/``summary`` and
+        ``summary_source='llm'``; undescribed sections and the synthetic root do not.
     """
-    lines = raw.splitlines()
     n_entries = len(outline.sections)
+
+    # Fast path: aligned outline (one entry per detected heading, in order).
+    # The detected title/level is authoritative; attach LLM desc/summary by index.
+    if n_entries == len(algo_headings) and n_entries > 0:
+        sections = slice_sections(raw, algo_headings)
+        heading_sections = [s for s in sections if s.level > 0]
+        # slice_sections yields exactly one level>0 section per heading (plus the
+        # synthetic root), so this zips 1:1 with the aligned outline entries.
+        for entry, section in zip(outline.sections, heading_sections, strict=True):
+            if entry.description:
+                section.description = entry.description
+            if entry.summary:
+                section.summary = entry.summary
+            if entry.description or entry.summary:
+                section.summary_source = "llm"
+        return sections
+
+    # Fallback: title-anchored reconciliation for unaligned / hand-crafted outlines.
+    lines = raw.splitlines()
 
     # entry_idx -> (line_start 1-indexed, entry); only for matched entries.
     matched: dict[int, tuple[int, OutlineEntry]] = {}

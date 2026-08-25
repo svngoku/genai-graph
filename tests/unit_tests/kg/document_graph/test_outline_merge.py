@@ -46,18 +46,18 @@ class TestMergeOutline:
 
         assert "\n".join(s.text for s in sections) == raw.rstrip("\n")
 
-    def test_llm_level_overrides_algorithmic_level(self) -> None:
+    def test_algorithmic_level_is_authoritative(self) -> None:
         raw = "# Title\n\n## Section A\n\nbody\n"
         algo = detect_headings(raw)  # Section A is level 2 algorithmically
         outline = _outline(
             OutlineEntry(title="Title", level=1, description="t"),
-            OutlineEntry(title="Section A", level=3, description="a"),  # LLM promotes it to 3
+            OutlineEntry(title="Section A", level=3, description="a"),  # LLM says 3
         )
 
         sections = merge_outline(raw, outline, algo)
 
         section_a = next(s for s in sections if s.title == "Section A")
-        assert section_a.level == 3
+        assert section_a.level == 2  # detected level wins, not the LLM's
 
     def test_unmatched_entry_folds_into_preceding_section(self) -> None:
         raw = "# Title\n\nIntro.\n\n## Section A\n\nBody A.\n"
@@ -78,7 +78,12 @@ class TestMergeOutline:
     def test_algo_fallback_anchors_when_no_line_matches(self, monkeypatch: pytest.MonkeyPatch) -> None:
         raw = "Preamble.\n\n## Section A\n\nbody\n"
         algo = detect_headings(raw)
-        outline = _outline(OutlineEntry(title="Section A", level=2, description="A desc."))
+        # Two entries vs one heading -> count mismatch -> fallback path; the
+        # phantom (no description) only forces the mismatch and folds harmlessly.
+        outline = _outline(
+            OutlineEntry(title="Section A", level=2, description="A desc."),
+            OutlineEntry(title="Phantom", level=2, description=""),
+        )
 
         # Force the line scan to fail so the algorithmic-heading fallback is exercised.
         monkeypatch.setattr(
@@ -95,9 +100,13 @@ class TestMergeOutline:
     def test_zero_matches_degrades_to_algorithmic_structure(self) -> None:
         raw = "# Title\n\n## Section A\n\nbody\n"
         algo = detect_headings(raw)
+        # Three entries vs two headings -> count mismatch -> fallback path; none
+        # of the titles match a line or an algo heading -> total reconciliation
+        # failure -> degrade to the algorithmic structure with no summaries.
         outline = _outline(
             OutlineEntry(title="Nope1", level=1, description="x"),
             OutlineEntry(title="Nope2", level=2, description="y"),
+            OutlineEntry(title="Nope3", level=2, description="z"),
         )
 
         sections = merge_outline(raw, outline, algo)

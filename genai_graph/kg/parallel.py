@@ -6,8 +6,7 @@ exist per file in a process, but multiple ``Connection``s created from that sing
 transaction manager inside the shared ``Database`` serializes them correctly —
 as long as the transactions touch **disjoint rows**. Two transactions writing the
 *same* row raise a write-write conflict, so this primitive is for fan-out where
-each worker owns distinct nodes/rows (e.g. one worker per document in
-summarization), not for shared-row work.
+each worker owns distinct nodes/rows , not for shared-row work.
 
 Concurrent writes additionally require ``enable_multi_writes=True`` on the shared
 ``Database``; without it Ladybug rejects any second concurrent write transaction

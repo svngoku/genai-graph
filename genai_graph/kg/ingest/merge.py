@@ -789,6 +789,20 @@ def merge_nodes_batch(
     return result
 
 
+def _count_relationships(conn: KgBackend, rel_name: str) -> int:
+    """Return the current row count of a relationship table (0 on a fresh/absent table)."""
+    try:
+        df = conn.execute_get_as_df(
+            f"MATCH ()-[r:{rel_name}]->() RETURN count(r) AS c", None, union=False
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("count({}) failed: {}", rel_name, exc)
+        return 0
+    if df is None or df.empty:
+        return 0
+    return int(df.iloc[0, 0])
+
+
 def merge_relationships_batch(
     conn: KgBackend,
     relationships: list[RelationshipRecord],
@@ -797,8 +811,11 @@ def merge_relationships_batch(
 ) -> int:
     """Merge relationships using DataFrame-based batch operations.
 
-    Groups relationships by type and uses LOAD FROM df MATCH ... CREATE
-    for efficient batch relationship creation.
+    Groups relationships by type and uses ``LOAD FROM df MATCH ... MERGE`` for
+    efficient batch relationship creation. No-property relationships use a
+    single ``LOAD FROM`` with inline ``{key: col}`` node patterns (point
+    lookups, no cross product); relationships with properties fall back to
+    row-by-row parameterized ``MERGE ... SET``.
 
     Args:
         conn: Graph database connection
@@ -807,7 +824,9 @@ def merge_relationships_batch(
         id_mapping: Mapping from (node_type, original_id) to merged_id
 
     Returns:
-        Number of relationships created
+        Number of relationships actually created (before/after count delta per
+        rel type, so idempotent MERGEs and the previously-silent no-property
+        path no longer over-report).
     """
     if not relationships:
         return 0
@@ -889,6 +908,11 @@ def merge_relationships_batch(
         # Use MERGE for relationships to avoid duplicates when the same relationship
         # is created from multiple sources (e.g., both BAML extraction and Neo4j import).
         # This ensures (from)-[r:REL]->(to) is only created once per node pair.
+        # Count before/after so the total reflects rows actually created (MERGE is
+        # idempotent, so the delta is exact) instead of the input row count, which
+        # over-reports when rows already exist or — as the old no-property path did —
+        # the MERGE silently matches nothing.
+        before = _count_relationships(conn, rel_name)
         try:
             if property_cols:
                 # Kuzu's LOAD FROM doesn't support inline property assignment
@@ -919,29 +943,33 @@ def merge_relationships_batch(
                     if set_parts:
                         merge_q += " SET " + ", ".join(set_parts)
                     kuzu_conn.execute(merge_q, parameters=params)
-                total_created += len(row_data)
             else:
-                # Build Arrow table directly for batch LOAD FROM
-                # NOTE: arrow_rel_table is read by name from this frame by Ladybug's LOAD FROM scanner.
+                # No properties: a single LOAD FROM with inline ``{key: col}``
+                # node patterns — each endpoint is a point lookup, so there is no
+                # CROSS PRODUCT (the concern that motivated the old two-stage
+                # form). NOTE: arrow_rel_table is read by name from this frame by
+                # Ladybug's LOAD FROM scanner.
+                #
+                # The previous two-stage form (``MATCH (from) WHERE from.k=from_id
+                # WITH from, to_id MATCH (to) WHERE to.k=to_id``) silently created
+                # 0 rows: ``WITH from, to_id`` dropped the LOAD FROM column binding
+                # after the first MATCH, so the second MATCH matched nothing and
+                # HAS_SECTION/HAS_SUBSECTION tables stayed empty despite the build
+                # reporting a non-zero relationship count.
                 arrow_rel_table = pa.table(  # noqa: F841
                     {
                         "from_id": [row["from_id"] for row in row_data],
                         "to_id": [row["to_id"] for row in row_data],
                     }
                 )
-                # Both endpoints must be matched in separate stages: a single
-                # comma-separated MATCH plans as a CROSS_PRODUCT of the two node
-                # tables (|from| x |to| tuples), which exhausts the buffer pool
-                # on self-referential relations over large tables.
                 merge_rel_query = f"""
                     LOAD FROM arrow_rel_table
-                    MATCH (from:{from_type}) WHERE from.{from_key_field} = from_id
-                    WITH from, to_id
-                    MATCH (to:{to_type}) WHERE to.{to_key_field} = to_id
+                    MATCH (from:{from_type} {{{from_key_field}: from_id}}),
+                          (to:{to_type} {{{to_key_field}: to_id}})
                     MERGE (from)-[:{rel_name}]->(to)
                 """
                 kuzu_conn.execute(merge_rel_query)
-                total_created += len(row_data)
+            total_created += max(0, _count_relationships(conn, rel_name) - before)
 
             # Collect Arrow table for parquet export if collector is active
             collector = get_parquet_collector()
