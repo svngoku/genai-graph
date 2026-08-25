@@ -46,8 +46,10 @@ class OutlineEntry(BaseModel):
         ..., description="The heading text EXACTLY as it appears on its own line in the document (used to locate it)."
     )
     level: int = Field(..., description="Heading level, 1 (top) to 6, inferred from numbering/TOC/indentation.")
-    description: str = Field(
-        ..., description="ONE plain-text sentence, at most 20 words, saying what this section contains."
+    description: str | None = Field(
+        default=None,
+        description="One plain-text sentence (<=20 words) naming concrete subject matter (entities, metrics, "
+        "products, scope) found under the heading. null for structural dividers with no real body. Never restate the title.",
     )
     summary: str | None = Field(
         default=None, description="Only for substantial sections: 2-3 plain-text sentences, at most 60 words."
@@ -128,12 +130,15 @@ def _context_window_for(llm_id: str) -> int | None:
 def _policy_hash(config: OutlineConfig, llm_id: str) -> str:
     """Stable short hash of the LLM + policy fields that affect the outline.
 
-    Includes a ``hybrid-v1`` tag so a cache built by the older "LLM discovers the
-    TOC" prompt (which produced ~27 coarse sections) is not reused once the
-    heading-anchored enrichment prompt ships.
+    Includes a ``hybrid-v2`` tag so caches from earlier outline prompts are not
+    reused: v1 flattened heading levels (the ``_infer_levels`` heuristic overrode
+    well-structured Markdown, e.g. the AMD 10-K's clean H1-H5 hierarchy collapsed
+    to mostly level 1) and forced a description for every heading (many were mere
+    title restatements). v2 respects Markdown heading levels, allows null
+    descriptions for structural dividers, and drops title-restatement descriptions.
     """
     payload = (
-        f"hybrid-v1|{llm_id}|{config.summary_min_tokens}|"
+        f"hybrid-v2|{llm_id}|{config.summary_min_tokens}|"
         f"{config.max_description_words}|{config.max_summary_words}"
     )
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12]
@@ -157,14 +162,55 @@ def _clean_markdown_for_prompt(raw: str) -> str:
     return _PAGE_MARKER_RE.sub("", raw)
 
 
+# Words that carry no routing signal on their own: generic filing/document
+# labels, announcement verbs, and common English connectors. Used to spot
+# descriptions that merely rephrase the heading title (a description whose
+# significant words are all already in the title adds nothing for routing).
+_RESTATEMENT_STOPWORDS = frozenset(
+    {
+        "section", "document", "filing", "report", "annual", "information", "overview",
+        "statement", "part", "item", "note", "notes", "chapter", "page", "content",
+        "contents", "data", "details", "type", "form", "kind", "following", "above",
+        "below", "begins", "describes", "provides", "lists", "summarizes", "outlines",
+        "explains", "introduces", "presents", "shows", "states", "indicates", "notes",
+        "discusses", "covers", "includes", "contains", "details", "the", "a", "an", "of",
+        "for", "to", "in", "on", "and", "or", "as", "is", "are", "this", "these",
+        "those", "its", "their", "with", "by", "from", "that", "which", "such", "into",
+        "about", "under", "per", "also", "both", "each", "all", "any", "some",
+    }
+)
+
+
+def _significant_words(text: str) -> set[str]:
+    """Lowercase alphanumeric tokens of length >= 2, minus the restatement stopword set."""
+    return {w for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(w) >= 2} - _RESTATEMENT_STOPWORDS
+
+
+def _is_title_restatement(title: str, description: str | None) -> bool:
+    """True when a description adds no new significant word beyond its heading title.
+
+    A description whose significant words are all already in the title (after
+    dropping generic filing vocabulary) merely rephrases the heading, so it is
+    dropped to a clean ``None`` rather than a useless one-liner. A description
+    made entirely of generic words is always a restatement (empty set is a subset
+    of any title); a description with real content words is never dropped.
+    """
+    if not description:
+        return False
+    return _significant_words(description) <= _significant_words(title)
+
+
 def _clean_outline(outline: DocumentOutline, config: OutlineConfig) -> DocumentOutline:
-    """Strip Markdown noise and hard-truncate every description/summary the model returned."""
+    """Strip Markdown noise, drop title-restatements, and hard-truncate descriptions/summaries."""
     cleaned_sections: list[OutlineEntry] = []
     for entry in outline.sections:
+        description = _clean_text(entry.description, config.max_description_chars) if entry.description else None
+        if description and _is_title_restatement(entry.title, description):
+            description = None
         cleaned_sections.append(
             entry.model_copy(
                 update={
-                    "description": _clean_text(entry.description, config.max_description_chars),
+                    "description": description,
                     "summary": _clean_text(entry.summary, config.max_summary_chars) if entry.summary else None,
                 }
             )
@@ -281,9 +327,21 @@ def _build_prompt(*, filename: str, raw: str, config: OutlineConfig) -> tuple[st
         - `title`: the heading text EXACTLY as listed (verbatim).
         - `level`: the level listed for that heading.
         - `description`: ONE plain-text sentence, at most {config.max_description_words}
-          words, saying what this section CONTAINS (based on the document text under
-          that heading). No Markdown, no headings, no bullets, no line breaks. Do not
-          restate the title; name the concrete subject matter so the agent can route.
+          words, naming the CONCRETE subject matter under that heading — the specific
+          entities, products, metrics, line items, years, or scope found in the body
+          text. No Markdown, no headings, no bullets, no line breaks.
+          - NEVER restate or paraphrase the title. If the title already names the
+            subject, your sentence must add facts not inferable from the title alone.
+          - If the heading is a structural divider with no real body text (e.g. "PART I",
+            "FORM 10-K", "INDEX", or a repeated company-name header above a statement),
+            set `description` to null — a restatement adds nothing for routing.
+          - Bad: title "PART I" -> "Begins Part I of the annual report."
+            Good: title "Data Center Products" -> "Lists server CPUs (Genoa), GPUs
+            (Instinct MI300), DPUs and adaptive SoCs with their target workloads."
+          - Bad: title "Non-custom products" -> "Describes revenue recognition for
+            non-custom products."
+            Good: title "Non-custom products" -> "Off-the-shelf CPUs/GPUs recognized
+            as revenue on delivery and transfer of control (ASC 606)."
         - `summary`: ONLY for substantial sections (more than roughly
           {config.summary_min_tokens} tokens, or {config.summary_min_tokens * 4} words):
           2-3 plain-text sentences, at most {config.max_summary_words} words. Leave null

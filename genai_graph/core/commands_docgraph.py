@@ -435,7 +435,8 @@ class DocGraphCommands(CliTopCommand):
                             include_sections=True,
                             include_summaries=summaries,
                             max_level=max_level,
-                        )
+                        ),
+                        soft_wrap=True,
                     )
                     return
                 subfolders = [r for r in get_folder_tree(backend, folder_id) if r["parent_folder_id"] == folder_id]
@@ -450,7 +451,10 @@ class DocGraphCommands(CliTopCommand):
                 return
 
             if yaml_out:
-                console.print(document_toc_yaml(backend, document, include_summaries=summaries, max_level=max_level))
+                console.print(
+                    document_toc_yaml(backend, document, include_summaries=summaries, max_level=max_level),
+                    soft_wrap=True,
+                )
                 return
 
             rows = get_document_toc(backend, document)
@@ -492,7 +496,10 @@ class DocGraphCommands(CliTopCommand):
             backend = KuzuBackend()
             backend.connect(db_path)
             folder_id = _resolve_folder_ref_or_exit(backend, folder)
-            console.print(folder_toc_yaml(backend, folder_id, include_sections=sections, include_summaries=summaries))
+            console.print(
+                folder_toc_yaml(backend, folder_id, include_sections=sections, include_summaries=summaries),
+                soft_wrap=True,
+            )
 
         @cli_app.command("cat")
         def cat(

@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from genai_graph.kg.document_graph.tree_parser import parse_markdown_tree
+from genai_graph.kg.document_graph.tree_parser import (
+    _infer_levels,
+    _outline_depth,
+    _strip_surrounding_emphasis,
+    parse_markdown_tree,
+)
 
 
 @pytest.mark.unit
@@ -92,3 +97,44 @@ class TestParseMarkdownTree:
         raw = "#\n\nbody\n"
         sections = parse_markdown_tree(raw)
         assert sections[0].title == "(untitled H1)"
+
+
+@pytest.mark.unit
+class TestInferLevels:
+    def test_well_structured_markdown_keeps_its_levels(self) -> None:
+        # A real H1/H2/H3 hierarchy is not degenerate, so the Markdown levels are
+        # authoritative and must be returned unchanged (the AMD 10-K case).
+        titles = ["PART I", "Our Industry", "Data Center Market"] * 5
+        md_levels = [1, 2, 3] * 5
+        assert _infer_levels(titles, md_levels) == md_levels
+
+    def test_degenerate_flat_with_numbering_re_derives(self) -> None:
+        # All-H1 (degenerate) but coherently numbered -> levels come from the outline
+        # numbers (1 -> 1, 1.1 -> 2), unnumbered nest one below the last numbered.
+        titles = ["1. Intro", "Body", "1.1 Detail", "2. Next"]
+        assert _infer_levels(titles, [1, 1, 1, 1]) == [1, 2, 2, 1]
+
+    def test_degenerate_flat_without_numbering_stays_flat(self) -> None:
+        titles = ["Alpha", "Beta", "Gamma", "Delta"]
+        assert _infer_levels(titles, [1, 1, 1, 1]) == [1, 1, 1, 1]
+
+    def test_interest_rate_is_not_an_outline_number(self) -> None:
+        assert _outline_depth("3.924% Senior Notes") is None
+        assert _outline_depth("1. Financial Statements") == 1
+        assert _outline_depth("3.4 Device life cycle") == 2
+        assert _outline_depth("10 Foo") == 1
+
+
+@pytest.mark.unit
+class TestStripSurroundingEmphasis:
+    def test_balanced_wrap_is_stripped(self) -> None:
+        assert _strip_surrounding_emphasis("***Original Equipment Manufacturers***") == "Original Equipment Manufacturers"
+        assert _strip_surrounding_emphasis("**Advanced Micro Devices, Inc.**") == "Advanced Micro Devices, Inc."
+        assert _strip_surrounding_emphasis("*Non-custom products*") == "Non-custom products"
+
+    def test_dangling_unbalanced_is_stripped(self) -> None:
+        assert _strip_surrounding_emphasis("**Certification of Chief Executive Officer") == "Certification of Chief Executive Officer"
+
+    def test_backticks_and_internal_math_are_preserved(self) -> None:
+        assert _strip_surrounding_emphasis("See `footnote`") == "See `footnote`"
+        assert _strip_surrounding_emphasis("Note: 2 * 3") == "Note: 2 * 3"

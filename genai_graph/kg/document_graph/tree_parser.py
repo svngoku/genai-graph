@@ -16,6 +16,7 @@ section and can be reconstructed exactly by concatenating the sections'
 from __future__ import annotations
 
 import re
+from collections import Counter
 
 from pydantic import BaseModel, Field
 
@@ -34,13 +35,46 @@ _DEDUP_EMPHASIS_RE = re.compile(r"[*_`]{1,3}")
 _DEDUP_WS_RE = re.compile(r"\s+")
 
 # Leading outline number of a heading, ignoring surrounding Markdown emphasis
-# (e.g. "**3.4 Device life cycle**" → "3.4"). The depth (dot-separated component
-# count) gives the heading's logical level in a numbered document.
-_OUTLINE_NUMBER_RE = re.compile(r"^\**\s*(\d+(?:\.\d+)*)\b")
+# (e.g. "**3.4 Device life cycle**" -> "3.4"). The depth (dot-separated component
+# count) gives the heading's logical level in a numbered document. The number
+# must be followed by whitespace, an optional trailing ".", or end-of-string, so
+# values prefixed with "%" (interest rates like "3.924% Senior Notes") are NOT
+# mistaken for outline numbers.
+_OUTLINE_NUMBER_RE = re.compile(r"^\**\s*(\d+(?:\.\d+)*)(?:\.)?(?=\s|$)")
+
+# Surrounding Markdown emphasis that wraps a whole heading title
+# (e.g. "***Original Equipment Manufacturers***" or "**Advanced Micro Devices,
+# Inc.**"). Stripped from the stored title so the table of contents is clean; the
+# section ``text`` still carries the raw line, so the document stays
+# byte-for-byte reconstructable.
+_SURROUNDING_EMPHASIS_RE = re.compile(r"^([*_`]{1,3})(.*?)\1$")
+# Unbalanced/dangling emphasis a converter left at an edge with no closer
+# (e.g. "**Certification of Chief Executive Officer"). Only ``*``/``_`` (not
+# backticks, which are often inline code) and only when glued to text, so a
+# standalone separator like ``* * *`` is left untouched.
+_LEADING_DANGLING_RE = re.compile(r"^[*_]{1,3}(?=\S)")
+_TRAILING_DANGLING_RE = re.compile(r"(?<=\S)[*_]{1,3}$")
+
+
+def _strip_surrounding_emphasis(title: str) -> str:
+    """Remove Markdown emphasis that wraps (or dangles at the edge of) a heading title.
+
+    Balanced wrapping (``***foo***``) is unwrapped first; then any unbalanced
+    leading/trailing ``*``/``_`` run glued to text is trimmed, so a converter's
+    dangling ``**`` does not pollute the stored title.
+    """
+    s = title.strip()
+    m = _SURROUNDING_EMPHASIS_RE.match(s)
+    while m:
+        s = m.group(2).strip()
+        m = _SURROUNDING_EMPHASIS_RE.match(s)
+    s = _LEADING_DANGLING_RE.sub("", s)
+    s = _TRAILING_DANGLING_RE.sub("", s)
+    return s
 
 
 def _outline_depth(title: str) -> int | None:
-    """Depth of a heading's leading outline number (``3.4`` → 2), or None if unnumbered."""
+    """Depth of a heading's leading outline number (``3.4`` -> 2), or None if unnumbered."""
     match = _OUTLINE_NUMBER_RE.match(title)
     if not match:
         return None
@@ -89,15 +123,30 @@ def _dedupe_page_header_headings(
 
 
 def _infer_levels(titles: list[str], md_levels: list[int]) -> list[int]:
-    """Derive logical heading levels for a numbered document from its outline numbers.
+    """Derive logical heading levels, trusting Markdown unless it is degenerate.
 
-    PDF/Doc → Markdown conversions routinely emit inconsistent ``#`` levels (the
-    same "3.1"/"3.5" heading may come out as H4 or H1). When a document is clearly
-    numbered, the outline number is the reliable structure signal: a heading's level
-    is its number's depth (``1`` → 1, ``1.1`` → 2), and an unnumbered heading nests
-    one level below the most recent numbered heading. Documents without meaningful
-    numbering keep their original Markdown levels.
+    PDF/Doc -> Markdown conversions sometimes emit inconsistent ``#`` levels (the
+    same "3.1"/"3.5" heading may come out as H4 or H1). When the Markdown levels
+    are *degenerate* (a single distinct level, or one level covering >=85% of
+    headings) AND the document carries a coherent outline-number scheme, the
+    outline number is the reliable structure signal: a heading's level is its
+    number's depth (``1`` -> 1, ``1.1`` -> 2), and an unnumbered heading nests one
+    level below the most recent numbered heading.
+
+    When the Markdown levels are *not* degenerate, they are authoritative and
+    returned unchanged: many converters (and hand-authored Markdown) already encode
+    the real H1-H6 hierarchy, and a handful of coincidentally numeric titles
+    (interest rates, exhibit indices) must not be allowed to flatten it.
     """
+    if not md_levels:
+        return md_levels
+    counts = Counter(md_levels)
+    modal_count = counts.most_common(1)[0][1]
+    distinct = len(counts)
+    degenerate = distinct <= 1 or modal_count / len(md_levels) >= 0.85
+    if not degenerate:
+        return md_levels
+
     depths = [_outline_depth(t) for t in titles]
     if sum(d is not None for d in depths) < 3:
         return md_levels
@@ -164,7 +213,7 @@ def detect_headings(raw: str) -> list[tuple[str, int, int]]:
             line_start = (tok.map[0] if tok.map else 0) + 1
             title = ""
             if i + 1 < len(tokens) and tokens[i + 1].type == "inline":
-                title = tokens[i + 1].content.strip()
+                title = _strip_surrounding_emphasis(tokens[i + 1].content.strip())
             # Drop page-marker headings ("Page 12"): their text stays inline.
             if not _PAGE_MARKER_RE.match(title):
                 headings.append((title, level, line_start))

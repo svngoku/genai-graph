@@ -22,8 +22,8 @@ def _outline() -> DocumentOutline:
         document_description="A doc.",
         document_summary="A doc summary.",
         sections=[
-            OutlineEntry(title="Title", level=1, description="The title."),
-            OutlineEntry(title="Section A", level=2, description="A section.", summary="A summary."),
+            OutlineEntry(title="Title", level=1, description="Company overview and fiscal-year basis."),
+            OutlineEntry(title="Section A", level=2, description="Product lines and target markets.", summary="A summary."),
         ],
     )
 
@@ -51,7 +51,7 @@ class TestExtractOutline:
         assert len(result.outline.sections) == 2
         assert result.outline.sections[0].title == "Title"
         assert result.outline.sections[0].level == 1  # algorithmic level is authoritative
-        assert result.outline.sections[0].description == "The title."
+        assert result.outline.sections[0].description == "Company overview and fiscal-year basis."
         assert list(tmp_path.rglob("*.json"))  # cache file written
 
     def test_prompt_uses_template_variables_not_baked_text(self, tmp_path: Path) -> None:
@@ -141,3 +141,34 @@ class TestExtractOutline:
 
         assert result.outline is not None
         assert result.llm_calls == 1  # re-extracted despite a present-but-corrupt cache
+
+
+@pytest.mark.unit
+class TestRestatementFilter:
+    def test_restatement_descriptions_are_dropped(self) -> None:
+        from genai_graph.kg.document_graph.outline_extract import _is_title_restatement
+
+        assert _is_title_restatement("PART I", "Begins Part I of the annual report.")
+        assert _is_title_restatement("Gaming Segment", "Introduces the Gaming segment.")
+        assert _is_title_restatement("Our Strategy", "Outlines our strategy.")
+        assert not _is_title_restatement("Data Center Products", "Lists server CPUs, GPUs and DPUs.")
+        assert not _is_title_restatement("Non-custom products", "Off-the-shelf CPUs/GPUs recognized on delivery (ASC 606).")
+        assert not _is_title_restatement("Title", None)
+
+    def test_clean_outline_drops_restatements_keeps_substantive(self, tmp_path: Path) -> None:
+        from genai_graph.kg.document_graph.outline_extract import _clean_outline
+
+        outline = DocumentOutline(
+            document_description="A doc.",
+            document_summary="A doc summary.",
+            sections=[
+                OutlineEntry(title="PART I", level=1, description="Begins Part I of the annual report."),
+                OutlineEntry(title="Data Center Products", level=2, description="Server CPUs, GPUs and DPUs."),
+                OutlineEntry(title="Index", level=1, description=None),
+            ],
+        )
+        cleaned = _clean_outline(outline, _config(tmp_path))
+        descs = [s.description for s in cleaned.sections]
+        assert descs[0] is None  # restatement dropped
+        assert descs[1] == "Server CPUs, GPUs and DPUs."  # substantive kept
+        assert descs[2] is None  # null stays null
