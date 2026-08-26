@@ -1,6 +1,6 @@
 ---
 name: navigate-document-graph
-description: Answer questions over a Document Graph (Folders → Documents → Markdown sections) stored in a Ladybug database by navigating the heading hierarchy and reading only the relevant sections — vectorless agentic RAG. Use whenever the user asks about the content of ingested documents and you have the get_folder_toc, get_document_toc, get_section_content, search_sections, and list_documents tools available.
+description: Answer questions over a Document Graph (Folders → Documents → Markdown sections) stored in a Ladybug database by navigating the heading hierarchy and reading only the relevant sections — hybrid agentic RAG (vector + keyword search). Use whenever the user asks about the content of ingested documents and you have the get_folder_toc, get_document_toc, get_section_content, search_sections, and list_documents tools available.
 ---
 
 # Navigate the Document Graph
@@ -26,9 +26,12 @@ holds Folders → Documents → Markdown sections; every section has a one-line
    Markdown text of those sections only.
 
 4. **Search when lost.** If the TOC descriptions do not point you to an answer,
-   call `search_sections(keyword="<term>", folder_id=<id>)` to keyword-search
-   section titles and body text across the folder. Use the returned section ids
-   with `get_section_content`.
+   call `search_sections(query="<natural-language question>", folder_id=<id>)`.
+   This runs a hybrid search (vector similarity over SectionChunks fused with
+   BM25 keyword search) and returns ranked sections best-first with a relevance
+   score and, when a chunk matched, a short snippet of the matching text. Use the
+   returned section ids with `get_section_content`. Prefer one good search plus
+   `get_document_toc` over many blind searches — see the map-first rule below.
 
 5. **Iterate.** A single document rarely answers a complex question. Repeat
    across the relevant documents and sections, refining keywords, until you have
@@ -39,7 +42,7 @@ holds Folders → Documents → Markdown sections; every section has a one-line
 - `get_folder_toc` / `list_documents` → "which documents exist?"
 - `get_document_toc` → "what sections does this document have?" (the map)
 - `get_section_content` → "show me the actual text of these sections"
-- `search_sections` → "where does the graph mention <keyword>?"
+- `search_sections` → "where does the graph mention <query>?" (ranked hybrid vector + keyword)
 
 ## Rules
 
@@ -47,18 +50,28 @@ holds Folders → Documents → Markdown sections; every section has a one-line
   and name the source document filename.
 - **No hallucination.** If a tool returns "No ... found" or a section does not
   contain the answer, say the information is not present rather than guessing.
+- **Corpus only via the graph.** The document corpus is reachable ONLY through
+  the graph tools (`get_folder_toc`, `get_document_toc`, `get_section_content`,
+  `search_sections`). Do NOT use `read_file`, `grep`, `glob`, or `ls` to read the
+  source documents or their markdown — those file tools, when present, are for
+  reading skill and reference files only, never for reading the corpus.
 - **Be economical.** Do not dump whole documents into your answer — synthesize.
   Read only the sections you need; the TOC descriptions exist to keep you from
   reading everything.
 - **Large documents.** If a document has many sections, pass `max_level=2` to
   `get_document_toc` first for the top-level outline, then drill into the
   relevant subtree.
+- **Map before you re-search.** Do not call `search_sections` more than three
+  times in a row. If two searches have not landed on the answer, stop and call
+  `get_document_toc` on the most relevant document to see its section map, then
+  read the specific section with `get_section_content`. One grounded read beats
+  another blind search.
 
 ## Example: "What SLAs does the RFP require?"
 
 1. `get_folder_toc(folder_id="folder_273e65da416b2e72")` → see the documents.
 2. Spot an "Appendix 6. SLA" document → `get_document_toc(document_id="<its hash>")`.
 3. Read its section descriptions → `get_section_content(section_ids="<sla section ids>")`.
-4. Also `search_sections(keyword="availability", folder_id="folder_273e65da416b2e72")`
+4. Also `search_sections(query="availability", folder_id="folder_273e65da416b2e72")`
    to catch SLA clauses mentioned inside the main RFP body.
 5. Answer, citing each SLA with its section id and the document it came from.

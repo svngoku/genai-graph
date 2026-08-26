@@ -9,6 +9,8 @@ agent_defaults:
   type: react
   middlewares:
     - class: genai_tk.agents.langchain.middleware.rich_middleware.RichToolCallMiddleware
+    - class: genai_graph.agent.middleware.map_before_search.MapBeforeSearchMiddleware
+      max_consecutive: 3
   checkpointer:
     type: none
   default_profile: docgraph

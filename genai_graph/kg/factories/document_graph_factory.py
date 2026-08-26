@@ -47,9 +47,12 @@ from genai_graph.kg.nodes.document import (
     FolderNode,
 )
 from genai_graph.kg.nodes.document_section import (
+    HAS_CHUNK,
     HAS_SECTION,
     HAS_SUBSECTION,
     MarkdownSection,
+    SectionChunk,
+    SectionChunkNode,
     SectionNode,
 )
 from genai_graph.kg.schema.core import GraphSchema
@@ -100,8 +103,8 @@ class DocumentGraphFactory(KgFactory):
     def build_schema(self) -> GraphSchema:
         return GraphSchema(
             root_model_class=None,
-            nodes=[FolderNode, DocumentNode, SectionNode],
-            relations=[CONTAINS_DOC, HAS_SUBFOLDER, HAS_SECTION, HAS_SUBSECTION],
+            nodes=[FolderNode, DocumentNode, SectionNode, SectionChunkNode],
+            relations=[CONTAINS_DOC, HAS_SUBFOLDER, HAS_SECTION, HAS_SUBSECTION, HAS_CHUNK],
         )
 
     def get_keys(self) -> list[str]:

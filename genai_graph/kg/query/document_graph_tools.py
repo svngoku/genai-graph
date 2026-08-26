@@ -25,8 +25,9 @@ from langchain_core.tools import BaseTool, tool
 from loguru import logger
 
 from genai_graph.kg.backend import KgBackend, KuzuBackend
+from genai_graph.kg.embeddings_handler import EmbeddingsHandler
 from genai_graph.kg.nodes.document import DocumentNode, FolderNode
-from genai_graph.kg.nodes.document_section import SectionNode
+from genai_graph.kg.nodes.document_section import SectionChunkNode, SectionNode
 
 _DOCUMENT_LABEL = DocumentNode.node_class.__name__
 _SECTION_LABEL = SectionNode.node_class.__name__
@@ -644,49 +645,214 @@ def reconstruct_section(
     return (text, query) if return_query else text
 
 
-def search_sections(
-    backend: KgBackend, keyword: str, limit: int = 20, folder_id: str | None = None, return_query: bool = False
-) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], str]:
-    """Cross-document keyword search over section titles and body text (no embeddings).
+_CHUNK_LABEL = SectionChunkNode.node_class.__name__
+# Index names must match genai_graph.kg.document_graph.retrieval defaults.
+_CHUNK_VECTOR_INDEX = "chunk_embedding_index"
+_SECTION_FTS_INDEX = "section_fts"
+_RRF_K = 60
+_HNSW_OVERFETCH = 5
+_MAX_CHUNK_SNIPPET = 180
 
-    Args:
-        folder_id: When given, restrict the search to documents under this folder's subtree.
+
+def _scope_markdown_hashes(backend: KgBackend, folder_id: str | None) -> set[str] | None:
+    """Return the markdown_hash set under *folder_id*'s subtree, or None (no scope).
+
+    Used to filter ranked candidates to one folder without folding the folder
+    traversal into the vector/FTS index calls themselves.
     """
     if folder_id is None:
-        query = f"""
-            MATCH (s:{_SECTION_LABEL})
-            WHERE s.title CONTAINS $keyword OR s.text CONTAINS $keyword
-            RETURN s.markdown_hash AS markdown_hash, s.section_id AS section_id, s.title AS title,
-                   s.level AS level, s.line_start AS line_start
-            ORDER BY s.markdown_hash, s.line_start
-            LIMIT $limit
-        """
+        return None
+    if _has_relationship(backend, "HAS_SUBFOLDER"):
+        query = (
+            f"MATCH (root:{_FOLDER_LABEL} {{folder_id: $fid}})-[:HAS_SUBFOLDER*0..30]->(f:{_FOLDER_LABEL})"
+            f"-[:CONTAINS]->(d:{_DOCUMENT_LABEL}) RETURN DISTINCT d.markdown_hash AS mh"
+        )
+    else:
+        query = f"MATCH (f:{_FOLDER_LABEL} {{folder_id: $fid}})-[:CONTAINS]->(d:{_DOCUMENT_LABEL}) RETURN DISTINCT d.markdown_hash AS mh"
+    rows, _ = _query_rows(backend, query, {"fid": folder_id})
+    return {r["mh"] for r in rows}
+
+
+def _semantic_section_hits(
+    backend: KgBackend, query_vec: list[float], limit: int, allowed: set[str] | None
+) -> list[dict[str, Any]]:
+    """HNSW search over SectionChunk embeddings, deduped to parent sections (best chunk)."""
+    k = max(limit * _HNSW_OVERFETCH, 50)
+    query = (
+        f"CALL QUERY_VECTOR_INDEX('{_CHUNK_LABEL}','{_CHUNK_VECTOR_INDEX}', $query_vector, {k}) "
+        "RETURN node.section_id AS section_id, node.markdown_hash AS markdown_hash, "
+        "node.chunk_id AS chunk_id, node.chunk_text AS chunk_text, distance AS distance "
+        "ORDER BY distance ASC"
+    )
+    rows, _ = _query_rows(backend, query, {"query_vector": query_vec})
+    best: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        if allowed is not None and r.get("markdown_hash") not in allowed:
+            continue
+        sid = r["section_id"]
+        if sid not in best or r["distance"] < best[sid]["distance"]:
+            best[sid] = r
+    return sorted(best.values(), key=lambda r: r["distance"])[:limit]
+
+
+def _contains_section_hits(
+    backend: KgBackend, keyword: str, limit: int, folder_id: str | None
+) -> list[dict[str, Any]]:
+    """Legacy CONTAINS search (fallback when the FTS index is unavailable)."""
+    where = "WHERE s.title CONTAINS $keyword OR s.text CONTAINS $keyword"
+    ret = (
+        "RETURN s.markdown_hash AS markdown_hash, s.section_id AS section_id, s.title AS title, "
+        "s.level AS level, s.line_start AS line_start "
+        "ORDER BY s.markdown_hash, s.line_start LIMIT $limit"
+    )
+    if folder_id is None:
+        query = f"MATCH (s:{_SECTION_LABEL}) {where} {ret}"
         params: dict[str, Any] = {"keyword": keyword, "limit": limit}
     elif _has_relationship(backend, "HAS_SUBFOLDER"):
-        query = f"""
-            MATCH (root:{_FOLDER_LABEL} {{folder_id: $folder_id}})-[:HAS_SUBFOLDER*0..30]->(f:{_FOLDER_LABEL})
-            MATCH (f)-[:CONTAINS]->(d:{_DOCUMENT_LABEL})
-            MATCH (s:{_SECTION_LABEL} {{markdown_hash: d.markdown_hash}})
-            WHERE s.title CONTAINS $keyword OR s.text CONTAINS $keyword
-            RETURN s.markdown_hash AS markdown_hash, s.section_id AS section_id, s.title AS title,
-                   s.level AS level, s.line_start AS line_start
-            ORDER BY s.markdown_hash, s.line_start
-            LIMIT $limit
-        """
+        query = (
+            f"MATCH (root:{_FOLDER_LABEL} {{folder_id: $folder_id}})-[:HAS_SUBFOLDER*0..30]->(f:{_FOLDER_LABEL}) "
+            f"MATCH (f)-[:CONTAINS]->(d:{_DOCUMENT_LABEL}) "
+            f"MATCH (s:{_SECTION_LABEL} {{markdown_hash: d.markdown_hash}}) {where} {ret}"
+        )
         params = {"keyword": keyword, "limit": limit, "folder_id": folder_id}
     else:
-        query = f"""
-            MATCH (f:{_FOLDER_LABEL} {{folder_id: $folder_id}})-[:CONTAINS]->(d:{_DOCUMENT_LABEL})
-            MATCH (s:{_SECTION_LABEL} {{markdown_hash: d.markdown_hash}})
-            WHERE s.title CONTAINS $keyword OR s.text CONTAINS $keyword
-            RETURN s.markdown_hash AS markdown_hash, s.section_id AS section_id, s.title AS title,
-                   s.level AS level, s.line_start AS line_start
-            ORDER BY s.markdown_hash, s.line_start
-            LIMIT $limit
-        """
+        query = (
+            f"MATCH (f:{_FOLDER_LABEL} {{folder_id: $folder_id}})-[:CONTAINS]->(d:{_DOCUMENT_LABEL}) "
+            f"MATCH (s:{_SECTION_LABEL} {{markdown_hash: d.markdown_hash}}) {where} {ret}"
+        )
         params = {"keyword": keyword, "limit": limit, "folder_id": folder_id}
-    rows, q = _query_rows(backend, query, params)
-    return (rows, q) if return_query else rows
+    rows, _ = _query_rows(backend, query, params)
+    return rows
+
+
+def _keyword_section_hits(
+    backend: KgBackend, query: str, limit: int, folder_id: str | None, allowed: set[str] | None
+) -> list[dict[str, Any]]:
+    """BM25 (FTS) search over MarkdownSection; falls back to CONTAINS."""
+    if isinstance(backend, KuzuBackend):
+        try:
+            backend.ensure_fts_extension()
+            fts = (
+                f"CALL QUERY_FTS_INDEX('{_SECTION_LABEL}','{_SECTION_FTS_INDEX}', $query) "
+                "RETURN node.markdown_hash AS markdown_hash, node.section_id AS section_id, "
+                "node.title AS title, node.level AS level, node.line_start AS line_start, "
+                "score AS score ORDER BY score DESC LIMIT $limit"
+            )
+            rows, _ = _query_rows(backend, fts, {"query": query, "limit": limit})
+            if allowed is not None:
+                rows = [r for r in rows if r.get("markdown_hash") in allowed]
+            return rows
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("FTS search unavailable, falling back to CONTAINS: {}", exc)
+    rows = _contains_section_hits(backend, query, limit, folder_id)
+    if allowed is not None:
+        rows = [r for r in rows if r.get("markdown_hash") in allowed]
+    return rows
+
+
+def _fetch_section_meta(backend: KgBackend, section_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """Return section_id -> {title, level, line_start, markdown_hash} for the given ids."""
+    if not section_ids:
+        return {}
+    query = (
+        f"MATCH (s:{_SECTION_LABEL}) WHERE s.section_id IN $ids "
+        "RETURN s.section_id AS section_id, s.title AS title, s.level AS level, "
+        "s.line_start AS line_start, s.markdown_hash AS markdown_hash"
+    )
+    rows, _ = _query_rows(backend, query, {"ids": section_ids})
+    return {r["section_id"]: r for r in rows}
+
+
+def search_sections(
+    backend: KgBackend,
+    query: str,
+    limit: int = 20,
+    folder_id: str | None = None,
+    *,
+    mode: str = "hybrid",
+    embeddings_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Search sections by hybrid (HNSW + BM25/RRF), semantic, or keyword mode.
+
+    Args:
+        query: Natural-language query (embedded for semantic; used as the BM25
+            term for keyword).
+        limit: Max sections to return.
+        folder_id: Restrict to one folder's subtree.
+        mode: "hybrid" (default) fuses vector + BM25 via reciprocal rank fusion;
+            "semantic" uses only the SectionChunk vector index; "keyword" uses only
+            FTS/BM25 (CONTAINS fallback). Hybrid and semantic degrade to keyword
+            search when embeddings are unavailable.
+        embeddings_id: Model id for query embedding (required for the vector leg).
+            None disables semantic/hybrid vector search.
+
+    Returns:
+        Ranked section dicts (best first) with ``section_id``, ``markdown_hash``,
+        ``title``, ``level``, ``line_start``, ``score`` and, when a chunk matched,
+        ``matched_chunk``.
+    """
+    allowed = _scope_markdown_hashes(backend, folder_id)
+
+    sem: list[dict[str, Any]] = []
+    if mode in ("hybrid", "semantic") and embeddings_id and isinstance(backend, KuzuBackend):
+        try:
+            handler = EmbeddingsHandler(embeddings_id=embeddings_id)
+            query_vec = handler.compute_embeddings(query)
+            sem = _semantic_section_hits(backend, query_vec, limit, allowed)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Semantic search unavailable, keyword-only: {}", exc)
+            sem = []
+
+    kw: list[dict[str, Any]] = []
+    if mode in ("hybrid", "keyword") or not sem:
+        kw = _keyword_section_hits(backend, query, limit, folder_id, allowed)
+
+    sem_sorted = sorted(sem, key=lambda r: r["distance"])
+    sem_rank = {r["section_id"]: i for i, r in enumerate(sem_sorted)}
+    sem_by_sid = {r["section_id"]: r for r in sem_sorted}
+
+    kw_sorted = sorted(kw, key=lambda r: (r.get("score") is None, -(r.get("score") or 0)))
+    kw_rank = {r["section_id"]: i for i, r in enumerate(kw_sorted)}
+    kw_by_sid = {r["section_id"]: r for r in kw}
+
+    sem_available = bool(sem)
+    all_sids = set(sem_rank) | set(kw_rank)
+    meta = _fetch_section_meta(backend, list(all_sids))
+
+    results: list[dict[str, Any]] = []
+    for sid in all_sids:
+        m = meta.get(sid, {})
+        srow = sem_by_sid.get(sid, {})
+        krow = kw_by_sid.get(sid, {})
+        if mode == "hybrid" and sem_available:
+            sc = 0.0
+            if sid in sem_rank:
+                sc += 1.0 / (_RRF_K + sem_rank[sid] + 1)
+            if sid in kw_rank:
+                sc += 1.0 / (_RRF_K + kw_rank[sid] + 1)
+        elif mode == "semantic" and sem_available:
+            d = srow.get("distance")
+            sc = (1.0 - (d / 2.0)) if d is not None else 0.0
+        else:  # keyword, or hybrid/semantic degraded to keyword-only
+            sc = krow.get("score") or 0.0
+        chunk = srow.get("chunk_text")
+        if chunk and len(chunk) > _MAX_CHUNK_SNIPPET:
+            chunk = chunk[:_MAX_CHUNK_SNIPPET] + "…"
+        results.append(
+            {
+                "section_id": sid,
+                "markdown_hash": m.get("markdown_hash") or srow.get("markdown_hash") or krow.get("markdown_hash"),
+                "title": m.get("title") or krow.get("title"),
+                "level": m.get("level") or krow.get("level"),
+                "line_start": m.get("line_start") or krow.get("line_start"),
+                "score": round(sc, 6),
+                "matched_chunk": chunk,
+                "distance": srow.get("distance"),
+            }
+        )
+
+    results.sort(key=lambda r: r["score"], reverse=True)
+    return results[:limit]
 
 
 def _connect(db_path: str) -> KgBackend:
@@ -702,11 +868,13 @@ def _tool_error(exc: Exception) -> str:
     return f"Error: {type(exc).__name__}: {exc}"
 
 
-def create_document_graph_tools(db_path: str) -> list[BaseTool]:
+def create_document_graph_tools(db_path: str, *, embeddings_id: str | None = None) -> list[BaseTool]:
     """Build the LangChain tools an agent uses to navigate a Document Graph.
 
     Args:
         db_path: Path to the Ladybug database holding the ingested graph.
+        embeddings_id: Optional embeddings model id enabling the hybrid (vector +
+            BM25) ``search_sections`` mode. None keeps keyword search only.
 
     Returns:
         ``[list_documents, get_document_toc, get_folder_toc, get_section_content, search_sections]`` tools.
@@ -778,22 +946,31 @@ def create_document_graph_tools(db_path: str) -> list[BaseTool]:
         return "\n\n---\n\n".join(f"### [{r['section_id']}] {r['title']}\n\n{r['text']}" for r in rows)
 
     @tool("search_sections")
-    def _search_sections(keyword: str, limit: int = 20, folder_id: str | None = None) -> str:
-        """Cross-document keyword search over section titles and text (no embeddings).
+    def _search_sections(query: str, limit: int = 20, folder_id: str | None = None, mode: str = "hybrid") -> str:
+        """Semantic + keyword search over section titles, text, and chunks, ranked by relevance.
 
-        Pass `folder_id` to restrict the search to one folder's subtree.
+        Hybrid (default) fuses SectionChunk vector search with BM25 keyword search
+        (FTS over section title/text) via reciprocal rank fusion. Use ``mode="semantic"``
+        or ``mode="keyword"`` for one side only. Pass ``folder_id`` to restrict to one
+        folder's subtree. Results are ranked best-first with a relevance score and,
+        when a chunk matched, a short snippet of the matching text.
         """
         try:
             backend = _connect(db_path)
             resolved = resolve_folder_id(backend, folder_id) if folder_id else None
-            rows = search_sections(backend, keyword, limit, folder_id=resolved)
+            rows = search_sections(
+                backend, query, limit=limit, folder_id=resolved, mode=mode, embeddings_id=embeddings_id
+            )
         except Exception as exc:  # noqa: BLE001
             return _tool_error(exc)
         if not rows:
-            return f"No sections matched keyword: {keyword!r}"
-        return "\n".join(
-            f"- [{r['section_id']}] {r['title']} (line {r['line_start']}) — md_hash: {r['markdown_hash']}"
-            for r in rows
-        )
+            return f"No sections matched: {query!r}"
+        lines = []
+        for r in rows:
+            line = f"- [{r['section_id']}] {r['title']} (line {r['line_start']}) — score {r['score']}"
+            if r.get("matched_chunk"):
+                line += f"\n    matched: {r['matched_chunk']!r}"
+            lines.append(line)
+        return "\n".join(lines)
 
     return [_get_folder_toc, _get_document_toc, _get_section_content, _search_sections, _list_documents]

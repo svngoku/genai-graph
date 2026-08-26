@@ -59,9 +59,11 @@ def resolve_db_path(db_path: str | None) -> str:
     )
 
 
-def create_document_graph_tools_from_config(db_path: str | None = None) -> list[BaseTool]:
+def create_document_graph_tools_from_config(
+    db_path: str | None = None, *, embeddings_id: str | None = None
+) -> list[BaseTool]:
     """Build the navigation tools, resolving *db_path* from config when omitted."""
-    return create_document_graph_tools(resolve_db_path(db_path))
+    return create_document_graph_tools(resolve_db_path(db_path), embeddings_id=embeddings_id)
 
 
 def build_docgraph_system_prompt(
@@ -220,6 +222,7 @@ def create_docgraph_agent(
     db_path: str | None = None,
     folder_id: str | None = None,
     extra_skill_dirs: list[str] | None = None,
+    embeddings_id: str | None = None,
 ) -> Any:
     """Prepare *profile* and return a ready-to-stream :class:`LangChainHarness`.
 
@@ -235,6 +238,8 @@ def create_docgraph_agent(
         folder_id: Folder to scope the agent to (hash, prefix, or name).
         extra_skill_dirs: Additional runtime skill directories (e.g. a project's
             use-case skills).
+        embeddings_id: Embeddings model id enabling the hybrid (vector + BM25)
+            ``search_sections`` mode; None keeps keyword search only.
 
     Returns:
         A :class:`genai_tk.agents.harness.langchain_harness.LangChainHarness`.
@@ -242,7 +247,7 @@ def create_docgraph_agent(
     from genai_tk.agents.harness.langchain_harness import LangChainHarness
 
     prepare_docgraph_profile(profile, db_path=db_path, folder_id=folder_id, extra_skill_dirs=extra_skill_dirs)
-    tools = create_document_graph_tools_from_config(db_path)
+    tools = create_document_graph_tools_from_config(db_path, embeddings_id=embeddings_id)
     return LangChainHarness(
         profile,
         llm_override=llm,

@@ -434,6 +434,31 @@ class KuzuBackend(KgBackend):
             logger.warning(f"Vector extension load failed (vector indexes will be unavailable): {e}")
             return False
 
+    def ensure_fts_extension(self) -> bool:
+        """Install and load the Ladybug FTS (full-text search) extension.
+
+        BM25 scoring (``QUERY_FTS_INDEX``) powers the Document Graph hybrid
+        ``search_sections`` tool. Safe to call repeatedly.
+
+        Returns:
+            True if the FTS extension is loaded and available, False otherwise.
+        """
+        from loguru import logger
+
+        try:
+            self.execute("INSTALL FTS;")
+        except Exception as e:
+            if "already" not in str(e).lower():
+                logger.warning(f"FTS extension install failed (BM25 search will be unavailable): {e}")
+        try:
+            self.execute("LOAD EXTENSION FTS;")
+            return True
+        except Exception as e:
+            if "already loaded" in str(e).lower():
+                return True
+            logger.warning(f"FTS extension load failed (BM25 search will be unavailable): {e}")
+            return False
+
     def create_vector_index(
         self,
         table_name: str,

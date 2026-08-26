@@ -86,3 +86,45 @@ HAS_SUBSECTION: GraphRelation = GraphRelation(
     description="Parent section contains a nested child section",
     field_paths=[("", "")],
 )
+
+
+# ---------------------------------------------------------------------------
+# Section chunks — embedding-bearing sub-units of a section
+# ---------------------------------------------------------------------------
+#
+# A ``SectionChunk`` is a contiguous slice of a ``MarkdownSection``'s ``text``.
+# Chunks are the sole embedding-bearing node of the Document Graph: each chunk
+# carries a ``chunk_embedding`` (a fixed-length ``FLOAT[N]`` column created and
+# HNSW-indexed by the ingest path, not a Pydantic field) computed from a
+# contextualized input — ``"{title} | {description}\n\n{chunk_text}"`` — so a
+# semantic search over chunks resolves to the section that holds the evidence.
+# Short sections yield a single chunk equal to the whole section; long sections
+# are split on a token budget. The hierarchy stays ``Document → Section``; chunks
+# are a flat, indexed leaf layer reached via ``HAS_CHUNK``.
+
+class SectionChunk(BaseModel):
+    """A contiguous text slice of a MarkdownSection, indexed for semantic search."""
+
+    chunk_id: str = Field(..., description="Primary key: f'{section_id}::c{chunk_index}'")
+    section_id: str = Field(..., description="section_id of the owning MarkdownSection (foreign key)")
+    markdown_hash: str = Field(..., description="markdown_hash of the owning Document")
+    chunk_index: int = Field(..., description="0-based position of this chunk within its section")
+    chunk_text: str = Field(..., description="A contiguous slice of the section's body text")
+    token_count: int = Field(..., description="Approximate token count of chunk_text")
+
+
+SectionChunkNode: GraphNode = GraphNode(
+    node_class=SectionChunk,
+    name_from="chunk_id",
+    key_from="chunk_id",
+    description="An embedding-indexed text slice of a MarkdownSection",
+    explicitly_defined=True,
+)
+
+HAS_CHUNK: GraphRelation = GraphRelation(
+    name="HAS_CHUNK",
+    from_node=SectionNode,
+    to_node=SectionChunkNode,
+    description="Section contains a chunk (embedding-bearing sub-unit)",
+    field_paths=[("", "")],
+)
